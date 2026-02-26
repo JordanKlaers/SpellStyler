@@ -26,15 +26,7 @@ end
 local insetSettingsContainer
 local pendingShowAfterCombat = false
 
--- Combat-delay event frame: opens settings as soon as the player leaves combat
-local combatDelayFrame = CreateFrame("Frame")
-combatDelayFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-combatDelayFrame:SetScript("OnEvent", function()
-    if pendingShowAfterCombat then
-        pendingShowAfterCombat = false
-        ShowBorderDemo()
-    end
-end)
+
 
 local function ShowBorderDemo()
     if settingsMenu and settingsMenu:IsShown() then return end
@@ -315,6 +307,25 @@ local function ShowBorderDemo()
 	end
     settingsMenu:Show()
 end
+
+-- Combat-delay event frame: opens settings after combat, force-closes on combat enter
+local combatDelayFrame = CreateFrame("Frame")
+combatDelayFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatDelayFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatDelayFrame:SetScript("OnEvent", function(self, event)
+    if event == "PLAYER_REGEN_DISABLED" then
+        -- Force-close the settings menu when entering combat
+        if settingsMenu and settingsMenu:IsShown() then
+            settingsMenu:Hide()
+            pendingShowAfterCombat = false
+        end
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        if pendingShowAfterCombat then
+            pendingShowAfterCombat = false
+            ShowBorderDemo()
+        end
+    end
+end)
 
 _G["SLASH_SPELLSTYLER1"] = "/SpellStyler"
 _G["SLASH_SPELLSTYLER2"] = "/spellstyler"
