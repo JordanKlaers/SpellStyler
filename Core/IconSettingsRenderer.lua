@@ -472,7 +472,21 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     label = "Hide default swipe animation",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
-                }
+                },
+                {
+                    type = "checkbox",
+                    label = "Is Channeled Spell",
+                    tooltip = "Channeled spells must have an indication that they are channeled in order to properly respond to the cooldown events. Unchecked can cause them to only respond to the GCD.",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isChanneledSpell") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isChanneledSpell", value) end,
+                },
+                {
+                    type = "checkbox",
+                    label = "Is Spell Off the GCD",
+                    tooltip = "Enable for spells that are inherently off the global cooldown (e.g. self-buff procs). When checked, SPELL_UPDATE_COOLDOWN events for this spell will always be treated as a real cooldown regardless of the isOnGCD field.",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
+                },
             }
         },
         

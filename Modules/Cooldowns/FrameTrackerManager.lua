@@ -29,6 +29,20 @@ local SpellStyler_frames = {
     essential = {},
     utility = {}
 }
+
+local currentlyChanneledSpellData = {
+    channelStatus = 'noActiveChannel', --'isActivlyChanneling', 'channelJustEnded'
+    spellID = nil,
+    inDetectionPeriod = false,
+    --channelCooldownType = 'immediate', --'delayed',  assume its immediately applying the actual spell duration. This can be updated during channel if its type is one that shows the channel duration THEN the cooldown after its ended
+    trackerType = nil,
+}
+
+-- Cache of spell IDs that are known to be off the GCD (isOnGCD is nil when they go on cooldown).
+-- Built at runtime the first time we observe a real cooldown with isOnGCD == nil.
+-- Used by the SetCooldown hook and other places that need to distinguish off-GCD spells.
+local offGCDSpellCache = {}
+
 -- updateFrame is defined in the UPDATE SYSTEM section
 local isInitialized = false
 
@@ -82,7 +96,9 @@ local function AddNewTrackerValueConfig(data)
             size = 48,
             opacity = 1,
             hideDefaultSweep = false,
-            trackIndividualChargeCooldown = false
+            trackIndividualChargeCooldown = false,
+            isChanneledSpell = false,
+            isSpellOffGCD = false
         },
         customLabel = {
             display = false,
@@ -557,6 +573,12 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     end
     frame.spellName = spellInfo.name
     frame.trackIndividualChargeCooldown = trackerConfig.iconSettings.trackIndividualChargeCooldown or false
+    frame.isChanneledSpell = trackerConfig.iconSettings.isChanneledSpell or false
+    frame.isSpellOffGCD = trackerConfig.iconSettings.isSpellOffGCD or false
+    -- Seed the off-GCD cache immediately so the event handler knows before the first cast
+    if frame.isSpellOffGCD then
+        offGCDSpellCache[uniqueID] = true
+    end
     -- Make frame movable for Layout mode
     frame:SetMovable(true)
     frame:SetClampedToScreen(true)
@@ -615,7 +637,14 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         local spellInfo = C_Spell.GetSpellInfo(self.uniqueID)
         -- frame.isCooldownDataApplied = false
         frame.realCooldownActive = false
-        
+        --either clear the currentlyChanneledSpellData here, or its already been cleared when a new channel by the player started
+        if self.uniqueID == currentlyChanneledSpellData.spellID and currentlyChanneledSpellData.channelStatus == 'channelJustEnded' then
+            currentlyChanneledSpellData = {
+                channelStatus = 'noActiveChannel', --'isActivlyChanneling', 'channelJustEnded'
+                spellID = nil,
+                trackerType = nil,
+            }
+        end
         -- If mock cooldown is active, disable it and update button text. This setup is in IconSettingsRenderer.lua
         if frame._spellStyler_mockCooldownActive then
             frame._spellStyler_mockCooldownActive = false
@@ -948,7 +977,6 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     end
     
     -- Initialize cooldown state flags
-    frame.isCooldownDataApplied = false
     frame.isActualCooldown = false
     frame.isOnGCD = true
     frame.isBuffActive = false
@@ -1355,6 +1383,15 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerT
     
     -- Update opacity
     frame:SetAlpha(trackerConfig.iconSettings.opacity or 1)
+
+    -- Update channeled spell flag
+    frame.isChanneledSpell = trackerConfig.iconSettings.isChanneledSpell or false
+    -- Update off-GCD flag; also seed the runtime cache so the event handler
+    -- doesn't need to wait for the first cast to know this spell bypasses the GCD.
+    frame.isSpellOffGCD = trackerConfig.iconSettings.isSpellOffGCD or false
+    if frame.isSpellOffGCD then
+        offGCDSpellCache[frame.uniqueID] = true
+    end
         
     -- Attempt to get the cooldown text frame if possible, to update its styles
     local cdText = frame.cooldown.Text or frame.cooldown.text
@@ -1758,53 +1795,28 @@ function FrameTrackerManager:MoveOverlappingIcons()
     end
 end
 
+
 -- ============================================================================
--- SPELL CHARGE TRACKING
+-- SPELL Cooldown Tracking
 -- ============================================================================
--- Overview:
---   Spells with charges (e.g. Charge, Roll, Ice Nova) have a special problem:
---   OnCooldownDone fires only when ALL charges finish recharging. If you cast
---   twice and the first charge comes back while the second is still recharging,
---   OnCooldownDone is never fired for that intermediate recharge. This section
---   handles detecting each individual charge recharge cycle.
---
--- Approach — anonymous "ghost" cooldown frames via AcquireChargeFrame:
---   When SetCooldown fires on the source Blizzard frame for a spell with charges,
---   and C_Spell.GetSpellChargeDuration returns a valid DurationObject, we create
---   (or reuse from pool) an invisible Cooldown frame and call
---   SetCooldownFromDurationObject on it with that duration. We never read the
---   start/duration args from SetCooldown (they are secret in combat). The
---   DurationObject is passed directly to the frame engine with no Lua-side
---   arithmetic, keeping it combat-safe. When that ghost frame's OnCooldownDone
---   fires, we know one recharge cycle just completed, so we increment the
---   available charge count and update the display.
---
---   Multiple ghost frames can exist simultaneously — one per recharge cycle in
---   flight. Each is fully independent: casting twice quickly creates two ghost
---   frames, each tracking its own recharge. Frames are never destroyed; they are
---   returned to the chargeTrackerPool and reused on the next cast.
---
--- Status bar vs. icon cooldown swipe:
---   The StatusBar uses SetTimerDuration (Midnight API) which accepts DurationObjects
---   directly and is NOT triggered by GCD entries, so it can safely show the per-
---   charge recharge progress. The icon's Cooldown frame (the swipe/sweep visual)
---   uses SetCooldown, which is hooked by the GCD and WILL fire on every GCD — this
---   means the swipe cannot reliably distinguish a real cast from a GCD tick, so
---   it may flash on every GCD while charges are recharging. The swipe is best
---   hidden (hideDefaultSweep=true) for charge-based spells, relying on the
---   StatusBar for recharge progress instead.
---
--- TODO: Add a per-tracker config toggle (e.g. iconSettings.ignoreChargesForCooldown)
---   When false (default, current behaviour): charge-aware mode. The icon and
---   statusBar show as available whenever at least one charge exists, and the ghost
---   frame approach drives per-recharge-cycle cooldown display.
---   When true (ignore charges): treat the spell exactly like a non-charge spell.
---   The charge count text still displays, but the cooldown swipe and statusBar only
---   activate when ALL charges are spent (i.e. spellHasCharges == false / the normal
---   SPELL_UPDATE_COOLDOWN → realCooldownActive path). This is useful for spells
---   where the user doesn't care about tracking individual recharge timers and just
---   wants a "it's on cooldown" indicator.
--- ============================================================================
+--[[
+    There are three types of spell cooldown tracking: Regular spells, Spells with charges, channeled spells
+
+    Channeled Spells:
+        1. "UNIT_SPELLCAST_CHANNEL_START" - helps indicate a spell has began channeling
+        2. "SPELL_UPDATE_COOLDOWN" - contains a non secret reference to the spell ID. If the event above preceeds, then the spell ID is added to the object for tracking channeled spells
+        3. "UNIT_SPELLCAST_CHANNEL_STOP" / "SetCooldown" - If SetCooldown is fired while channeling, then bilzzard is displaying the channel duration on the frame. This means the channel will apply the real cooldown AFTER "UNIT_SPELLCAST_CHANNEL_STOP" fires. If that does not happen, that means the real cooldown is already displaying on the bilzzard frame, thus, "UNIT_SPELLCAST_CHANNEL_STOP" is a fine place to react to the valid cooldown. It pulls the cooldown data manually off the frame in this event callback. 
+            "currentlyChanneledSpellData" saved information about the active channel and helps decide which type of channeled spell this is.
+            channelStatus - is the spell is channeling or just ended
+            channelCooldownType - the main piece - it helps decide which event contains the valid cooldown data.
+    Regular Spells:
+        1. SetCooldown hook - The constantly applies cooldown data pulled from the blizzardFrame onto the custom frame. It defaults to the assumption thats its a GCD, so it applies the cooldown, but keeps the custom frame in a state of "available".
+        2. SPELL_UPDATE_COOLDOWN - This provids the only valid way to detect GCD vs a real cooldown. When this happens, the custom frame is blocked from applying any more cooldown data untill the "OnCooldownDone" callback occurs. It also fires the event to update the display of everything for the custom frame in response to a valid cooldown.
+    Spells With Charges:
+        1. SetCooldown hook - This applies cooldown data to the custom frame BUT, spells with charges must set a flag (applied by the user in the settings - Im not aware of a reliable way to automatically detect that). When the charges flag exists, it will attempt to pull data from C_Spell.GetSpellChargeDuration(uniqueID). That method returns zero for the start when its a GCD (that is how spells with charges can ignore GCD). When its a valid cooldown, the cooldown is applied to a temporary frame via "AcquireChargeFrame()", cooldown is also applied to the custom frame for the spell. This enables displaying cooldown data while also allowing the spell to render in an "available" state (you can still see the icon and any settings that a normal spell in an "available" state would show)
+        2. "SPELL_UPDATE_COOLDOWN" - For spells with charges, this ONLY fires when the last available charge is spent. The "OnCooldownDone" from the temporary frame of "AcquireChargeFrame()" and this event help enable tracking of - spell has zero or more than zero charges - enabling the ability to track the visibility state correctly.
+    TODO: If a bug shows up for a channeled spell with charges - might need to apply the charges logic into the channeled spells "UNIT_SPELLCAST_CHANNEL_STOP" logic or something...
+]]
 
 local chargeTrackerPool = {}
 
@@ -1829,6 +1841,8 @@ local function AcquireChargeFrame(customFrame, durationObj, onDone)
 end
 
 
+
+
 -- Hook all buffs icon cooldowns to mirror to per-icon frames
 function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
     local viewer = FrameTrackerManager:GetCooldownManagerViewer(trackerType)
@@ -1841,13 +1855,13 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
         
             -- Hide the Blizzard buffs frames by keeping alpha at 0
             cdm_frame._spellStyler_alphaLocked = true
-            --cdm_frame:SetAlpha(0)
+            -- cdm_frame:SetAlpha(0)
             
             -- Hook SetAlpha with recursion guard
             hooksecurefunc(cdm_frame, 'SetAlpha', function(self, alpha)
                 if not self._spellStyler_settingAlpha and alpha ~= 0 then
                     self._spellStyler_settingAlpha = true
-                    --self:SetAlpha(0)
+                    -- self:SetAlpha(0)
                     self._spellStyler_settingAlpha = false
                 end
             end)
@@ -1891,6 +1905,9 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
             if cdm_frame.UpdateShownState then hooksecurefunc(cdm_frame, "UpdateShownState", hookCallback) end
 
             local sourceCooldown = cdm_frame.Cooldown or cdm_frame.cooldown
+
+            -- SetCooldownFromDurationObject hook reserved for future use.
+
             if sourceCooldown and not cdm_frame.hasHookedCooldown then
                 cdm_frame.hasHookedCooldown = true
                 hooksecurefunc(sourceCooldown, "SetCooldown", function(self, start, duration)
@@ -1899,9 +1916,12 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                         local customFrame = SpellStyler_frames[trackerType][uniqueID]
                         if not customFrame then return end
                         local spellInfo = C_Spell.GetSpellInfo(uniqueID)
-                        -- if not customFrame.isCooldownDataApplied then
                         local durationObj = nil
-                        local wasSpellCharge = false
+
+                        if currentlyChanneledSpellData.channelStatus == 'isActivlyChanneling' and currentlyChanneledSpellData.spellID ~= uniqueID then
+                            --skip any cooldown data for stuff other than the currently channeled spell - its invalid
+                            return
+                        end
                         if customFrame.isSpellWithCharges and customFrame.trackIndividualChargeCooldown == true then
                             pcall(function()
                                 local s, e = pcall(function() durationObj = C_Spell.GetSpellChargeDuration(uniqueID) end)
@@ -1909,6 +1929,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                                     customFrame.realCooldownActive = true
                                     customFrame.cooldown:SetCooldown(start, duration) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
                                     
+                                    -- The "OnCooldownDone" callback help track if the spell has zero or more charges for correctly handling visibility state.
                                     AcquireChargeFrame(customFrame, durationObj, function()
                                         if not customFrame.spellHasCharges then
                                             customFrame.spellHasCharges = true
@@ -1925,20 +1946,21 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                                             cdTimerDir
                                         )
                                     end
+
                                     FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
                                 end
                             end)
                         end
-                        if not customFrame.realCooldownActive and not customFrame.isSpellWithCharges then
+                        if (not customFrame.isSpellWithCharges and not customFrame.trackIndividualChargeCooldown) then
                             local success, error = pcall(function()
-                            -- customFrame.cooldown:SetCooldown(start, duration)
                                 if trackerType == "buffs" then
                                     local succ, erro = pcall(function() durationObj = C_UnitAuras.GetAuraDuration("player", cdm_frame:GetAuraSpellInstanceID()) end)
                                 else
                                     local s1, err2 = pcall(function() durationObj = C_Spell.GetSpellCooldownDuration(uniqueID) end)
                                 end
+                                
                                 if durationObj then
-                                    customFrame.cooldown:SetCooldown(start, duration) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
+                                    customFrame.cooldown:SetCooldown(durationObj:GetStartTime(), durationObj:GetTotalDuration()) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
                                     if customFrame.statusBar and customFrame.statusBar.SetTimerDuration then
                                         local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
                                         local cdTimerDir = (cdTimerCfg and cdTimerCfg.statusBar and cdTimerCfg.statusBar.barFillDirection == 'inverse')
@@ -1950,16 +1972,23 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                                             cdTimerDir
                                         )
                                     end
-                                end                                
+                                end
                             end)
+                            
                             if success then
-                                if trackerType == 'buffs' then
-                                    --buffs dont have GCD for their applications so assume this is a valid duration for the buff
+                                if customFrame.isChanneledSpell
+                                    and currentlyChanneledSpellData.channelStatus == 'channelJustEnded'
+                                    and currentlyChanneledSpellData.spellID == uniqueID then
+                                    currentlyChanneledSpellData = {
+                                        channelStatus = 'noActiveChannel',
+                                        spellID = nil,
+                                        trackerType = nil,
+                                        inDetectionPeriod = false
+                                    }
                                     customFrame.realCooldownActive = true
                                     FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
-                                else
-                                    --assume this is a GCD untill the "SPELL_UPDATE_COOLDOWN" confirms its a real cast. "real casts" also only happen when the last charge of a spell is cast, so the best we can do for now is copying the charges onto the custom frame
-                                    FrameTrackerManager:UpdateFrame_IgnoreGCD(uniqueID, trackerType)
+                                elseif trackerType == 'buffs' then
+                                    FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
                                 end
                             end
                         end
@@ -1990,33 +2019,105 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+
+
+
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnetedWorld = true
         FrameTrackerManager:Initalize()
     end
+    if event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+        local name, displayName, textureID, startTimeMs, endTimeMs, isTradeskill, notInterruptible, spellID, isEmpowered, numEmpowerStages, castBarID = UnitChannelInfo("PLAYER")
+        if spellID ~= nil then
+            --The player is activly channeling - dont handle this event
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            return
+        elseif currentlyChanneledSpellData.channelStatus == 'isActivlyChanneling' then
+            currentlyChanneledSpellData.channelStatus = 'channelJustEnded'
+            local spellID = currentlyChanneledSpellData.spellID
+            local trackerType = currentlyChanneledSpellData.trackerType
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local suc, err = pcall(function()
+                
+                local blizzardFrame = cooldownManagerFrames[trackerType][spellID]
+                local customFrame = SpellStyler_frames[trackerType][spellID]
+                if customFrame and customFrame.isChanneledSpell then
+                    local sourceCooldown = blizzardFrame.Cooldown or blizzardFrame.cooldown
+                    local durationObj = C_Spell.GetSpellCooldownDuration(spellID)
+                    if durationObj then
+                        if customFrame.statusBar and customFrame.statusBar.SetTimerDuration then
+                            local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(spellID, trackerType)
+                            local cdTimerDir = (cdTimerCfg and cdTimerCfg.statusBar and cdTimerCfg.statusBar.barFillDirection == 'inverse')
+                            and Enum.StatusBarTimerDirection.ElapsedTime
+                            or  Enum.StatusBarTimerDirection.RemainingTime
+                            customFrame.statusBar:SetTimerDuration(
+                                durationObj,
+                                Enum.StatusBarInterpolation.Immediate,
+                                cdTimerDir
+                            )
+                        end
+                        FrameTrackerManager:UpdateFrame_RealCooldown(spellID, trackerType)
+                    end
+                end
+            end)
+        end
+    end
+    if event == "UNIT_SPELLCAST_CHANNEL_START" then
+        local name, displayName, textureID, startTimeMs, endTimeMs, isTradeskill, notInterruptible, spellID, isEmpowered, numEmpowerStages, castBarID = UnitChannelInfo("PLAYER")
+        -- Full reset at the start of each new channel so stale data from a previous cast never bleeds in
+        if (spellID ~= nil) then
+            local trackerType
+            for _, tType in ipairs({"essential", "utility"}) do
+                if SpellStyler_frames[tType][spellID] then
+                    trackerType = tType
+                end
+            end
+            --if the UnitChannelInfo returns data, it means the even was from the player, not someone else in the party/raid
+            currentlyChanneledSpellData = {
+                channelStatus = 'isActivlyChanneling',
+                spellID = spellID,
+                trackerType = trackerType,
+            }
+        end
+    end
+
     if event == "SPELL_UPDATE_COOLDOWN" then
+
+        if currentlyChanneledSpellData.channelStatus == 'isActivlyChanneling' then
+            -- because UnitChannelInfo can return data, dont try to get the data from "SPELL_UPDATE_COOLDOWN" because other spells can show up before the actual channeled spell (if I have to revert to this, leverage the isChanneledSpell flag potentially thats cached when frames are created - set from the settings)
+            return
+        end
         local spellID, baseSpellID, category, startRecoveryCategory = ...
         if not spellID then
             return
         end
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local baseSpellID = C_SpellBook.FindBaseSpellByID(spellID)
+        local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
+
         -- Check if we're tracking this spell in any tracker type
-        for _, trackerType in ipairs({"buffs", "essential", "utility"}) do
-            local customFrame = SpellStyler_frames[trackerType][baseSpellID]
-            if not customFrame then
-                customFrame = SpellStyler_frames[trackerType][spellID]
-            end
+        local uniqueID = baseSpellID or spellID
+        for _, trackerType in ipairs({"essential", "utility"}) do
+
+            local customFrame = SpellStyler_frames[trackerType][uniqueID]
+            local blizzardFrame = cooldownManagerFrames[trackerType][uniqueID]
             if customFrame then
+                local sourceCooldown = blizzardFrame.Cooldown or blizzardFrame.cooldown
+                local start, duration = sourceCooldown:GetCooldownTimes()
                 local success, error = pcall(function()
-                    local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
-                    if cooldownInfo.isOnGCD == false then
-                        if (customFrame.isSpellWithCharges) then
+                    if cooldownInfo.isOnGCD == true then
+                        return  -- nothing to do, stay in IgnoreGCD state
+                    end
+                    -- Non-channeled spell – real cooldown just started.
+                    if cooldownInfo.isOnGCD == false or (not cooldownInfo.isOnGCD and offGCDSpellCache[uniqueID]) then
+                        if customFrame.isSpellWithCharges then
                             customFrame.spellHasCharges = false
                         end
                         customFrame.realCooldownActive = true
-                        FrameTrackerManager:UpdateFrame_RealCooldown(baseSpellID or spellID, trackerType)
+                        FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
                     end
                 end)
                 break
