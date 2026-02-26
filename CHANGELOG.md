@@ -18,3 +18,11 @@ Slightly more technical summary:
 - Spells with charges successfully display cooldown data for each charge because "GetSpellChargeDuration" only returns an object in the "SetCooldown" hook when a charge is on cooldown. That plus, leveraging the "onCooldownDone" callback from a ghost frame using the same cooldown duration and "UNIT_SPELLCAST_CHANNEL_STOP" only firing when the last available charge is spent, will help track if the spell has zero or more charges. This enables the spell to have display in an "available" state, while also displaying the cooldown information.
 - Spell off the GCD require the setting to flag them, as well as explicitly looking for nil from "C_Spell.GetSpellCooldown(spellID).isOnGCD" in "SPELL_UPDATE_COOLDOWN". This paired with channeled spells blocking the handling/events ensures that off the gcd spells will still respond correctly when displaying their cooldown information.
 
+
+Version 0.1.1
+
+Slightly less technical summary:
+	Spells with charges should not display the cooldown swipe for GCDs
+
+Slightly more technical summary:
+	Updates the spell charge tracking to use the duration object instead of the "start" and "duration" from the hook. This helps ignore GCD because C_Spell.GetSpellChargeDuration(uniqueID) does not account for GCD.

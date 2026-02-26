@@ -1799,24 +1799,6 @@ end
 -- ============================================================================
 -- SPELL Cooldown Tracking
 -- ============================================================================
---[[
-    There are three types of spell cooldown tracking: Regular spells, Spells with charges, channeled spells
-
-    Channeled Spells:
-        1. "UNIT_SPELLCAST_CHANNEL_START" - helps indicate a spell has began channeling
-        2. "SPELL_UPDATE_COOLDOWN" - contains a non secret reference to the spell ID. If the event above preceeds, then the spell ID is added to the object for tracking channeled spells
-        3. "UNIT_SPELLCAST_CHANNEL_STOP" / "SetCooldown" - If SetCooldown is fired while channeling, then bilzzard is displaying the channel duration on the frame. This means the channel will apply the real cooldown AFTER "UNIT_SPELLCAST_CHANNEL_STOP" fires. If that does not happen, that means the real cooldown is already displaying on the bilzzard frame, thus, "UNIT_SPELLCAST_CHANNEL_STOP" is a fine place to react to the valid cooldown. It pulls the cooldown data manually off the frame in this event callback. 
-            "currentlyChanneledSpellData" saved information about the active channel and helps decide which type of channeled spell this is.
-            channelStatus - is the spell is channeling or just ended
-            channelCooldownType - the main piece - it helps decide which event contains the valid cooldown data.
-    Regular Spells:
-        1. SetCooldown hook - The constantly applies cooldown data pulled from the blizzardFrame onto the custom frame. It defaults to the assumption thats its a GCD, so it applies the cooldown, but keeps the custom frame in a state of "available".
-        2. SPELL_UPDATE_COOLDOWN - This provids the only valid way to detect GCD vs a real cooldown. When this happens, the custom frame is blocked from applying any more cooldown data untill the "OnCooldownDone" callback occurs. It also fires the event to update the display of everything for the custom frame in response to a valid cooldown.
-    Spells With Charges:
-        1. SetCooldown hook - This applies cooldown data to the custom frame BUT, spells with charges must set a flag (applied by the user in the settings - Im not aware of a reliable way to automatically detect that). When the charges flag exists, it will attempt to pull data from C_Spell.GetSpellChargeDuration(uniqueID). That method returns zero for the start when its a GCD (that is how spells with charges can ignore GCD). When its a valid cooldown, the cooldown is applied to a temporary frame via "AcquireChargeFrame()", cooldown is also applied to the custom frame for the spell. This enables displaying cooldown data while also allowing the spell to render in an "available" state (you can still see the icon and any settings that a normal spell in an "available" state would show)
-        2. "SPELL_UPDATE_COOLDOWN" - For spells with charges, this ONLY fires when the last available charge is spent. The "OnCooldownDone" from the temporary frame of "AcquireChargeFrame()" and this event help enable tracking of - spell has zero or more than zero charges - enabling the ability to track the visibility state correctly.
-    TODO: If a bug shows up for a channeled spell with charges - might need to apply the charges logic into the channeled spells "UNIT_SPELLCAST_CHANNEL_STOP" logic or something...
-]]
 
 local chargeTrackerPool = {}
 
@@ -1927,7 +1909,8 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                                 local s, e = pcall(function() durationObj = C_Spell.GetSpellChargeDuration(uniqueID) end)
                                 if durationObj then
                                     customFrame.realCooldownActive = true
-                                    customFrame.cooldown:SetCooldown(start, duration) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
+                                    customFrame.cooldown:SetCooldown(durationObj:GetStartTime(), durationObj:GetTotalDuration())
+                                    -- customFrame.cooldown:SetCooldown(start, duration) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
                                     
                                     -- The "OnCooldownDone" callback help track if the spell has zero or more charges for correctly handling visibility state.
                                     AcquireChargeFrame(customFrame, durationObj, function()
