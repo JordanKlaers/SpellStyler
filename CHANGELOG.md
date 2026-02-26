@@ -26,3 +26,6 @@ Slightly less technical summary:
 
 Slightly more technical summary:
 	Updates the spell charge tracking to use the duration object instead of the "start" and "duration" from the hook. This helps ignore GCD because C_Spell.GetSpellChargeDuration(uniqueID) does not account for GCD.
+
+Version 0.1.2
+	- fixes issue with the show hide automatiocally depending on combat, for the settings menu
