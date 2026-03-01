@@ -39,3 +39,12 @@ Slightly less techincal summary:
 Slightly more technical summary:
 	- Only buffs are hooked into the cooldown manager now. All other spells use "SPELL_UPDATE_COOLDOWN", and "UNIT_SPELLCAST_SUCCEEDED" to process all spell tracking.
 	- "SPELL_UPDATE_ICON" uses a match on base spell id to process tracking cooldowns for spells that turn into other spells (like avenging crusader into crusader strike)
+
+Version 0.2.1
+
+Slightly less techincal summary:
+	- The update button now correctly updates the icon list in the settings menu, and new frames are immediately draggable.
+	- Spending a Buff will remove the cooldown timer on the buff and update its view conditions correctly
+
+Slightly more technical summary:
+	- UNIT_AURA contains non secret values for the buff that has been removed. Saving the aura instance ID onto the frame allows identifying a match so the buff can have its state updated correctly.

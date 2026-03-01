@@ -2,7 +2,7 @@
 ## Title: Spell Styler
 ## Notes: Enhanced cooldown tracking with custom layouts, visibility controls, and proc alerts.
 ## Author: EonWorm
-## Version: 0.2.0
+## Version: 0.2.1
 ## SavedVariables: SpellStyler_DB
 ## SavedVariablesPerCharacter: SpellStyler_CharDB
 ## X-Category: Interface Enhancements
