@@ -640,6 +640,7 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     frame.cooldown._TUI_showCountdownText = showCountdownText
     frame.cooldown:SetScript("OnCooldownDone", function(self)
         local spellInfo = C_Spell.GetSpellInfo(self.uniqueID)
+        frame.isCooldownActive = false
         frame.canBeCast = true
         -- If mock cooldown is active, disable it and update button text. This setup is in IconSettingsRenderer.lua
         if frame._spellStyler_mockCooldownActive then
@@ -1803,13 +1804,13 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
         
             -- Hide the Blizzard buffs frames by keeping alpha at 0
             cdm_frame._spellStyler_alphaLocked = true
-            cdm_frame:SetAlpha(0)
+            -- cdm_frame:SetAlpha(0)
             
             -- Hook SetAlpha with recursion guard
             hooksecurefunc(cdm_frame, 'SetAlpha', function(self, alpha)
                 if not self._spellStyler_settingAlpha and alpha ~= 0 then
                     self._spellStyler_settingAlpha = true
-                    self:SetAlpha(0)
+                    -- self:SetAlpha(0)
                     self._spellStyler_settingAlpha = false
                 end
             end)
@@ -1867,21 +1868,33 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                         local durationObj = nil
                         if trackerType ~= "buffs" then return end
                         local success, erro = pcall(function()
-                            durationObj = C_UnitAuras.GetAuraDuration("player", cdm_frame:GetAuraSpellInstanceID())
-                            if durationObj then
-                                customFrame.cooldown:SetCooldown(durationObj:GetStartTime(), durationObj:GetTotalDuration()) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
-                                if customFrame.statusBar and customFrame.statusBar.SetTimerDuration then
-                                    local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
-                                    local cdTimerDir = (cdTimerCfg and cdTimerCfg.statusBar and cdTimerCfg.statusBar.barFillDirection == 'inverse')
-                                        and Enum.StatusBarTimerDirection.ElapsedTime
-                                        or  Enum.StatusBarTimerDirection.RemainingTime
-                                    customFrame.statusBar:SetTimerDuration(
-                                        durationObj,
-                                        Enum.StatusBarInterpolation.Immediate,
-                                        cdTimerDir
-                                    )
+                            -- C_Timer.After(0.2, function()
+                                durationObj = C_UnitAuras.GetAuraDuration("player", cdm_frame:GetAuraSpellInstanceID())
+                                customFrame.currentAuraInstanceID = cdm_frame:GetAuraSpellInstanceID()
+                                -- DevTool:AddData({
+                                --     pullingOffFrame = self:GetCooldownTimes(),
+                                --     auraInstanceID = self.GetAuraSpellInstanceID and self:GetAuraSpellInstanceID(),
+                                --     start = start,
+                                --     duration = duration,
+                                --     obj_start = durationObj and durationObj:GetStartTime(),
+                                --     obj_duration = durationObj and durationObj:GetTotalDuration()
+                                -- }, "SetCooldown - buffs")
+                                if durationObj then
+                                    DevTool:AddData("adding coodlown")
+                                    customFrame.cooldown:SetCooldown(durationObj:GetStartTime(), durationObj:GetTotalDuration()) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
+                                    if customFrame.statusBar and customFrame.statusBar.SetTimerDuration then
+                                        local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
+                                        local cdTimerDir = (cdTimerCfg and cdTimerCfg.statusBar and cdTimerCfg.statusBar.barFillDirection == 'inverse')
+                                            and Enum.StatusBarTimerDirection.ElapsedTime
+                                            or  Enum.StatusBarTimerDirection.RemainingTime
+                                        customFrame.statusBar:SetTimerDuration(
+                                            durationObj,
+                                            Enum.StatusBarInterpolation.Immediate,
+                                            cdTimerDir
+                                        )
+                                    end
                                 end
-                            end
+                            -- end)
                         end)
                         if success then
                             FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
@@ -1951,6 +1964,7 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
     if data.forceUpdate then
         data.customFrame.cooldown:Clear()
     end
+    data.customFrame.isCooldownActive = true
     data.customFrame.cooldown:SetCooldown(durationObject:GetStartTime(), durationObject:GetTotalDuration())
     if data.customFrame.statusBar and data.customFrame.statusBar.SetTimerDuration then
         local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(data.uniqueID, data.trackerType)
@@ -2021,13 +2035,40 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_START")
-eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
-eventFrame:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
 eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
+eventFrame:RegisterEvent("UNIT_AURA")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "UNIT_AURA" then
+        local unitTarget, updateInfo = ...
+        local db = FrameTrackerManager:GetDataBase_V2()
+        local removedAuraInstanceID = updateInfo.removedAuraInstanceIDs
+        if unitTarget ~= "player" or not removedAuraInstanceID then return end
+        local removedAuraSet = {}
+        for _, auraID in ipairs(removedAuraInstanceID) do
+            removedAuraSet[auraID] = true
+        end
+        DevTool:AddData({
+            SpellStyler_frames = SpellStyler_frames,
+            unitTarget = unitTarget,
+            updateInfo = updateInfo,
+            db = db,
+            removedAuraSet = removedAuraSet
+        }, "UNIT AURA")
+        
+        for uniqueID, customFrame in pairs(SpellStyler_frames["buffs"]) do
+            local currentAuraInstanceID = customFrame.currentAuraInstanceID or 0
+            DevTool:AddData({customFrame = customFrame}, "frame in loop")
+            if removedAuraSet[currentAuraInstanceID] then
+                DevTool:AddData("clearing coodlown")
+                customFrame.cooldown:Clear()
+                customFrame.statusBar:SetValue(0)
+                FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
+                FrameTrackerManager:UpdateFrame_IgnoreGCD(uniqueID, "buffs")
+            end
+        end
+    end
     if event == "SPELL_UPDATE_ICON" then
         local spellID = ...
         local info = C_Spell.GetSpellInfo(spellID)
@@ -2108,12 +2149,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         for uniqueID, trackedFrame in pairs(SpellStyler_frames[tType]) do
                             -- skip the frame that was already matched
                             if (frameMatchData and uniqueID ~= frameMatchData.spellID and tType ~= frameMatchData.trackerType) or not frameMatchData then
-                                FrameTrackerManager:ApplyCooldownDuration({
-                                    customFrame = trackedFrame,
-                                    spellID = uniqueID,
-                                    uniqueID = uniqueID,
-                                    trackerType = tType
-                                })
+                                if trackedFrame.isCooldownActive then
+                                    FrameTrackerManager:ApplyCooldownDuration({
+                                        customFrame = trackedFrame,
+                                        spellID = uniqueID,
+                                        uniqueID = uniqueID,
+                                        trackerType = tType
+                                    })
+                                end
                             end
                         end
                     end

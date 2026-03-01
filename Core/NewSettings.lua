@@ -143,13 +143,6 @@ local function ShowBorderDemo()
         updateBtn:SetPoint("TOPRIGHT", insetSettingsContainer, "TOPRIGHT", -10, 32)
         updateBtn:SetText("Update")
         updateBtn:SetFrameLevel(settingsMenu:GetFrameLevel() + 3)
-        updateBtn:SetScript("OnClick", function()
-            for _, tType in ipairs({"buffs", "essential", "utility"}) do
-                SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames(tType)
-                SpellStyler.FrameTrackerManager:ApplyViewerVisibility(tType)
-            end
-        end)
-
 
         -- Two sub-frames inside the inset container so we can toggle between views
         local settingsContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
@@ -188,6 +181,20 @@ local function ShowBorderDemo()
         )
 
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
+
+        -- Now that settingsContentFrame exists, wire up the Update button
+        updateBtn:SetScript("OnClick", function()
+            for _, tType in ipairs({"buffs", "essential", "utility"}) do
+                SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames(tType)
+                SpellStyler.FrameTrackerManager:ApplyViewerVisibility(tType)
+            end
+            -- Re-render the icon list so new/removed trackers appear
+            SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
+            -- Enable dragging for any newly created frames
+            if SpellStyler.FrameTrackerManager.EnableDraggingForAllFrames then
+                SpellStyler.FrameTrackerManager:EnableDraggingForAllFrames()
+            end
+        end)
 
         -- Help / Settings toggle button (bottom-right of the settings menu)
         local isHelpShown = false

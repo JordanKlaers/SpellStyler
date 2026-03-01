@@ -1110,6 +1110,20 @@ end
 function IconSettingsRenderer:RenderIconControlView(containerFrame)
 	local iconSize, minPadding = 40, 4
 
+	-- Clean up previous render (so this function can be called again after an Update)
+	if containerFrame._ssIconScrollFrame then
+		containerFrame._ssIconScrollFrame:Hide()
+		containerFrame._ssIconScrollFrame:SetParent(nil)
+		containerFrame._ssIconScrollFrame = nil
+	end
+	if containerFrame._ssSettingsPanel then
+		containerFrame._ssSettingsPanel:Hide()
+		containerFrame._ssSettingsPanel:SetParent(nil)
+		containerFrame._ssSettingsPanel = nil
+	end
+	settingsMenuIconList = {}
+	controlsPanel = nil
+
 	-- Create a scroll frame for the icon column, with hidden scrollbar and left padding for icons
 	local iconScrollFrame = CreateFrame("ScrollFrame", nil, containerFrame, "UIPanelScrollFrameTemplate")
 	iconScrollFrame:SetPoint("TOPLEFT", containerFrame, "TOPLEFT", 4, -4)
@@ -1210,4 +1224,8 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 
 	-- associating the "no selection" to the parent so it can be removed when an icon is clicked
 	controlsPanel.currentControlsContainer = noSelectionLabel
+
+	-- Store references for cleanup on re-render
+	containerFrame._ssIconScrollFrame = iconScrollFrame
+	containerFrame._ssSettingsPanel = settingsPanel
 end
