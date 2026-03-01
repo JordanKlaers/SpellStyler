@@ -29,3 +29,13 @@ Slightly more technical summary:
 
 Version 0.1.2
 	- fixes issue with the show hide automatiocally depending on combat, for the settings menu
+
+Version 0.2.0
+
+Slightly less techincal summary:
+	- Spells that turn into other spells, and spells that reduce the cooldown of spells should now update correctly.
+	- settings only require manually flagging off gcd spells. Previous settings that have been removed are now auto detected.
+
+Slightly more technical summary:
+	- Only buffs are hooked into the cooldown manager now. All other spells use "SPELL_UPDATE_COOLDOWN", and "UNIT_SPELLCAST_SUCCEEDED" to process all spell tracking.
+	- "SPELL_UPDATE_ICON" uses a match on base spell id to process tracking cooldowns for spells that turn into other spells (like avenging crusader into crusader strike)

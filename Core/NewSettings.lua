@@ -137,6 +137,20 @@ local function ShowBorderDemo()
         insetSettingsContainer:SetBackdropColor(0.15, 0.15, 0.15, 0.85)
         insetSettingsContainer:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
 
+        -- Add "Update" button (refreshes all tracker hooks and viewer visibility)
+        local updateBtn = CreateFrame("Button", nil, insetSettingsContainer, "UIPanelButtonTemplate")
+        updateBtn:SetSize(70, 22)
+        updateBtn:SetPoint("TOPRIGHT", insetSettingsContainer, "TOPRIGHT", -10, 32)
+        updateBtn:SetText("Update")
+        updateBtn:SetFrameLevel(settingsMenu:GetFrameLevel() + 3)
+        updateBtn:SetScript("OnClick", function()
+            for _, tType in ipairs({"buffs", "essential", "utility"}) do
+                SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames(tType)
+                SpellStyler.FrameTrackerManager:ApplyViewerVisibility(tType)
+            end
+        end)
+
+
         -- Two sub-frames inside the inset container so we can toggle between views
         local settingsContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
         settingsContentFrame:SetAllPoints(insetSettingsContainer)
