@@ -62,3 +62,7 @@ Slightly more technical summary:
 Version 0.2.3
 
 	- Fixed a bug when changing specs that was missed in previous patch
+
+Version 0.2.4
+
+	- Implements the desaturated setting that was not hooked up

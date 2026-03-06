@@ -640,6 +640,9 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         color.b or 1,
         color.a or 1
     )
+
+    frame.icon:SetDesaturated(false)  -- Initialize as not desaturated
+    
     frame.cooldown = CreateFrame("Cooldown", frameName .. "_Cooldown", frame, "CooldownFrameTemplate")
     frame.Cooldown = frame.cooldown
     frame.cooldown:SetAllPoints(frame.icon)
@@ -1023,7 +1026,8 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     
     SpellStyler_frames[trackerType][uniqueID] = frame
     FrameTrackerManager:UpdateFrame_IgnoreGCD(uniqueID, trackerType)
-    -- Note: Layout registration happens in RegisterWithLayout(), called from EnableHighlight()
+    FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
+
     return frame
 end
 
@@ -1323,6 +1327,20 @@ function FrameTrackerManager:UpdateFrame_IgnoreGCD(uniqueID, trackerType)
             frame.icon:Show()
             frame.count:Show()
         end
+
+        -- Apply desaturation for non-buff trackers when not on cooldown
+        if trackerType ~= "buffs" and trackerConfig.iconSettings.desaturated then
+            frame.icon:SetDesaturated(false)
+            -- Restore original color from config
+            local color = trackerConfig.iconColor or {}
+            frame.icon:SetVertexColor(
+                color.r or 1,
+                color.g or 1,
+                color.b or 1,
+                color.a or 1
+            )
+        end
+        
         FrameTrackerManager:UpdateFrame_copyCharges({
             uniqueID = uniqueID,
             trackerType = trackerType
@@ -1381,6 +1399,14 @@ function FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
             frame.icon:Hide()
             frame.count:Hide()
         end
+        
+        -- Apply desaturation for non-buff trackers when on cooldown
+        if trackerConfig.iconSettings.desaturated and trackerType ~= "buffs" then
+            frame.icon:SetDesaturated(true)
+            -- Apply grayscale vertex color for "on cooldown" feel
+            frame.icon:SetVertexColor(0.6, 0.6, 0.6, 0.6)
+        end
+        
         -- A real cooldown is active; hide the full-cover overlay so the timer-driven fill shows through.
         if frame.statusBar.fullCoverTexture then
             -- C_Timer.After(0.15, function()
@@ -1649,6 +1675,8 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerT
             pos.y or 0
         )
     end
+    FrameTrackerManager:UpdateFrame_IgnoreGCD(uniqueID, trackerType)
+    FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
 end
 
 function FrameTrackerManager:UpdateFrame_copyCharges(data)
@@ -1746,12 +1774,29 @@ function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
         else
             frame.Icon:Hide()
         end
+        -- Buff is active, restore normal color
+        if config.iconSettings.desaturated then
+            frame.icon:SetDesaturated(false)
+            -- Restore original color from config
+            local color = config.iconColor or {}
+            frame.icon:SetVertexColor(
+                color.r or 1,
+                color.g or 1,
+                color.b or 1,
+                color.a or 1
+            )
+        end
     else
         frame.count:SetText("")
         if config.iconSettings.iconDisplayState == 'always' or config.iconSettings.iconDisplayState == 'inactive' or config.iconSettings.iconDisplayState == 'available' then
             frame.Icon:Show()
         else
             frame.Icon:Hide()
+        end
+        -- Buff is inactive, apply grayscale effect
+        if config.iconSettings.desaturated then
+            frame.icon:SetVertexColor(0.6, 0.6, 0.6, 0.6)
+            frame.icon:SetDesaturated(true)
         end
     end
 end
