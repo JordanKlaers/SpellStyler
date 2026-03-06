@@ -1,29 +1,3 @@
--- IconSettingsRenderer.lua
--- Standalone module for rendering icon configuration controls
--- Extracted from Cooldowns module to be reusable
---
--- USAGE EXAMPLE:
---[[
-    -- In your frame setup code:
-    local settingsPanel = CreateFrame("Frame", nil, parentFrame)
-    settingsPanel:SetAllPoints()
-    
-    -- Initialize the renderer
-    local rendererAPI = SpellStyler.IconSettingsIconSettingsRenderer:RenderIntoContainer(settingsPanel, {
-        trackerType = "buffs",  -- or "customIcons"
-        onIconClick = function(uniqueID)
-            -- Optional: Called when an icon is selected
-            print("Selected icon:", uniqueID)
-        end
-    })
-    
-    -- When an icon is clicked in your UI:
-    rendererAPI.selectIcon(uniqueID)  -- Shows settings for this icon
-    
-    -- To clear the selection:
-    rendererAPI.clearSelection()
-]]
-
 local ADDON_NAME, SpellStyler = ...
 SpellStyler.IconSettingsRenderer = SpellStyler.IconSettingsRenderer or {}
 local IconSettingsRenderer = SpellStyler.IconSettingsRenderer
@@ -860,7 +834,6 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     
     -- Validate config inputs
     if not config.configInputs then
-        print("ERROR: config.configInputs is nil")
         return
     end
     

@@ -58,3 +58,7 @@ Slightly less techincal summary:
 Slightly more technical summary:
 	- check for the talent change and update spell id to reload the necessary parts of the addon to respond to changing talents
 	- adds a check for having a valid talent spec before doing anything. Porting can cause the spec to be null for a moment that would throw errors
+
+Version 0.2.3
+
+	- Fixed a bug when changing specs that was missed in previous patch

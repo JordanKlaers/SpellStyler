@@ -1715,6 +1715,10 @@ function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
     local sourceFrame = cooldownManagerFrames["buffs"][uniqueID]
     local db = FrameTrackerManager:GetDataBase_V2()
     local config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, "buffs")
+    if not config or not config.iconSettings then
+        --This can happen when changing specs. The old and new frames exist in a moment where the hook functions still trigger on the old frames but reference the new database (for the spec you changed to) resulting in no config, usually due to the spell not existing in the new spec. Not to mention its for a frame used by the old spec.
+        return
+    end
     local auraInstanceID = nil
     if sourceFrame then
         pcall(function()
@@ -1876,7 +1880,6 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                                     buffTimerDir
                                 )
                             end
-
                         end)
                         FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
                     end
