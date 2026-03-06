@@ -182,6 +182,10 @@ local function ShowBorderDemo()
 
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
 
+        -- Store references globally so other modules can update the settings menu
+        SpellStyler.settingsMenu = settingsMenu
+        SpellStyler.settingsContentFrame = settingsContentFrame
+
         -- Now that settingsContentFrame exists, wire up the Update button
         updateBtn:SetScript("OnClick", function()
             for _, tType in ipairs({"buffs", "essential", "utility"}) do

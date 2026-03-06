@@ -48,3 +48,13 @@ Slightly less techincal summary:
 
 Slightly more technical summary:
 	- UNIT_AURA contains non secret values for the buff that has been removed. Saving the aura instance ID onto the frame allows identifying a match so the buff can have its state updated correctly.
+
+Version 0.2.2
+
+Slightly less techincal summary:
+	- Changing talents should auto update
+	- Porting should not throw an error
+
+Slightly more technical summary:
+	- check for the talent change and update spell id to reload the necessary parts of the addon to respond to changing talents
+	- adds a check for having a valid talent spec before doing anything. Porting can cause the spec to be null for a moment that would throw errors

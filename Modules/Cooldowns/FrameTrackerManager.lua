@@ -180,11 +180,18 @@ local function AddNewTrackerValueConfig(data)
         showProcGlow = true  -- Show spell activation glow
     }
 end
+local _cachedSpecID = nil
 function FrameTrackerManager:GetCurrentSpecID()
     local specIndex = GetSpecialization()
-    if not specIndex then return nil end
-    local specID = GetSpecializationInfo(specIndex)
-    return specID
+    if specIndex then
+        local specID = GetSpecializationInfo(specIndex)
+        if specID then
+            _cachedSpecID = specID
+            return specID
+        end
+    end
+    -- During loading screens GetSpecialization() returns nil; fall back to last known spec
+    return _cachedSpecID
 end
 function FrameTrackerManager:GetDataBase_V2()
     local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
@@ -216,6 +223,22 @@ function FrameTrackerManager:GetDataBase_V2()
             }
         }
     --]]
+end
+
+function FrameTrackerManager:HandleTalentChange()
+    -- Re-hook all buff cooldown frames
+    for _, tType in ipairs({"buffs", "essential", "utility"}) do
+        FrameTrackerManager:HookAllBuffCooldownFrames(tType)
+        FrameTrackerManager:ApplyViewerVisibility(tType)
+    end
+    
+    -- Update settings menu if it's open
+    if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() and SpellStyler.settingsContentFrame then
+        SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+        if FrameTrackerManager.EnableDraggingForAllFrames then
+            FrameTrackerManager:EnableDraggingForAllFrames()
+        end
+    end
 end
 
 function FrameTrackerManager:AddTrackerValue(trackerValueConstructorData)
@@ -254,6 +277,7 @@ end
 
 function FrameTrackerManager:GetAllTrackerValues(trackerType)
     local db = FrameTrackerManager:GetDataBase_V2()
+    if not db then return {} end
     return db[trackerType]
 end
 
@@ -1242,7 +1266,9 @@ end
 
 function FrameTrackerManager:UpdateFrame_IgnoreGCD(uniqueID, trackerType)
     local trackerConfig = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
-    local frame = SpellStyler_frames[trackerType][uniqueID] 
+    if not trackerConfig or not trackerConfig.statusBar then return end
+    local frame = SpellStyler_frames[trackerType][uniqueID]
+    if not frame then return end
     frame.isCooldownActive = false
     local showstatusBar = (
         trackerConfig.statusBar.displayState == "always"
@@ -1307,7 +1333,9 @@ end
 
 function FrameTrackerManager:UpdateFrame_RealCooldown(uniqueID, trackerType)
     local trackerConfig = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
-    local frame = SpellStyler_frames[trackerType][uniqueID] 
+    if not trackerConfig or not trackerConfig.statusBar then return end
+    local frame = SpellStyler_frames[trackerType][uniqueID]
+    if not frame then return end
     local spellInfo = C_Spell.GetSpellInfo(uniqueID)
     --frame.isCooldownActive = true
     local showstatusBar = (
@@ -1625,7 +1653,9 @@ end
 
 function FrameTrackerManager:UpdateFrame_copyCharges(data)
     local frame = SpellStyler_frames[data.trackerType][data.uniqueID]
+    if not frame then return end
     local config = FrameTrackerManager:GetSpecificTrackerValue(data.uniqueID, data.trackerType)
+    if not config or not config.countText then return end
     local spellInfo = C_Spell.GetSpellInfo(frame.updatedSpellID or data.uniqueID)
     -- If display charges is disabled, hide the count text and bail out early
     if not config.countText.display then
@@ -1683,6 +1713,7 @@ function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
         return
     end
     local sourceFrame = cooldownManagerFrames["buffs"][uniqueID]
+    local db = FrameTrackerManager:GetDataBase_V2()
     local config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, "buffs")
     local auraInstanceID = nil
     if sourceFrame then
@@ -1817,7 +1848,10 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
             
             local function hookCallback(self)
                 local uniqueID = self.spellStyler_spellID
-                if uniqueID and SpellStyler_frames[trackerType][uniqueID] then
+                local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
+                --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+                local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
+                if hasSpecialization and uniqueID and SpellStyler_frames[trackerType][uniqueID] then
                     -- For buffs, track active state based on visibility
                     local isShown = false
                     pcall(function() 
@@ -1861,6 +1895,10 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                 cdm_frame.hasHookedCooldown = true
                 hooksecurefunc(sourceCooldown, "SetCooldown", function(self, start, duration)
                     local suc, err = pcall(function()
+                        local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
+                        --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+                        local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
+                        if not hasSpecialization then return end
                         local uniqueID = self.spellStyler_spellID
                         local customFrame = SpellStyler_frames[trackerType][uniqueID]
                         if not customFrame then return end
@@ -1871,16 +1909,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                             -- C_Timer.After(0.2, function()
                                 durationObj = C_UnitAuras.GetAuraDuration("player", cdm_frame:GetAuraSpellInstanceID())
                                 customFrame.currentAuraInstanceID = cdm_frame:GetAuraSpellInstanceID()
-                                -- DevTool:AddData({
-                                --     pullingOffFrame = self:GetCooldownTimes(),
-                                --     auraInstanceID = self.GetAuraSpellInstanceID and self:GetAuraSpellInstanceID(),
-                                --     start = start,
-                                --     duration = duration,
-                                --     obj_start = durationObj and durationObj:GetStartTime(),
-                                --     obj_duration = durationObj and durationObj:GetTotalDuration()
-                                -- }, "SetCooldown - buffs")
                                 if durationObj then
-                                    DevTool:AddData("adding coodlown")
                                     customFrame.cooldown:SetCooldown(durationObj:GetStartTime(), durationObj:GetTotalDuration()) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
                                     if customFrame.statusBar and customFrame.statusBar.SetTimerDuration then
                                         local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
@@ -2033,13 +2062,30 @@ end
 
 -- Event frame for UNIT_AURA and PLAYER_ENTERING_WORLD
 local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
 eventFrame:RegisterEvent("UNIT_AURA")
 
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
+
+
 eventFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_ENTERING_WORLD" then
+        hasPlayerEnetedWorld = true
+        FrameTrackerManager:Initalize()
+    end
+    if event == "PLAYER_LEAVING_WORLD" then
+        hasPlayerEnetedWorld = false
+    end
+    local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
+    --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+    local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
+    if (event ~= "UNIT_SPELLCAST_SUCCEEDED") and (hasPlayerEnetedWorld == false or not hasSpecialization) then
+        return
+    end
+
     if event == "UNIT_AURA" then
         local unitTarget, updateInfo = ...
         local db = FrameTrackerManager:GetDataBase_V2()
@@ -2049,19 +2095,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         for _, auraID in ipairs(removedAuraInstanceID) do
             removedAuraSet[auraID] = true
         end
-        DevTool:AddData({
-            SpellStyler_frames = SpellStyler_frames,
-            unitTarget = unitTarget,
-            updateInfo = updateInfo,
-            db = db,
-            removedAuraSet = removedAuraSet
-        }, "UNIT AURA")
         
         for uniqueID, customFrame in pairs(SpellStyler_frames["buffs"]) do
             local currentAuraInstanceID = customFrame.currentAuraInstanceID or 0
-            DevTool:AddData({customFrame = customFrame}, "frame in loop")
             if removedAuraSet[currentAuraInstanceID] then
-                DevTool:AddData("clearing coodlown")
                 customFrame.cooldown:Clear()
                 customFrame.statusBar:SetValue(0)
                 FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
@@ -2071,6 +2108,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
     if event == "SPELL_UPDATE_ICON" then
         local spellID = ...
+        if not spellID then return end
         local info = C_Spell.GetSpellInfo(spellID)
         if not info then return end
         local db = FrameTrackerManager:GetDataBase_V2()
@@ -2084,12 +2122,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
         if not trackedFrame then
-            DevTool:AddData({db = db, info = info}, "couldnt find frame for icon update " .. info.name)
             return            
         end
         --make sure to update the texture when it changes
         trackedFrame.icon:SetTexture(info.iconID)
-        DevTool:AddData({db = db, info = info}, "setting texture... " .. info.name)
         if info.iconID ~= info.originalIconID then
             -- Icon changed: the spell is now displaying an override (e.g. Avenging Crusader -> Crusader Strike)
             trackedFrame.updatedIconID = info.iconID
@@ -2098,7 +2134,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 uniqueID = spellID,
                 trackerType = trackedTrackerType
             })
-            DevTool:AddData({db = db, spellID = spellID, iconID = info.iconID, originalIconID = info.originalIconID}, "SPELL_UPDATE_ICON [overridden] " .. info.name)
         else
             -- Icon reverted to original: the override ended; try to apply the spell's own cooldown
             trackedFrame.updatedIconID = nil
@@ -2106,8 +2141,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             if trackedFrame.cooldown then
                 trackedFrame.cooldown.updatedSpellID = nil
             end
-            
-            DevTool:AddData({spellID = spellID}, "SPELL_UPDATE_ICON [reverted] " .. info.name)
+
             -- Try to apply any real cooldown still running on the original spell
             local applied = false
             local s = pcall(function()
@@ -2134,10 +2168,25 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
     if event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unitTarget, castGUID, spellID, castBarID = ...
+                
         local isSecretSpellID = issecretvalue(spellID)
         local s, e = pcall(function()
             if isSecretSpellID then
             else
+                -- Detect talent changes (spell 384255 is the talent change spell)
+                if spellID == 384255 or spellID == 200749 then
+                    C_Timer.After(0.5, function()
+                        local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
+                        --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+                        local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
+                        FrameTrackerManager:HandleTalentChange()
+                    end)
+                    return
+                end
+                local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
+                --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+                local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
+                if not hasSpecialization then return end
                 --make sure "SPELL_UPDATE_ICON" is processed first
                 C_Timer.After(0, function()
                     local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
@@ -2163,13 +2212,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end)
             end
         end)
-        if e then
-            DevTool:AddData({e = e}, "error - UNIT_SPELLCAST_SUCCEEDED")
-        end
-    end
-    if event == "PLAYER_ENTERING_WORLD" then
-        hasPlayerEnetedWorld = true
-        FrameTrackerManager:Initalize()
     end
     if event == "SPELL_UPDATE_COOLDOWN" then
         local spellID, baseSpellID, category, startRecoveryCategory = ...
@@ -2196,7 +2238,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
                 end
             end)
-            if error then DevTool:AddData({error = error}, "error >_<") end
         end
     end
 end)
