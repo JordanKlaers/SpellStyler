@@ -66,3 +66,13 @@ Version 0.2.3
 Version 0.2.4
 
 	- Implements the desaturated setting that was not hooked up
+
+Version 0.3.0
+
+Slightly less techincal summary:
+	- Buffs should correctly update their icon if they have dynamic icons
+	- Spells should correctly update in response to other spells that would reduce their cooldown, specifically when their cooldown is completely reset
+
+Slightly more technical summary:
+	- Buffs check the CDM frame to see pull the icon texture to keep it updated on changes
+	- Spells had an incorrect check for detecting updates. The condition checks for a less strict difference to determine if the frame should be updated (have its cooldown data reapplied)

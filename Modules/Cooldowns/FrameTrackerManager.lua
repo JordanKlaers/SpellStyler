@@ -1910,6 +1910,12 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                         SpellStyler_frames[trackerType][uniqueID].isBuffActive = isShown
                         local durationObj = nil
                         pcall(function()
+                            local frame = SpellStyler_frames[trackerType][uniqueID]
+                            local icon = self.Icon or self.icon
+                            local texture = (icon.GetTexture and icon:GetTexture()) or icon.texture or self.spellStyler_texture
+                            frame.icon:SetTexture(texture)
+                        end)
+                        pcall(function()
                             durationObj = C_UnitAuras.GetAuraDuration("player", self:GetAuraSpellInstanceID())
                             if durationObj then
                                 local spellInfo = C_Spell.GetSpellInfo(uniqueID)
@@ -2033,13 +2039,12 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
             durationObject = C_Spell.GetSpellCooldownDuration(data.spellID)
         end
     end)
-    if e or not durationObject then
-        -- Some spells might need to spend a buff before going on cooldown (like natures swiftness). This flag tells "SPELL_UPDATE_COOLDOWN" to also try applying cooldown, not just visibility conditions
-        data.customFrame.durationPotentiallyDelayed = true
-        return
-    end
     if data.forceUpdate then
         data.customFrame.cooldown:Clear()
+    end
+    local spellInfo = C_Spell.GetSpellInfo(data.spellID) or {}
+    if e or not durationObject then
+        return
     end
     data.customFrame.isCooldownActive = true
     data.customFrame.cooldown:SetCooldown(durationObject:GetStartTime(), durationObject:GetTotalDuration())
@@ -2162,7 +2167,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local db = FrameTrackerManager:GetDataBase_V2()
         -- Find the tracked frame for this spell across all tracker types
         local trackedFrame, trackedTrackerType
-        for _, tType in ipairs({"essential", "utility"}) do
+        for _, tType in ipairs({"buffs", "essential", "utility"}) do
             if SpellStyler_frames[tType] and SpellStyler_frames[tType][spellID] then
                 trackedFrame = SpellStyler_frames[tType][spellID]
                 trackedTrackerType = tType
@@ -2245,7 +2250,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     for _, tType in ipairs({"essential", "utility"}) do
                         for uniqueID, trackedFrame in pairs(SpellStyler_frames[tType]) do
                             -- skip the frame that was already matched
-                            if (frameMatchData and uniqueID ~= frameMatchData.spellID and tType ~= frameMatchData.trackerType) or not frameMatchData then
+                            if (frameMatchData and (uniqueID ~= frameMatchData.spellID or tType ~= frameMatchData.trackerType)) or not frameMatchData then
                                 if trackedFrame.isCooldownActive then
                                     FrameTrackerManager:ApplyCooldownDuration({
                                         customFrame = trackedFrame,
@@ -2268,7 +2273,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
-
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
         if frameMatchData then
             local success, error = pcall(function()
