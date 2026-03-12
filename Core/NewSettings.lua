@@ -57,6 +57,7 @@ local function ShowBorderDemo()
 
     if not settingsMenu then
         settingsMenu = CreateFrame("Frame", "ss_BorderDemo", UIParent, "BackdropTemplate")
+        settingsMenu:Hide()  -- hide immediately so Show() later triggers OnShow hooks
 		local width = 400
         settingsMenu:SetSize(width, 600)
         settingsMenu:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
@@ -187,6 +188,11 @@ local function ShowBorderDemo()
         helpContentFrame:SetAllPoints(insetSettingsContainer)
         helpContentFrame:SetFrameLevel(insetSettingsContainer:GetFrameLevel() + 1)
 
+        -- ---- Containers view ----
+        local containerContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
+        containerContentFrame:SetAllPoints(insetSettingsContainer)
+        containerContentFrame:SetFrameLevel(insetSettingsContainer:GetFrameLevel() + 1)
+
         -- ---- Utility view ----
         local utilityContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
         utilityContentFrame:SetAllPoints(insetSettingsContainer)
@@ -296,10 +302,12 @@ local function ShowBorderDemo()
 
         SpellStyler.HelpContentRenderer:RenderHelpView(helpContentFrame)
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
+        SpellStyler.ContainerSettingsRenderer:RenderContainerView(containerContentFrame)
 
-        RegisterView("icons",   settingsContentFrame)
-        RegisterView("help",    helpContentFrame)
-        RegisterView("utility", utilityContentFrame)
+        RegisterView("icons",      settingsContentFrame)
+        RegisterView("help",       helpContentFrame)
+        RegisterView("containers", containerContentFrame)
+        RegisterView("utility",    utilityContentFrame)
         SwitchToView("icons")
 
         -- Store references globally so other modules can update the settings menu
@@ -332,27 +340,39 @@ local function ShowBorderDemo()
 
         local tabBar = CreateFrame("Frame", nil, UIParent)
         tabBar:SetWidth(tabFaceW + 55)
-        tabBar:SetHeight(3 * tabH + 2 * tabGap)
         tabBar:SetFrameLevel(settingsMenu:GetFrameLevel() - 1)  -- one level BEHIND settingsMenu
         tabBar:SetPoint("TOPLEFT", settingsMenu, "TOPRIGHT", 0, -100)
 
         -- Keep tabBar visible only while settingsMenu is shown
-        settingsMenu:HookScript("OnShow", function() tabBar:Show() end)
-        settingsMenu:HookScript("OnHide", function() tabBar:Hide() end)
+        settingsMenu:HookScript("OnShow", function()
+            tabBar:Show()
+            if SpellStyler.Containers then
+                SpellStyler.Containers:SetEditMode(true)
+            end
+        end)
+        settingsMenu:HookScript("OnHide", function()
+            tabBar:Hide()
+            if SpellStyler.Containers then SpellStyler.Containers:SetEditMode(false) end
+        end)
+        
+        local tabSpells     = SpellStyler.CreateTab(tabBar, "Spells",     tabFaceW, tabH)
+        local tabHelp       = SpellStyler.CreateTab(tabBar, "Help",       tabFaceW, tabH)
+        local tabContainers = SpellStyler.CreateTab(tabBar, "Containers", tabFaceW, tabH)
+        local tabUtility    = SpellStyler.CreateTab(tabBar, "Utility",    tabFaceW, tabH)
 
-        local tabSpells  = SpellStyler.CreateTab(tabBar, "Spells",  tabFaceW, tabH)
-        local tabHelp    = SpellStyler.CreateTab(tabBar, "Help",    tabFaceW, tabH)
-        local tabUtility = SpellStyler.CreateTab(tabBar, "Utility", tabFaceW, tabH)
+        tabBar:SetHeight(4 * tabH + 3 * tabGap)
 
-        tabSpells:SetPoint("TOPLEFT",  tabBar,    "TOPLEFT", 0, 0)
-        tabHelp:SetPoint("TOPLEFT",    tabSpells, "BOTTOMLEFT", 0, -tabGap)
-        tabUtility:SetPoint("TOPLEFT", tabHelp,   "BOTTOMLEFT", 0, -tabGap)
+        tabSpells:SetPoint("TOPLEFT",     tabBar,        "TOPLEFT", 0, 0)
+        tabHelp:SetPoint("TOPLEFT",       tabSpells,     "BOTTOMLEFT", 0, -tabGap)
+        tabContainers:SetPoint("TOPLEFT", tabHelp,       "BOTTOMLEFT", 0, -tabGap)
+        tabUtility:SetPoint("TOPLEFT",    tabContainers, "BOTTOMLEFT", 0, -tabGap)
 
-        tabSpells.onTabClick  = function() SwitchToView("icons") end
-        tabHelp.onTabClick    = function() SwitchToView("help") end
-        tabUtility.onTabClick = function() SwitchToView("utility") end
+        tabSpells.onTabClick     = function() SwitchToView("icons") end
+        tabHelp.onTabClick       = function() SwitchToView("help") end
+        tabContainers.onTabClick = function() SwitchToView("containers") end
+        tabUtility.onTabClick    = function() SwitchToView("utility") end
 
-        SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabUtility })
+        SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabContainers, tabUtility })
         tabSpells:SetSelected(true)
     end
 	if SpellStyler.FrameTrackerManager then
@@ -377,7 +397,7 @@ combatDelayFrame:SetScript("OnEvent", function(self, event)
         -- Force-close the settings menu when entering combat
         if settingsMenu and settingsMenu:IsShown() then
             settingsMenu:Hide()
-            pendingShowAfterCombat = false
+            pendingShowAfterCombat = true -- automatically reopen if it was forced closed
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
         if pendingShowAfterCombat then

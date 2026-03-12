@@ -76,3 +76,12 @@ Slightly less techincal summary:
 Slightly more technical summary:
 	- Buffs check the CDM frame to see pull the icon texture to keep it updated on changes
 	- Spells had an incorrect check for detecting updates. The condition checks for a less strict difference to determine if the frame should be updated (have its cooldown data reapplied)
+
+Version 0.4.0
+
+Slightly less technical summary:
+	- Spell icon updates, spells turning into other spells, spell charges and spell cooldowns should all behave more reliably
+
+Slightly more technical summary:
+	- Spells now check for the override spell id to pull the correct cooldown data as well as charges.
+	- Spells use the OnShow and and OnHide events for their cooldown frames to more reliaby process valid cooldowns. (SPELL_UPDATE_COOLDOWN and 'OnCooldownDone' are still used as well. SPELL_UDPATE_COOLDOWN reliably detects when a spell have zero remaining charges which works for spell with and without charges)

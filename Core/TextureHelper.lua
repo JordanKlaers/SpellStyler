@@ -47,7 +47,7 @@ local function CreateCornerFrame(parent, name, point, xOff, yOff, l, r, t, b, ro
     
     local tex = frame:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(frame)
-    tex:SetTexture(4707839)
+    tex:SetTexture(4554359)
     tex:SetTexCoord(l,r,t,b)
     local corner = {
         frame = frame,
@@ -134,9 +134,9 @@ local function CreateTexCoordTester()
     -- cornerFrames[2] = CreateCornerFrame(coordFrame, "TopRightCorner", "TOPRIGHT",   68,     28.99,  0,      1,      0.680,  0.780,  0,  100,    100)
     -- cornerFrames[6] = CreateCornerFrame(coordFrame, "Corner1", "BOTTOMRIGHT",       10,     -6,     1,      0,      0.680,  0.780,  0,  100,    100)
     -- cornerFrames[7] = CreateCornerFrame(coordFrame, "Corner2", "BOTTOMLEFT",        -6,     -8,     0.34,   0.483,  0.27,   0.42,   0,  68,     68)
-    cornerFrames[1] = CreateCornerFrame(coordFrame, "LineBottom", "BOTTOM",         8, -54.9,   0,      1,      0.800,    0.665,    90,     55,    25)
-    cornerFrames[2] = CreateCornerFrame(coordFrame, "Corner1", "BOTTOMRIGHT",       10, -6,     0,      1,      0.665,    0.800,    90,     55,    25)
-    cornerFrames[3] = CreateCornerFrame(coordFrame, "Corner2", "BOTTOMLEFT",        -6, -8,     0,  1,   0.2,    0.3,   90,     100,     20)
+    cornerFrames[1] = CreateCornerFrame(coordFrame, "LineBottom", "BOTTOM",         0, 0,   0.200, 0.550, 0.300, 0.350,    0,     200, 200)
+    cornerFrames[2] = CreateCornerFrame(coordFrame, "Corner1", "BOTTOMRIGHT",       0, 0,   0.000, 1.000, 0.000, 0.050,    0,     200, 200)
+    -- cornerFrames[3] = CreateCornerFrame(coordFrame, "Corner2", "BOTTOMLEFT",        -6, -8,     0,  1,   0.2,    0.3,   90,     100,     20)
     
     -- Create input panel on the right side
     local inputPanel = CreateFrame("Frame", nil, coordFrame, "BackdropTemplate")
@@ -461,9 +461,11 @@ end
 -- DevTools integration for scanned textures
 SLASH_SS_DEVTEX1 = "/ssdevtex"
 SlashCmdList["SS_DEVTEX"] = function()
-    DevTool:AddData(savedTextures, "SpellStyler Scanned Textures")
     print("[SpellStyler] Scanned textures added to DevTools")
 end
 
---40707839
+--6725697
+
+--4554359 corner and edges
+--4554383 - background
 
