@@ -440,13 +440,13 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
                 },
-                -- {
-                --     type = "checkbox",
-                --     label = "Is Spell Off the GCD",
-                --     tooltip = "Enable for spells that are inherently off the global cooldown (e.g. self-buff procs). When checked, SPELL_UPDATE_COOLDOWN events for this spell will always be treated as a real cooldown regardless of the isOnGCD field.",
-                --     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
-                --     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
-                -- },
+                {
+                    type = "checkbox",
+                    label = "Is Spell Off the GCD",
+                    tooltip = "Enable for spells that are inherently off the global cooldown. This should help ensure consistent reliable display.",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
+                },
             }
         },
         

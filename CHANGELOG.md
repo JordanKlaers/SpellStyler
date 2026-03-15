@@ -106,3 +106,22 @@ Slightly less technical summary:
 
 Slightly more technical summary:
 	- Updated the condition for hiding spell charges to include the new off gcd manually spell charge tracking nonsense
+
+Version 0.4.3
+
+Slightly less technical summary:
+	- Spells now control visibility through the charges rather than the previous convoluted system
+
+Slightly more technical summary:
+	- By using SetAlpha on the icon frame, passing the current spell charges, the icon visibility is controlled with better consistency. This speficially solves (among other things) things like: a spell with charges having its cooldown duration reduced beyond the end of the current duration. For example, at 0 avaiable charges of holy shock, 0.5 seconds on the remaining cooldown duration. Casting Shield of the righteous would reduce the cooldown INTO the next charge, completely skippng the "OnCooldownDone" hook that would help determin if a spell could be cast again - thus causing issues with the visibility conditions.
+	- Only the icon uses this updated solution and only for the specific icon visibility states that match the capabilities of the SetAlpha solution. This means you could still show the icon only when its unavailable (althought slightly less reliable)
+
+Version 0.4.4
+
+Slightly less technical summary:
+	- Spells that dynamically update their cooldown should no longer apply invalid durations
+	- Additional updates to ensure spells apply the correct visibility conditions
+
+Slightly more technical summary:
+	- Use the OnShow callback of a cooldown frame to validate the duration before applying to the real frame.
+	- Apply charges in more methods to ensure the frame can update its visibility conditions in all cases
