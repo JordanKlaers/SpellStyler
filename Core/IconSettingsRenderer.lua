@@ -440,13 +440,13 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
                 },
-                {
-                    type = "checkbox",
-                    label = "Is Spell Off the GCD",
-                    tooltip = "Enable for spells that are inherently off the global cooldown (e.g. self-buff procs). When checked, SPELL_UPDATE_COOLDOWN events for this spell will always be treated as a real cooldown regardless of the isOnGCD field.",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
-                },
+                -- {
+                --     type = "checkbox",
+                --     label = "Is Spell Off the GCD",
+                --     tooltip = "Enable for spells that are inherently off the global cooldown (e.g. self-buff procs). When checked, SPELL_UPDATE_COOLDOWN events for this spell will always be treated as a real cooldown regardless of the isOnGCD field.",
+                --     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
+                --     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
+                -- },
             }
         },
         
@@ -520,13 +520,35 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
                 {
                     type = "dropdown",
-                    label = "Fill Direction:",
+                    label = "Fill or Empty:",
                     options = {
-                        { label = "Regular", value = "regular" },
-                        { label = "Inverse", value = "inverse" },
+                        { label = "Fill", value = "regular" },
+                        { label = "Empty", value = "inverse" },
                     },
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.barFillDirection") or "regular" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.barFillDirection", value) end,
+                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.fillOrEmpty") or "regular" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.fillOrEmpty", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Progress Direction:",
+                    options = {
+                        { label = "Standard", value = "standard" },
+                        { label = "Reverse",  value = "reverse" },
+                    },
+                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.progressDirection") or "standard" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.progressDirection", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Texture Rotation:",
+                    options = {
+                        { label = "0 degrees", value = 0 },
+                        { label = "90 degrees",  value = math.pi / 2 },
+                        { label = "180 degrees",  value = math.pi },
+                        { label = "270 degrees",  value = (math.pi / 2) * 3 },
+                    },
+                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.textureRotation") or 0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.textureRotation", value) end,
                 },
                 {
                     type = "dropdown",

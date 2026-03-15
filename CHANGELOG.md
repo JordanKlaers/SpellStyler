@@ -85,3 +85,16 @@ Slightly less technical summary:
 Slightly more technical summary:
 	- Spells now check for the override spell id to pull the correct cooldown data as well as charges.
 	- Spells use the OnShow and and OnHide events for their cooldown frames to more reliaby process valid cooldowns. (SPELL_UPDATE_COOLDOWN and 'OnCooldownDone' are still used as well. SPELL_UDPATE_COOLDOWN reliably detects when a spell have zero remaining charges which works for spell with and without charges)
+
+Version 0.4.1
+
+Slightly less technical summary:
+	- Spells no longer need to be tagged as off GCD
+	- Buffs should more consistently apply the correct visibility state.
+	- Added Settings for status bars to rotate the texture. This should allow for custom textures to better support custom fill directions. Rotating the texture while changing the orientation and fill direction can help. Reach out to me if you have issues.
+
+Slightly more technical summary:
+	- Small update to the conditional for off GCD spells results in them no longer needing to be flagged.
+	- Buffs for some reason, had some that were unreliable in using the CDM IsShown() for controlling their visibliity. Updated to also consider the presence of an auraInstanceID as an indiication the buff is active.
+	- Identified spells that can be off GCD AND have charges. This was not handled correctly. Updates have been made to manually track spell charges only for spells off the GCD. (This assumes those spells can not regain charges outside of the typical cooldown end event on the cooldown frame).
+	- Charges now use the "SPELL_UPDATE_CHARGES" event to update the charges text

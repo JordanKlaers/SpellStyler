@@ -12,20 +12,18 @@ local FRAME_PREFIX = "TweaksUI_CustomFrameTracker_"
 ---@class TrackerFrameMeta
 ---@field activeSpellID number          The active spell ID (may differ from uniqueID when a spec overrides the spell)
 ---@field isSpellWithCharges boolean    true if the spell has more than one max charge
----@field spellChargeCount number       Max charge count (or 1 for non-charge spells)
----@field spellChargeState string       'max' | 'zero' | 'oneChargeOnCooldown' | 'moreThenOneChargeOnCooldown'
+---@field spellChargeCount number       Max charge count (or 1 for non-charge spells)'moreThenOneChargeOnCooldown'
 ---@field isDurationActive boolean      true while a real cooldown is running
----@field spellName string              Spell name captured at frame creation
----@field isSpellOffGCD boolean         true if the spell bypasses the GCD
+---@field isSpellOffGCD boolean|nil     true if the spell bypasses the GCD
 ---@field mockCooldownActive boolean    true while a mock cooldown preview is running (settings UI)
 ---@field canBeCast boolean             true when not on cooldown with all charges consumed
 ---@field spellHasCharges boolean       true when the spell currently has at least one charge available
 ---@field currentAuraInstanceID number  Instance ID of the currently tracked aura (buffs tracker type)
+---@field customTexture string|nil         Custom texture of the icon
 
 -- ============================================================================
 
 -- ============================================================================
-
 
 
 -- ============================================================================
@@ -154,7 +152,8 @@ local function AddNewTrackerValueConfig(data)
             customBarTexture = "",
             onlyRenderBar = false,
             barOrientation = 'horizontal', -- 'vertical'
-            barFillDirection = 'regular', -- 'inverse'
+            fillOrEmpty = 'regular', -- 'inverse'
+            progressDirection = 'standard', -- 'reverse'
             defaultFillValue = 'empty', -- 'full'
             color = {
                 r = 0.2,
@@ -302,6 +301,11 @@ end
 function FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
     local db = FrameTrackerManager:GetDataBase_V2()
     local iconConfig = db[trackerType][uniqueID] or {}
+    -- Migrate legacy barFillDirection -> fillOrEmpty (one-time per-entry migration)
+    if iconConfig.statusBar and iconConfig.statusBar.barFillDirection ~= nil and iconConfig.statusBar.fillOrEmpty == nil then
+        iconConfig.statusBar.fillOrEmpty = iconConfig.statusBar.barFillDirection
+        iconConfig.statusBar.barFillDirection = nil
+    end
     return iconConfig
 end
 
@@ -628,12 +632,11 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         spellChargeCount = spellChargesInfo and spellChargesInfo.maxCharges or 1,
         -- experimental (less direct) count tracking. Zero is guarenteed by "SPELL_UPDATE_COOLDOWN". The others are based on assumptions that the other events happen as expected
         -- Should replace (canBeCast)
-        spellChargeState = 'max', -- 'max', 'zero', 'oneChargeOnCooldown', 'moreThenOneChargeOnCooldown' -- should replace "spellHasCharges"
+        -- spellChargeState = 'max', -- 'max', 'zero', 'oneChargeOnCooldown', 'moreThenOneChargeOnCooldown' -- should replace "spellHasCharges"
         -- Used to track if the cooldown is active, so that the cooldowns can be updated in response to other spell casts (Holy Shock can reduce the cooldown of judgment)
         isDurationActive = false,
-        spellName = spellInfo.name,
         -- This helps ensure proper resposne for triggering spell cooldowns for offGCD spells - in "SPELL_UPDATE_COOLDOWN"
-        isSpellOffGCD = trackerConfig.iconSettings.isSpellOffGCD or false,
+        isSpellOffGCD = nil, -- Attempt to automatically identify. Revert to manually flagging with the old setting: trackerConfig.iconSettings.isSpellOffGCD or false,
         mockCooldownActive = false,
         -- true when not on cooldown with all charges consumed
         canBeCast = true,
@@ -641,9 +644,8 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         spellHasCharges = spellChargesInfo and spellChargesInfo.currentCharges > 1 or false,
         -- instance ID of the currently tracked aura (buffs only)
         currentAuraInstanceID = 0,
-        customTexture = trackerConfig.iconSettings.iconTexturePath ~= '' and trackerConfig.iconSettings.iconTexturePath or trackerConfig.defaultIconTexturePath
+        customTexture = trackerConfig.iconSettings.iconTexturePath ~= '' and trackerConfig.iconSettings.iconTexturePath ~= nil and trackerConfig.iconSettings.iconTexturePath or nil
     }
-
     -- Seed the off-GCD cache immediately so the event handler knows before the first cast
     if frame.meta.isSpellOffGCD then
         offGCDSpellCache[uniqueID] = true
@@ -671,9 +673,8 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     frame.icon:SetPoint("TOPLEFT", 0, 0)
     frame.icon:SetPoint("BOTTOMRIGHT", 0, 0)
     frame.icon:SetTexCoord(0, 1, 0, 1)  -- Crop off edges for cleaner look
-    local customTexture = (trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath)
-    local texture = customTexture or trackerConfig.defaultIconTexturePath
-    frame.icon:SetTexture(texture)
+    local iconTexture = frame.meta.customTexture or trackerConfig.defaultIconTexturePath
+    frame.icon:SetTexture(iconTexture)
     local color = trackerConfig.iconColor or {}
     frame.icon:SetVertexColor(
         color.r or 1,
@@ -711,12 +712,7 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     end)
 
     frame.cooldown:SetScript("OnHide", function(self)
-        FrameTrackerManager:UpdateFrame_Duration_Inactive({
-            customFrame = frame,
-            trackerType = trackerType,
-            uniqueID = self.uniqueID,
-            config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
-        })
+        
     end)
     
 
@@ -734,9 +730,14 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
                 end)
             end
         end
-        if (frame.meta.isSpellWithCharges) then
-            frame.meta.spellHasCharges = true
-        end
+        frame.meta.isDurationActive = false
+        frame.meta.spellChargeCount = frame.meta.spellChargeCount + 1
+        FrameTrackerManager:UpdateFrame_Duration_Inactive({
+            customFrame = frame,
+            trackerType = trackerType,
+            uniqueID = self.uniqueID,
+            config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
+        })
         C_Timer.After(0, function()
             -- must occur one update cycle after this callback so the required information is updated.
             -- Attempt to reapply cooldown duration incase the spell has multiple charges that are still on cooldown.
@@ -746,16 +747,6 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
                 uniqueID = self.uniqueID,
                 config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
             })
-            -- local activeSpell = C_Spell.GetOverrideSpell(self.uniqueID)
-            -- local postChargeDuration = C_Spell.GetSpellChargeDuration(activeSpell)
-            -- local postCooldownDuration = C_Spell.GetSpellCooldownDuration(activeSpell)
-
-            -- TODO: If a spell is cast while "isDurationActive == true" then that MUST mean a second (or more) charge was cast. Only Reapply cooldown information when that is the case. 
-            -- TODO: Consider how this solution plays into CS changing back into wings or spells with three charges (check monk for that one)
-            -- TODO: Does this require actually tracking the stacks, or can it simply be (a cast occured while on cooldown so set a flag to check for a remaining duration AFTER the original has completed)
-
-            -- TODO: Try applying a cooldown duration to a phantom frame when spells changes from base into something new, so that when the spell icon changes back to the original, it can check if a phantom frame still has a cooldown rolling an apply that back to the main frame - might need to use some spicy checks on the overrideSpellID matching the uniqueID AND saving a reference on the frames icon texture to see when it changes back to the original (the texture that it was created with) - might even need to save the changes in texture on the frame so things still work when custom textures are applied
-            -- ALSO ALSO might need to offer spellOverride custom textures if tracking a spell that can do that
         end)
     end)
     
@@ -1201,49 +1192,27 @@ function FrameTrackerManager:ToggleMockCooldown(uniqueID, trackerType)
             mockDurationObj:SetTimeFromEnd(GetTime(), 0.001)
             frame.statusBar:SetTimerDuration(
                 mockDurationObj,
-                Enum.StatusBarInterpolation.ExponentialEaseOut,
+                Enum.StatusBarInterpolation.Immediate,
                 Enum.StatusBarTimerDirection.RemainingTime
             )
         end
     else
-        -- Enable mock cooldown (30 second duration)
+        -- Enable mock cooldown (15 second duration)
         frame.meta.mockCooldownActive = true
         local mockDuration = 15
         local now = GetTime()
         
-        -- Create a proper DurationObject for SetCooldownFromDurationObject
+        -- Create a proper DurationObject for ApplyCooldownDuration
         local mockDurationObj = C_DurationUtil.CreateDuration()
         mockDurationObj:SetTimeFromStart(now, mockDuration)
-        if frame.cooldown then
-            local setSuccess = false
-            if frame.cooldown.SetCooldownFromDurationObject then
-                local success, error = pcall(function()
-                    frame.cooldown:SetCooldownFromDurationObject(mockDurationObj)
-                end)
-                setSuccess = success
-
-            end
-            -- If SetCooldownFromDurationObject doesn't exist or failed, fall back to SetCooldown
-            if not setSuccess and frame.cooldown.SetCooldown then
-                local success, error = pcall(function()
-                    frame.Cooldown:SetCooldown(startTime, mockDuration)
-                end)
-            end
-        end
         
-        if frame.statusBar and frame.statusBar.SetTimerDuration then
-            pcall(function()
-                local timerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
-                local timerDir = (timerCfg and timerCfg.statusBar and timerCfg.statusBar.barFillDirection == 'inverse')
-                    and Enum.StatusBarTimerDirection.ElapsedTime
-                    or  Enum.StatusBarTimerDirection.RemainingTime
-                frame.statusBar:SetTimerDuration(
-                    mockDurationObj,
-                    Enum.StatusBarInterpolation.ExponentialEaseOut,
-                    timerDir
-                )
-            end)
-        end
+        FrameTrackerManager:ApplyCooldownDuration({
+            customFrame = frame,
+            uniqueID = uniqueID,
+            trackerType = trackerType,
+            config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType),
+            durationObject = mockDurationObj
+        })
     end
 end
 
@@ -1386,8 +1355,6 @@ function FrameTrackerManager:UpdateFrame_Duration_Inactive(data)
                 color.a or 1
             )
         end
-        
-        FrameTrackerManager:UpdateFrame_copyCharges(data)
     end)
     FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
 end
@@ -1403,21 +1370,21 @@ function FrameTrackerManager:UpdateFrame_Duration_Active(data)
         or trackerConfig.statusBar.displayState == "active"
         or trackerConfig.statusBar.displayState == "cooldown"
     )
+    local canBeCast = frame.meta.canBeCast or (frame.meta.isSpellOffGCD == true and frame.meta.spellChargeCount > 0)
     local showSpellIcon = (
         trackerConfig.iconSettings.iconDisplayState == 'always'
         -- has available charges or can be cast
-        or (frame.meta.canBeCast and (
+        or (canBeCast and (
             trackerConfig.iconSettings.iconDisplayState == 'inactive'
             or trackerConfig.iconSettings.iconDisplayState == 'available'
         ))
         -- has no available charges or can NOT be cast
-        or (not frame.meta.canBeCast and (
+        or (not canBeCast and (
             trackerConfig.iconSettings.iconDisplayState == 'cooldown'
             or trackerConfig.iconSettings.iconDisplayState == 'active'
         ))
     )
     local suc, err = pcall(function()
-        FrameTrackerManager:UpdateFrame_copyCharges(data)
         if showstatusBar then
             frame.statusBar:Show()
             local barColor = trackerConfig.statusBar.color
@@ -1448,12 +1415,58 @@ function FrameTrackerManager:UpdateFrame_Duration_Active(data)
         
         -- A real cooldown is active; hide the full-cover overlay so the timer-driven fill shows through.
         if frame.statusBar.fullCoverTexture then
-            -- C_Timer.After(0.15, function()
-                frame.statusBar.fullCoverTexture:Hide()
-            -- end)
+            frame.statusBar.fullCoverTexture:Hide()
         end
     end)
     FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
+end
+
+
+--If spells with charges continue to be an issue (I think off GCD spells with charges might be the most likely culprit) then use this method (implementing SetAlpha(C_Spell.GetSpellCharges(spellID).currentCharges)) in conjunction with the "SPELL_UPDATE_CHARGES" event - calling only for frames with charges
+
+--- @param data ApplyCooldownDurationData
+function FrameTrackerManager:UpdateFrame_ChargeVisibility(data)
+    local frame  = data.customFrame
+    local config = data.config
+    if not frame or not config then return end
+    -- -----------------------------------------------------------------------
+    -- 1.  Charge count – provided by the caller; no API calls made here.
+    -- -----------------------------------------------------------------------
+    local currentCharges = data.currentCharges
+    if currentCharges == nil then
+        -- Caller did not supply a value; bail out rather than silently
+        -- applying wrong visibility state.
+        return
+    end
+    -- -----------------------------------------------------------------------
+    -- 2.  Icon visibility  (respects iconDisplayState)
+    -- -----------------------------------------------------------------------
+    local displayState = config.iconSettings.iconDisplayState
+    local showSpellIcon = nil
+
+    if displayState == 'always' then
+        showSpellIcon = true
+    elseif displayState == 'never' then
+        showSpellIcon = false
+    end
+
+    if showSpellIcon == true then
+        frame.icon:SetAlpha(1)
+        frame.icon:Show()
+    elseif showSpellIcon == false then
+        frame.icon:SetAlpha(0)
+        frame.icon:Hide()
+    elseif showSpellIcon == nil then
+        frame.icon:SetAlpha(currentCharges)
+    end
+
+    -- -----------------------------------------------------------------------
+    -- 3.  Cooldown sweep / edge / countdown text
+    -- -----------------------------------------------------------------------
+    
+    frame.cooldown:SetDrawSwipe(not config.iconSettings.hideDefaultSweep)
+    frame.cooldown:SetDrawEdge(not config.iconSettings.hideDefaultSweep)
+    frame.cooldown:SetHideCountdownNumbers(not config.cooldownText.display)
 end
 
 
@@ -1699,6 +1712,14 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerT
                 (trackerConfig.statusBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
             )
 
+            -- Apply fill style (progressDirection) immediately so a settings change is reflected live
+            local fillStyle = (trackerConfig and trackerConfig.statusBar and trackerConfig.statusBar.progressDirection == 'reverse')
+            local textureRotation = (trackerConfig and trackerConfig.statusBar and trackerConfig.statusBar.textureRotation or 0)
+            if textureRotation then
+                frame.statusBar:RotateTextures(textureRotation)
+            end
+            frame.statusBar:SetFillStyle(fillStyle and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
+
             -- Apply anchors and positioning
             frame.statusBar:ClearAllPoints()
             frame.statusBar:SetPoint(
@@ -1735,17 +1756,28 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerT
             pos.y or 0
         )
     end
+
+    -- Re-apply the timer duration with the latest fillOrEmpty direction and progressDirection.
+    -- ApplyCooldownDuration returns immediately when no active duration object is available,
+    -- so this is safe to call unconditionally here.
+    FrameTrackerManager:ApplyCooldownDuration({
+        customFrame = frame,
+        config = trackerConfig,
+        uniqueID = uniqueID,
+        trackerType = trackerType
+    })
 end
 
 
 
 
 --- @param data ApplyCooldownDurationData
-function FrameTrackerManager:UpdateFrame_copyCharges(data, isZeroCharges)
+function FrameTrackerManager:UpdateFrame_copyCharges(data)
 
     if not data.customFrame or not data.config then return end
+    local charges = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID) or {}
     -- If display charges is disabled, or there are zero charges, hide the count text and bail out early
-    if not data.config.countText.display or isZeroCharges or not data.customFrame.meta.spellHasCharges then
+    if not data.config.countText.display then
         data.customFrame.count:SetText("")
         data.customFrame.count:Hide()
         return
@@ -1753,48 +1785,32 @@ function FrameTrackerManager:UpdateFrame_copyCharges(data, isZeroCharges)
         data.customFrame.count:Show()
     end
 
-    if data.trackerType == 'buffs' then
-        local success, error = pcall(function()
-            local countCfg = data.config.countText
-            if countCfg then
-                local fontPath, _, fontFlags = data.customFrame.count:GetFont()
-                if fontPath and countCfg.size then
-                    data.customFrame.count:SetFont(fontPath, countCfg.size, fontFlags or "OUTLINE")
-                end
-                if countCfg.color then
-                    data.customFrame.count:SetTextColor(
-                        countCfg.color.r or 1,
-                        countCfg.color.g or 1,
-                        countCfg.color.b or 1,
-                        countCfg.color.a or 1
-                    )
-                end
-                data.customFrame.count:ClearAllPoints()
-                data.customFrame.count:SetPoint("BOTTOMRIGHT", data.customFrame, "BOTTOMRIGHT",
-                    (countCfg.x or 0) - 2,
-                    (countCfg.y or 0) + 2)
-            end
-        end)
-    else
-        local suc, err = pcall(function()
-            local currentSpellID = 0
-            -- attempt to pull the spell ID from cache if its currently overridden (detected by "updatedIconID" having a value)
-            
-            local chargesObj = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID)
-            if chargesObj then
-                local spellCharges = chargesObj.currentCharges
-                data.customFrame.count:SetText(spellCharges)
-                data.customFrame.meta.spellHasCharges = true
-            else
-                -- Spell has no charges (e.g. override reverted to a non-charge spell)
-                data.customFrame.count:SetText("")
-                data.customFrame.count:Hide()
-                data.customFrame.meta.spellHasCharges = false
-                return
-            end
-        end)
-    end
     
+    local success, error = pcall(function()
+        local countCfg = data.config.countText
+        if countCfg then
+            local fontPath, _, fontFlags = data.customFrame.count:GetFont()
+            if fontPath and countCfg.size then
+                data.customFrame.count:SetFont(fontPath, countCfg.size, fontFlags or "OUTLINE")
+            end
+            if countCfg.color then
+                data.customFrame.count:SetTextColor(
+                    countCfg.color.r or 1,
+                    countCfg.color.g or 1,
+                    countCfg.color.b or 1,
+                    countCfg.color.a or 1
+                )
+            end
+            data.customFrame.count:ClearAllPoints()
+            data.customFrame.count:SetPoint("BOTTOMRIGHT", data.customFrame, "BOTTOMRIGHT",
+                (countCfg.x or 0) - 2,
+                (countCfg.y or 0) + 2)
+        end
+    end)
+    local suc, err = pcall(function()
+        data.customFrame.count:SetText(charges.currentCharges or 1)
+        data.customFrame.count:SetAlpha(charges.currentCharges or 1)
+    end)
 end
 
 function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
@@ -1819,19 +1835,33 @@ function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
     if auraInstanceID and C_UnitAuras and C_UnitAuras.GetAuraApplicationDisplayCount then       
         local success, err = pcall(function()
             if config.countText.display then
-                frame.count:SetText(C_UnitAuras.GetAuraApplicationDisplayCount("player", auraInstanceID, 2))
+                frame.count:SetText(C_UnitAuras.GetAuraApplicationDisplayCount("player", auraInstanceID, 1))
+                frame.count:Show()
             end
         end)
-    elseif sourceFrame then
-        FrameTrackerManager:UpdateFrame_copyCharges({
-            customFrame = frame,
-            uniqueID = uniqueID,
-            trackerType = 'buffs',
-            config = config
-        })
     end
-
-    local isBuffShown = sourceFrame and sourceFrame:IsShown() or false
+    local success, error = pcall(function()
+        local countCfg = config.countText
+        if countCfg then
+            local fontPath, _, fontFlags = frame.count:GetFont()
+            if fontPath and countCfg.size then
+                frame.count:SetFont(fontPath, countCfg.size, fontFlags or "OUTLINE")
+            end
+            if countCfg.color then
+                frame.count:SetTextColor(
+                    countCfg.color.r or 1,
+                    countCfg.color.g or 1,
+                    countCfg.color.b or 1,
+                    countCfg.color.a or 1
+                )
+            end
+            frame.count:ClearAllPoints()
+            frame.count:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT",
+                (countCfg.x or 0) - 2,
+                (countCfg.y or 0) + 2)
+        end
+    end)
+    local isBuffShown = auraInstanceID ~= nil or (sourceFrame and sourceFrame:IsShown()) or false
     if isBuffShown then
         if config.iconSettings.iconDisplayState == 'always' or config.iconSettings.iconDisplayState == 'active' or config.iconSettings.iconDisplayState == 'cooldown' then
             frame.Icon:Show()
@@ -1993,16 +2023,13 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                             durationObj = C_UnitAuras.GetAuraDuration("player", self:GetAuraSpellInstanceID())
                             if durationObj then
                                 local frame = SpellStyler_frames[trackerType][uniqueID]
-                                frame.cooldown:SetCooldownFromDurationObject(durationObj)
-                                local buffTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
-                                local buffTimerDir = (buffTimerCfg and buffTimerCfg.statusBar and buffTimerCfg.statusBar.barFillDirection == 'inverse')
-                                    and Enum.StatusBarTimerDirection.ElapsedTime
-                                    or  Enum.StatusBarTimerDirection.RemainingTime
-                                frame.statusBar:SetTimerDuration(
-                                    durationObj,
-                                    Enum.StatusBarInterpolation.ExponentialEaseOut,
-                                    buffTimerDir
-                                )
+                                FrameTrackerManager:ApplyCooldownDuration({
+                                    customFrame = frame,
+                                    uniqueID = uniqueID,
+                                    trackerType = trackerType,
+                                    config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType),
+                                    durationObject = durationObj
+                                })
                             end
                         end)
                         FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
@@ -2036,18 +2063,13 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                             durationObj = C_UnitAuras.GetAuraDuration("player", cdm_frame:GetAuraSpellInstanceID())
                             customFrame.meta.currentAuraInstanceID = cdm_frame:GetAuraSpellInstanceID()
                             if durationObj then
-                                customFrame.cooldown:SetCooldown(durationObj:GetStartTime(), durationObj:GetTotalDuration()) --SetCooldown is more accurate than trying to use durationObj for both. SetCooldown is also the only one with a callback that can be hooked into for when its done
-                                if customFrame.statusBar and customFrame.statusBar.SetTimerDuration then
-                                    local cdTimerCfg = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
-                                    local cdTimerDir = (cdTimerCfg and cdTimerCfg.statusBar and cdTimerCfg.statusBar.barFillDirection == 'inverse')
-                                        and Enum.StatusBarTimerDirection.ElapsedTime
-                                        or  Enum.StatusBarTimerDirection.RemainingTime
-                                    customFrame.statusBar:SetTimerDuration(
-                                        durationObj,
-                                        Enum.StatusBarInterpolation.Immediate,
-                                        cdTimerDir
-                                    )
-                                end
+                                FrameTrackerManager:ApplyCooldownDuration({
+                                    customFrame = customFrame,
+                                    uniqueID = uniqueID,
+                                    trackerType = trackerType,
+                                    config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType),
+                                    durationObject = durationObj
+                                })
                             end
                         end)
                     end)
@@ -2081,18 +2103,23 @@ end
 --- @field trackerType string
 --- @field customFrame table
 --- @field forceUpdate? boolean
+--- @field durationObject? table    -- optional pre-resolved duration object; when set, the C_Spell lookup is skipped
+--- @field currentCharges? number   -- caller-supplied charge count for UpdateFrame_ChargeVisibility (0 = on cooldown)
 
 --- @param data ApplyCooldownDurationData
 function FrameTrackerManager:ApplyCooldownDuration(data)
-    local durationObject = nil
-    local s, e = pcall(function()
-        -- try to get spell charge duration first
-        durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID)
-        if not durationObject then
-            --if that failed, maybe it was a spell without charges
-            durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID)
-        end
-    end)
+    local durationObject = data.durationObject  -- optional pre-resolved duration object
+    local s, e
+    if not durationObject then
+        s, e = pcall(function()
+            -- try to get spell charge duration first
+            durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID)
+            if not durationObject then
+                --if that failed, maybe it was a spell without charges
+                durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID)
+            end
+        end)
+    end
     if data.forceUpdate then
         data.customFrame.cooldown:Clear()
     end
@@ -2101,9 +2128,15 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
         return
     end
     if data.customFrame.statusBar and data.customFrame.statusBar.SetTimerDuration then
-        local cdTimerDir = (data.config and data.config.statusBar and data.config.statusBar.barFillDirection == 'inverse')
+        local cdTimerDir = (data.config and data.config.statusBar and data.config.statusBar.fillOrEmpty == 'inverse')
             and Enum.StatusBarTimerDirection.ElapsedTime
             or  Enum.StatusBarTimerDirection.RemainingTime
+        local cdFillStyle = (data.config and data.config.statusBar and data.config.statusBar.progressDirection == 'reverse')
+        local textureRotation = (data.config and data.config.statusBar and data.config.statusBar.textureRotation or 0)
+        if textureRotation then
+            data.customFrame.statusBar:RotateTextures(textureRotation)
+        end
+        data.customFrame.statusBar:SetFillStyle(cdFillStyle and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
         data.customFrame.statusBar:SetTimerDuration(
             durationObject,
             Enum.StatusBarInterpolation.Immediate,
@@ -2111,10 +2144,44 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
         )
         --Apply cooldown to the statusbar first and set hidden. If a real cooldown is happening, the SetScript('OnShow') callback for the cooldown frame will properly apply the visibility
         if not data.customFrame.meta.isDurationActive then
-            data.customFrame.statusBar:Hide()
+            local showstatusBar = (
+                data.config.statusBar.displayState == "always"
+                or data.config.statusBar.displayState == "available"
+                or data.config.statusBar.displayState == "inactive"
+            )
+            local suc, err = pcall(function()
+                if showstatusBar then
+                    local barColor = data.config.statusBar.color
+                    local isFull = data.config.statusBar.defaultFillValue == 'full'
+                    data.customFrame.statusBar:Show()
+                    data.customFrame.statusBar:SetStatusBarColor(
+                        barColor.r or 0.2,
+                        barColor.g or 0.8,
+                        barColor.b or 1,
+                        0  -- always hide the timer-driven fill; fullCoverTexture handles the 'full' visual
+                    )
+                    -- data.customFrame.statusBar:SetValue(isFull and 1 or 0)
+                    -- Show/hide the cover texture for 'full' defaultFillValue.
+                    -- This overlay sits above the fill (ARTWORK sublayer 1) and visually
+                    -- fills the bar without interacting with SetTimerDuration, so it is
+                    -- immune to GCD timer interference.
+                    if data.customFrame.statusBar.fullCoverTexture then
+                        if isFull then
+                            local c = data.config.statusBar.color
+                            data.customFrame.statusBar.fullCoverTexture:SetVertexColor(c.r or 0.2, c.g or 0.8, c.b or 1, c.a or 0.9)
+                            data.customFrame.statusBar.fullCoverTexture:Show()
+                        else
+                            data.customFrame.statusBar.fullCoverTexture:Hide()
+                        end
+                    end
+                else
+                    data.customFrame.statusBar:Hide()
+                end
+            end)
         end
     end
     data.customFrame.cooldown:SetCooldown(durationObject:GetStartTime(), durationObject:GetTotalDuration())
+    FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
 end
 
 
@@ -2170,7 +2237,7 @@ eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
 eventFrame:RegisterEvent("UNIT_AURA")
-
+eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
 
@@ -2190,6 +2257,16 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
+    if event == "SPELL_UPDATE_CHARGES" then
+        for _, tType in ipairs({"essential", "utility"}) do
+            for uniqueID, customFrame in pairs(SpellStyler_frames[tType]) do
+                local match = FrameTrackerManager:MatchTrackerFrame(uniqueID)
+                if match then
+                    FrameTrackerManager:UpdateFrame_copyCharges(match)
+                end
+            end
+        end
+    end
     if event == "UNIT_AURA" then
         local unitTarget, updateInfo = ...
         local db = FrameTrackerManager:GetDataBase_V2()
@@ -2233,10 +2310,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 -- refresh the charge count display immediately.
                 local chargesObj = C_Spell.GetSpellCharges(match.customFrame.meta.activeSpellID)
                 match.customFrame.meta.isSpellWithCharges = chargesObj ~= nil
-                FrameTrackerManager:UpdateFrame_copyCharges(match)
 
                 -- When the spell Icon changes, its possible the spell itsself has changed. Clear any active cooldown and attempt to reapply. This might be effective like when crusader strike changes back into avenging crusader (which would still be on cooldown)
                 FrameTrackerManager:ApplyCooldownDuration(match)
+                -- If the spell mutates back into the original, its possible the cooldown frame show/hide events dont fire if the mutated spell was on cooldown when it changes back to the original. Doube check is "isDurationActive" to called the method if needed
+                if match.customFrame.meta.isDurationActive then
+                    FrameTrackerManager:UpdateFrame_Duration_Active(match)
+                end
             end
         end)
     end
@@ -2256,7 +2336,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     end)
                     return
                 end
-                local spellInfo = C_Spell.GetSpellInfo(spellID)
                 local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
                 --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
                 local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
@@ -2272,6 +2351,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                             --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                             --Save the override spell onto the frame though to be able to check future casts
                             match.customFrame.meta.activeSpellID = C_Spell.GetOverrideSpell(spellID)
+
+                            --assume that when a spell cast results in a mutation, the new spell starts OFF cooldown. Call the method based on that assumption.
+                            FrameTrackerManager:UpdateFrame_Duration_Inactive(match)
                         else
                             FrameTrackerManager:ApplyCooldownDuration(match)
                         end
@@ -2291,12 +2373,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                                     })
                                 end
                             end
-                            FrameTrackerManager:UpdateFrame_copyCharges({
-                                customFrame = trackedFrame,
-                                config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, tType),
-                                uniqueID = uniqueID,
-                                trackerType = tType
-                            })
                         end
                     end
                 end)
@@ -2311,21 +2387,39 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
+        DevTool:AddData({cooldownInfo = cooldownInfo, spellInfo = spellInfo}, "event spell: " .. spellInfo.name)
         if frameMatchData then
             local success, error = pcall(function()
                 if cooldownInfo.isOnGCD == true then
-                    return  -- GCD only – nothing to do, stay in IgnoreGCD state
+                    return  -- GCD only – nothing to do
                 end
-                -- Real cooldown (not just GCD, or spell is off-GCD)
-                if cooldownInfo.isOnGCD == false or (not cooldownInfo.isOnGCD and offGCDSpellCache[frameMatchData.customFrame.meta.activeSpellID]) then
-                    if frameMatchData.customFrame.meta.isSpellWithCharges then
-                        frameMatchData.customFrame.meta.spellHasCharges = false
-                    end
-                    frameMatchData.customFrame.meta.canBeCast = false
+                if C_Spell.GetOverrideSpell(spellID) ~= frameMatchData.customFrame.meta.activeSpellID then
+                    --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
+                    --Save the override spell onto the frame though to be able to check future casts
+                    frameMatchData.customFrame.meta.activeSpellID = C_Spell.GetOverrideSpell(spellID)
 
-                    --cooldown data should already be applied via "UNIT_SPELLCAST_SUCCEEDED", calling both ApplyCooldownDuration and UpdateFrame_Duration_Active to ensure the cooldown data is not missed, AND it properly updates in response to the new state (canBeCast == false and zero spell charges)
+                    --assume that when a spell cast results in a mutation, the new spell starts OFF cooldown. Call the method based on that assumption.
+                    -- FrameTrackerManager:UpdateFrame_Duration_Inactive(frameMatchData)
+                    return
+                end
+
+                if cooldownInfo.isOnGCD == nil and frameMatchData.customFrame.meta.isSpellWithCharges then
+                    --[[
+                        ignore off GCD spells with charges. This event cant destinguish if the spell still have available charges.
+                        Attempt to Manually track charges - If anyone reports an error with charges - check if the spell is off GCD - if so, change to using "SPELL_UPDATE_CHARGES" and SetAlpha to controll visibility
+                        Also set on the frame the type of spell this is
+                    ]]
+                    frameMatchData.customFrame.meta.isSpellOffGCD = true
+                    frameMatchData.customFrame.meta.spellChargeCount = frameMatchData.customFrame.meta.spellChargeCount - 1
                     FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
-                    FrameTrackerManager:UpdateFrame_Duration_Active(frameMatchData)
+                else
+                    -- If the spell is on GCD, but cooldownInfo.isOnGCD == false, then it was a valid cast, or its off the gcd but can only be cast once.
+                    frameMatchData.customFrame.meta.canBeCast = false
+                    FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
+                    -- the spell might already be on cooldown if its a spell with charges. Call "UpdateFrame_Duration_Active" again because the can BeCast flag is updated and could cause the icon to hide (among other parts of the frame)
+                    if frameMatchData.customFrame.meta.isDurationActive then
+                        FrameTrackerManager:UpdateFrame_Duration_Active(frameMatchData)
+                    end
                 end
             end)
         end
