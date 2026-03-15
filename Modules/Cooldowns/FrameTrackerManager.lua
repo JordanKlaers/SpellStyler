@@ -613,6 +613,7 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     local spellChargesInfo = C_Spell.GetSpellCharges(uniqueID)
     local spellInfo = C_Spell.GetSpellInfo(uniqueID)
     local frame = CreateFrame("Button", frameName, UIParent, "BackdropTemplate")
+    SpellStyler_frames[trackerType][uniqueID] = frame
     -- Only set the icon's own size when it is not managed by a container.
     -- LayoutContainer resizes and positions frames that are _inContainer.
     if not frame._inContainer then
@@ -621,7 +622,7 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     frame:SetFrameStrata("MEDIUM")
     frame:SetFrameLevel(100)
 
-
+    C_Spell.RequestLoadSpellData(uniqueID)
     ---@type TrackerFrameMeta
     frame.meta = {
         spellName = spellInfo.name,
@@ -751,10 +752,11 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     -- Create StatusBar for tracker cooldown progress (secret-value compatible)
     -- This uses the new Midnight API that accepts DurationObjects with secrets
     frame.statusBar = CreateFrame("StatusBar", frameName .. "_StatusBar", frame)
-    frame.statusBar:SetPoint(trackerConfig.statusBar.anchorSelf or "LEFT", frame, trackerConfig.statusBar.anchorParent or "RIGHT", 0, 0)
+    frame.statusBar:SetPoint(trackerConfig.statusBar.anchorSelf or "LEFT", frame, trackerConfig.statusBar.anchorParent or "RIGHT", trackerConfig.statusBar.x or 0, trackerConfig.statusBar.y or 0)
     local statusBarWidth = trackerConfig.statusBar and trackerConfig.statusBar.width or (trackerConfig.iconSettings.size * 4)
     local statusBarHeight = trackerConfig.statusBar and trackerConfig.statusBar.height or trackerConfig.iconSettings.size / 2
     frame.statusBar:SetSize(statusBarWidth, statusBarHeight)
+    frame.statusBar:SetScale(trackerConfig.statusBar.scale or 1)
     frame.statusBar:SetMinMaxValues(0, 1)
     frame.statusBar:SetValue(0)
     frame.statusBar:SetFrameLevel(frame:GetFrameLevel() + 1)  -- Base level for status bar
@@ -1064,15 +1066,14 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
     frame.cooldown.uniqueID = uniqueID
     -- Initially hidden
     frame:Show()
-    
-    SpellStyler_frames[trackerType][uniqueID] = frame
+
 
     -- Assume the frame is inactive first. This is necessary because the frame cooldown callabcks dont fire unless a valid cooldown occurs. That will be applied next if so.
     FrameTrackerManager:UpdateFrame_Duration_Inactive({
         customFrame = frame,
         trackerType = trackerType,
-        uniqueID = self.uniqueID,
-        config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
+        uniqueID = uniqueID,
+        config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
     })
     -- If there is an active cooldown, it will handle calling the show or hide methods for the frame using the cooldown event callbacks
     FrameTrackerManager:ApplyCooldownDuration({
@@ -1082,6 +1083,13 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         trackerType = trackerType
     })
     FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
+    -- Resolve charge count text and icon visibility (was referenced in the comment above but never called)
+    FrameTrackerManager:UpdateFrame_copyCharges({
+        customFrame = frame,
+        config = trackerConfig,
+        uniqueID = uniqueID,
+        trackerType = trackerType
+    })
 
     return frame
 end
@@ -1744,6 +1752,13 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerT
         uniqueID = uniqueID,
         trackerType = trackerType
     })
+
+    FrameTrackerManager:UpdateFrame_copyCharges({
+        customFrame = frame,
+        config = trackerConfig,
+        uniqueID = uniqueID,
+        trackerType = trackerType
+    })
 end
 
 
@@ -2244,7 +2259,7 @@ eventFrame:RegisterEvent("UNIT_AURA")
 eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
-
+eventFrame:RegisterEvent("SPELL_DATA_LOAD_RESULT")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -2254,6 +2269,36 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LEAVING_WORLD" then
         hasPlayerEnetedWorld = false
     end
+
+    if event == "SPELL_DATA_LOAD_RESULT" then
+        local spellID, success = ...
+        local base_spellChargesInfo = C_Spell.GetSpellCharges(spellID)
+        local base_spellInfo = C_Spell.GetSpellInfo(spellID)
+        local huh = success and 'true' or 'false'
+        for _, tType in ipairs({"essential", "utility"}) do
+            for uniqueID, customFrame in pairs(SpellStyler_frames[tType]) do
+                if uniqueID == spellID or spellID == C_Spell.GetBaseSpell(uniqueID) then
+                    -- Stupid ass shit to make the frame cache the correct value of charges. Holy shock shows a max charge of 1, but then later provides 2. This delay should hopefully ensure it apply the correct value.
+                    C_Timer.After(1, function()
+                        local spellChargesInfo = C_Spell.GetSpellCharges(uniqueID)
+                        local spellInfo = C_Spell.GetSpellInfo(uniqueID)
+                        customFrame.meta.spellName = spellInfo.name
+                        customFrame.meta.isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
+                        customFrame.meta.spellChargeCount = spellChargesInfo and spellChargesInfo.maxCharges or 1
+                        customFrame.meta.spellHasCharges = spellChargesInfo and spellChargesInfo.currentCharges > 1 or false
+                        FrameTrackerManager:UpdateFrame_copyCharges({
+                            uniqueID = uniqueID,
+                            customFrame = customFrame,
+                            spellID = uniqueID,
+                            trackerType = tType,
+                            config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, tType)
+                        })
+                    end)
+                end
+            end
+        end
+    end
+
     local classSpecialization = FrameTrackerManager:GetCurrentSpecID()
     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'

@@ -125,3 +125,11 @@ Slightly less technical summary:
 Slightly more technical summary:
 	- Use the OnShow callback of a cooldown frame to validate the duration before applying to the real frame.
 	- Apply charges in more methods to ensure the frame can update its visibility conditions in all cases
+
+Version 0.4.5
+
+Slightly less technical summary:
+	- Spells properly cache their charges when first loading into the game
+
+Slightly more technical summary:
+	- Basically just delayed the spell charge cache upon entering the world
