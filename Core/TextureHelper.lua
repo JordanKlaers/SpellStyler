@@ -355,25 +355,27 @@ local function ListTexturesUnderMouse(frame, parentFrameName)
 end
 
 -- Keybind handler: Shift+Ctrl+L
-local texScanFrame = CreateFrame("Frame")
-texScanFrame:SetPropagateKeyboardInput(true)
-texScanFrame:RegisterEvent("PLAYER_LOGIN")
-texScanFrame:SetScript("OnEvent", function()
-    texScanFrame:SetScript("OnKeyDown", function(self, key)
-        if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-            frameData = {}
-            visitiedFrames = {}
-            savedTextures = {}
-            local frames = C_System.GetFrameStack(0, true)
-            for _, frame in ipairs(frames) do
-                ListTexturesUnderMouse(frame, "")    
-            end
-        end
-    end)
-    texScanFrame:SetScript("OnKeyUp", function(self, key) end)
-    texScanFrame:SetScript("OnMouseDown", function() end)
-    texScanFrame:SetScript("OnMouseUp", function() end)
-    texScanFrame:EnableKeyboard(true)
+pcall(function()
+	local texScanFrame = CreateFrame("Frame")
+	texScanFrame:SetPropagateKeyboardInput(true)
+	texScanFrame:RegisterEvent("PLAYER_LOGIN")
+	texScanFrame:SetScript("OnEvent", function()
+		texScanFrame:SetScript("OnKeyDown", function(self, key)
+			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+				frameData = {}
+				visitiedFrames = {}
+				savedTextures = {}
+				local frames = C_System.GetFrameStack(0, true)
+				for _, frame in ipairs(frames) do
+					ListTexturesUnderMouse(frame, "")    
+				end
+			end
+		end)
+		texScanFrame:SetScript("OnKeyUp", function(self, key) end)
+		texScanFrame:SetScript("OnMouseDown", function() end)
+		texScanFrame:SetScript("OnMouseUp", function() end)
+		texScanFrame:EnableKeyboard(true)
+	end)
 end)
 
 

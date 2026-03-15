@@ -630,9 +630,8 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1,
         -- experimental direct count tracking
         spellChargeCount = spellChargesInfo and spellChargesInfo.maxCharges or 1,
-        -- experimental (less direct) count tracking. Zero is guarenteed by "SPELL_UPDATE_COOLDOWN". The others are based on assumptions that the other events happen as expected
-        -- Should replace (canBeCast)
-        -- spellChargeState = 'max', -- 'max', 'zero', 'oneChargeOnCooldown', 'moreThenOneChargeOnCooldown' -- should replace "spellHasCharges"
+        -- true when the spell currently has at least one charge available
+        spellHasCharges = spellChargesInfo and spellChargesInfo.currentCharges > 1 or false,
         -- Used to track if the cooldown is active, so that the cooldowns can be updated in response to other spell casts (Holy Shock can reduce the cooldown of judgment)
         isDurationActive = false,
         -- This helps ensure proper resposne for triggering spell cooldowns for offGCD spells - in "SPELL_UPDATE_COOLDOWN"
@@ -640,8 +639,6 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         mockCooldownActive = false,
         -- true when not on cooldown with all charges consumed
         canBeCast = true,
-        -- true when the spell currently has at least one charge available
-        spellHasCharges = spellChargesInfo and spellChargesInfo.currentCharges > 1 or false,
         -- instance ID of the currently tracked aura (buffs only)
         currentAuraInstanceID = 0,
         customTexture = trackerConfig.iconSettings.iconTexturePath ~= '' and trackerConfig.iconSettings.iconTexturePath ~= nil and trackerConfig.iconSettings.iconTexturePath or nil
@@ -1202,7 +1199,7 @@ function FrameTrackerManager:ToggleMockCooldown(uniqueID, trackerType)
         local mockDuration = 15
         local now = GetTime()
         
-        -- Create a proper DurationObject for ApplyCooldownDuration
+        -- Create a proper DurationObject for Apply Cooldown Duration()
         local mockDurationObj = C_DurationUtil.CreateDuration()
         mockDurationObj:SetTimeFromStart(now, mockDuration)
         
@@ -1776,8 +1773,16 @@ function FrameTrackerManager:UpdateFrame_copyCharges(data)
 
     if not data.customFrame or not data.config then return end
     local charges = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID) or {}
-    -- If display charges is disabled, or there are zero charges, hide the count text and bail out early
-    if not data.config.countText.display then
+    -- If display charges is disabled in the settings, or this is an OffGCD spell with no available charge, or the spell has mutated, is on cooldown AND can be cast (that would mean it turned into a spell with charges and it has 1 charge available and 1 on cooldown. This only works with 2 charges)
+    -- Those should all cover zero or 1 charges
+    local spellInfo = C_Spell.GetSpellInfo(data.customFrame.meta.activeSpellID)
+    if not data.config.countText.display
+        or (data.customFrame.meta.isSpellOffGCD == true and data.customFrame.meta.spellChargeCount < 2)
+        or (
+            -- original spell and doesnt have charges
+            data.uniqueID == data.customFrame.meta.activeSpellID
+            and not data.customFrame.meta.isSpellWithCharges
+        ) then
         data.customFrame.count:SetText("")
         data.customFrame.count:Hide()
         return
@@ -2205,11 +2210,9 @@ function FrameTrackerManager:MatchTrackerFrame(spellID)
         for trackerID, trackedFrame in pairs(SpellStyler_frames[tType]) do
             local overRideID = C_Spell.GetOverrideSpell(trackerID)
             if trackerID == spellID then
-                trackedFrame.meta.activeSpellID = spellID
                 matchType = 'direct'
                 
             elseif overRideID == spellID then
-                trackedFrame.meta.activeSpellID = spellID
                 matchType = 'override'
             end
             --match found, update the return data
@@ -2347,14 +2350,19 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     local match = FrameTrackerManager:MatchTrackerFrame(spellID)
 
                     if match then
-                        if C_Spell.GetOverrideSpell(spellID) ~= match.customFrame.meta.activeSpellID then
+                        local override = C_Spell.GetOverrideSpell(spellID)
+                        if override ~= spellID then
+                            local spellInfoUpdate = C_Spell.GetSpellInfo(override)
                             --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                             --Save the override spell onto the frame though to be able to check future casts
-                            match.customFrame.meta.activeSpellID = C_Spell.GetOverrideSpell(spellID)
+                            match.customFrame.meta.activeSpellID = override
 
                             --assume that when a spell cast results in a mutation, the new spell starts OFF cooldown. Call the method based on that assumption.
                             FrameTrackerManager:UpdateFrame_Duration_Inactive(match)
+                            -- Attempt to update charges if it mutated into a spell with charges
+                            FrameTrackerManager:UpdateFrame_copyCharges(match)
                         else
+                            local spellInfo = C_Spell.GetSpellInfo(spellID)
                             FrameTrackerManager:ApplyCooldownDuration(match)
                         end
                     end
@@ -2387,23 +2395,25 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
-        DevTool:AddData({cooldownInfo = cooldownInfo, spellInfo = spellInfo}, "event spell: " .. spellInfo.name)
         if frameMatchData then
             local success, error = pcall(function()
                 if cooldownInfo.isOnGCD == true then
                     return  -- GCD only – nothing to do
                 end
-                if C_Spell.GetOverrideSpell(spellID) ~= frameMatchData.customFrame.meta.activeSpellID then
+                -- local baseSpellInfo = C_Spell.GetSpellInfo(spellID)
+                local overrideSpellID = C_Spell.GetOverrideSpell(spellID)
+                -- local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
+                if overrideSpellID ~= frameMatchData.customFrame.meta.activeSpellID then
                     --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                     --Save the override spell onto the frame though to be able to check future casts
-                    frameMatchData.customFrame.meta.activeSpellID = C_Spell.GetOverrideSpell(spellID)
+                    frameMatchData.customFrame.meta.activeSpellID = overrideSpellID
 
                     --assume that when a spell cast results in a mutation, the new spell starts OFF cooldown. Call the method based on that assumption.
                     -- FrameTrackerManager:UpdateFrame_Duration_Inactive(frameMatchData)
                     return
                 end
 
-                if cooldownInfo.isOnGCD == nil and frameMatchData.customFrame.meta.isSpellWithCharges then
+                if (cooldownInfo.isOnGCD == nil or frameMatchData.customFrame.meta.isSpellOffGCD == true) and frameMatchData.customFrame.meta.isSpellWithCharges then
                     --[[
                         ignore off GCD spells with charges. This event cant destinguish if the spell still have available charges.
                         Attempt to Manually track charges - If anyone reports an error with charges - check if the spell is off GCD - if so, change to using "SPELL_UPDATE_CHARGES" and SetAlpha to controll visibility
@@ -2411,15 +2421,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     ]]
                     frameMatchData.customFrame.meta.isSpellOffGCD = true
                     frameMatchData.customFrame.meta.spellChargeCount = frameMatchData.customFrame.meta.spellChargeCount - 1
-                    FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
+                    if frameMatchData.customFrame.meta.spellChargeCount == 0 then
+                        frameMatchData.customFrame.meta.canBeCast = false    
+                    end
                 else
                     -- If the spell is on GCD, but cooldownInfo.isOnGCD == false, then it was a valid cast, or its off the gcd but can only be cast once.
                     frameMatchData.customFrame.meta.canBeCast = false
-                    FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
-                    -- the spell might already be on cooldown if its a spell with charges. Call "UpdateFrame_Duration_Active" again because the can BeCast flag is updated and could cause the icon to hide (among other parts of the frame)
-                    if frameMatchData.customFrame.meta.isDurationActive then
-                        FrameTrackerManager:UpdateFrame_Duration_Active(frameMatchData)
-                    end
+                end
+                FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
+                -- the spell might already be on cooldown if its a spell with charges. Call "UpdateFrame_Duration_Active" again because the can BeCast flag is updated and could cause the icon to hide (among other parts of the frame)
+                if frameMatchData.customFrame.meta.isDurationActive then
+                    FrameTrackerManager:UpdateFrame_Duration_Active(frameMatchData)
                 end
             end)
         end

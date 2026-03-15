@@ -98,3 +98,11 @@ Slightly more technical summary:
 	- Buffs for some reason, had some that were unreliable in using the CDM IsShown() for controlling their visibliity. Updated to also consider the presence of an auraInstanceID as an indiication the buff is active.
 	- Identified spells that can be off GCD AND have charges. This was not handled correctly. Updates have been made to manually track spell charges only for spells off the GCD. (This assumes those spells can not regain charges outside of the typical cooldown end event on the cooldown frame).
 	- Charges now use the "SPELL_UPDATE_CHARGES" event to update the charges text
+
+Version 0.4.2
+
+Slightly less technical summary:
+	- Fixed a bug with charges and their display state when spells mutate into other spells
+
+Slightly more technical summary:
+	- Updated the condition for hiding spell charges to include the new off gcd manually spell charge tracking nonsense
