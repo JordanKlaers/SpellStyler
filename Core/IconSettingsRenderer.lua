@@ -449,7 +449,40 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
             }
         },
-        
+        -- Glow settings
+        -- Status bar
+        {
+            type = "header",
+            text = "Glow notification",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "checkbox",
+                    label = "Display icon glow when spell\nbecomes available to cast",
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.shouldDisplay") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.shouldDisplay", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Glow Style",
+                    options = {"thin", "thick"},
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowStyle") or "thin" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowStyle", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Duration",
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.duration") or 1.0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.duration", value) end,
+                },
+                {
+                    type = "colorpicker",
+                    label = "Glow Color:",
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowColor") or {r=1, g=1, b=1, a=1} end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowColor", value) end,
+                },
+            }
+        },
         -- Status bar
         {
             type = "header",

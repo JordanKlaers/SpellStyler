@@ -133,3 +133,6 @@ Slightly less technical summary:
 
 Slightly more technical summary:
 	- Basically just delayed the spell charge cache upon entering the world
+
+Version 0.4.6
+	- Adds glow notifications and reverts a very niche bugfix that actucally caused GCD swipes to show, which is disgusting.

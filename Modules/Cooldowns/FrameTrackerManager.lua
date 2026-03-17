@@ -57,6 +57,31 @@ local offGCDSpellCache = {}
 -- updateFrame is defined in the UPDATE SYSTEM section
 local isInitialized = false
 
+------------------------------------------------------------------------
+-- GlowUtil wiring helper
+-- Reads glowNotification config and calls the appropriate GlowUtil.Setup*.
+-- Chooses SetupProcGlow for glowStyle='thick', SetupAnts for everything else.
+-- Safe to call when GlowUtil is not yet loaded (no-ops gracefully).
+------------------------------------------------------------------------
+local function ApplyGlowNotificationSetup(frame, trackerConfig)
+    if not SpellStyler.GlowUtil then return end
+    local gn = trackerConfig and trackerConfig.glowNotification
+    if not gn then return end
+    local gc = gn.glowColor or {}
+    local cfg = {
+        r          = gc.r or 1,
+        g          = gc.g or 1,
+        b          = gc.b or 1,
+        scale      = 1.85,
+        desaturated = false,
+    }
+    if gn.glowStyle == 'thick' then
+        SpellStyler.GlowUtil:SetupProcGlow(frame, cfg)
+    else
+        SpellStyler.GlowUtil:SetupAnts(frame, cfg)
+    end
+end
+
 local function accessNestedValue(tbl, path, value, action)
     local keys = {}
     for key in string.gmatch(path, "[^.]+") do
@@ -108,6 +133,17 @@ local function AddNewTrackerValueConfig(data)
             opacity = 1,
             hideDefaultSweep = false,
             isSpellOffGCD = false
+        },
+        glowNotification = {
+            shouldDisplay = false,
+            glowStyle = 'thin', -- 'thick'
+            duration = 1,
+            glowColor = {
+                r = 1,
+                g = 1,
+                b = 1,
+                a = 1
+            }
         },
         customLabel = {
             display = false,
@@ -305,6 +341,15 @@ function FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
     if iconConfig.statusBar and iconConfig.statusBar.barFillDirection ~= nil and iconConfig.statusBar.fillOrEmpty == nil then
         iconConfig.statusBar.fillOrEmpty = iconConfig.statusBar.barFillDirection
         iconConfig.statusBar.barFillDirection = nil
+    end
+    -- Backfill glowNotification for entries created before this setting existed
+    if iconConfig.glowNotification == nil then
+        iconConfig.glowNotification = {
+            shouldDisplay = false,
+            glowStyle = 'thin',
+            duration = 1,
+            glowColor = { r = 1, g = 1, b = 1, a = 1 },
+        }
     end
     return iconConfig
 end
@@ -718,6 +763,13 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         local spellInfo = C_Spell.GetSpellInfo(self.uniqueID)
         frame.meta.isDurationActive = false
         frame.meta.canBeCast = true
+        if trackerConfig.glowNotification.shouldDisplay then
+            if trackerConfig.glowNotification.glowStyle == 'thick' then
+                SpellStyler.GlowUtil:PlayProcGlow(frame, trackerConfig.glowNotification.duration)
+            else
+                SpellStyler.GlowUtil:PlayAnts(frame, trackerConfig.glowNotification.duration)
+            end
+        end
         -- If mock cooldown is active, disable it and update button text. This setup is in IconSettingsRenderer.lua
         if frame.meta.mockCooldownActive then
             frame.meta.mockCooldownActive = false
@@ -1090,6 +1142,11 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
         uniqueID = uniqueID,
         trackerType = trackerType
     })
+
+    -- Attach the glow animation child based on the current glowNotification config.
+    -- PlayAnts / PlayProcGlow are intentionally NOT called here; the caller decides
+    -- when to trigger the animation.
+    ApplyGlowNotificationSetup(frame, trackerConfig)
 
     return frame
 end
@@ -1497,6 +1554,10 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerT
     if not frame._inContainer then
         frame:SetSize(trackerConfig.iconSettings.size, trackerConfig.iconSettings.size)
     end
+
+    -- Re-attach the glow animation child with the latest glowNotification config.
+    -- This reconstructs the glow child (colour, style, scale) without starting it.
+    ApplyGlowNotificationSetup(frame, trackerConfig)
 
     -- Update opacity
     frame:SetAlpha(trackerConfig.iconSettings.opacity or 1)
@@ -2419,27 +2480,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                             if not match or uniqueID ~= match.uniqueID or tType ~= match.trackerType then
                                 local spellInfo = C_Spell.GetSpellInfo(uniqueID)
                                 if trackedFrame.meta.isDurationActive then
-                                    -- This goofy solution uses the OnShow of a cooldown frame to validate the cooldown duration before reapplying.
-                                    local durationObject
-                                    local s, e = pcall(function()
-                                        -- try to get spell charge duration first
-                                        durationObject = C_Spell.GetSpellChargeDuration(trackedFrame.meta.activeSpellID)
-                                        if not durationObject then
-                                            --if that failed, maybe it was a spell without charges
-                                            durationObject = C_Spell.GetSpellCooldownDuration(trackedFrame.meta.activeSpellID)
-                                        end
-                                    end)
-                                    if durationObject then
-                                        checkCooldownFrame:Clear()  -- resets to hidden; MUST be before each check
-                                        checkCooldownFrame._pendingData = {
-                                            customFrame = trackedFrame,
-                                            uniqueID = uniqueID,
-                                            trackerType = tType,
-                                            config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, tType)
-                                        }
-                                        checkCooldownFrame:SetCooldownFromDurationObject(durationObject)
-                                        checkCooldownFrame._pendingData = nil 
-                                    end
+                                    FrameTrackerManager:ApplyCooldownDuration({
+                                        customFrame = trackedFrame,
+                                        config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, tType),
+                                        uniqueID = uniqueID,
+                                        trackerType = tType
+                                    })
                                 end
                             end
                         end
