@@ -465,7 +465,10 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 {
                     type = "dropdown",
                     label = "Glow Style",
-                    options = {"thin", "thick"},
+                    options = {
+                        { label = "Thin", value = "thin" },
+                        { label = "Thick", value = "thick" }
+                    },
                     getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowStyle") or "thin" end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowStyle", value) end,
                 },

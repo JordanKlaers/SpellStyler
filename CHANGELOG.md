@@ -136,3 +136,6 @@ Slightly more technical summary:
 
 Version 0.4.6
 	- Adds glow notifications and reverts a very niche bugfix that actucally caused GCD swipes to show, which is disgusting.
+
+Version 0.4.7
+	- Missed a setting for the glow notification menu
