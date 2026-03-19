@@ -139,3 +139,13 @@ Version 0.4.6
 
 Version 0.4.7
 	- Missed a setting for the glow notification menu
+
+Version 0.4.8
+
+Slightly less technical summary:
+	- Spells with an active cooldown that would apply the gcd, will just end the cooldown instead (to avoid rendering the gcd)
+	- Buffs properly end their duration when the buff is over - instead of reapplying the spell duration (when the buff and spell id's match)
+
+Slightly more technical summary:
+	- As a solution for spells with charges, they would attempted to reapply the cooldown after one completes. Its been updated to NOT do that for buff frames, as they should be completely controlled by the hook on the blizzard frame.
+	- Uses the curve with elvaluate remaining duration to check if the cooldown that will be applied is equal to the GCD. If thats the case, (only for spells that are activly on cooldown) it will instead just end the cooldown early. This happens as a side affect of accounting for spells that can have their cooldown duration reduced by other spells. In order to keep that working, and ALSO not show the GCD, skipping it by ending the cooldown duration is easiest currently.

@@ -615,40 +615,6 @@ local function ScanAndSaveCurrentCooldownManagerFrames(trackerType)
     FrameTrackerManager:ApplyViewerVisibility(trackerType)
 end
 
--- When onlyRenderBar is true, hides bg/glow/border by zeroing their alpha.
--- When false, restores each element to its correct config alpha via SetVertexColor.
--- The main fill (SetStatusBarTexture) is never touched.
-
---- @param data ApplyCooldownDurationData
-function FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
-    if not data.customFrame.statusBar then return end
-    local onlyBar = data.config.statusBar.onlyRenderBar
-
-    -- Background texture uses backgroundColor
-    if data.customFrame.statusBar.bgTexture then
-        local c = data.config.statusBar.backgroundColor
-        data.customFrame.statusBar.bgTexture:SetVertexColor(c.r or 0, c.g or 0, c.b or 0, onlyBar and 0 or (c.a or 0.65))
-    end
-
-    -- Glow overlay uses glowColor
-    if data.customFrame.statusBar.glowTexture then
-        local c = data.config.statusBar.glowColor
-        data.customFrame.statusBar.glowTexture:SetVertexColor(c.r or 1, c.g or 1, c.b or 1, onlyBar and 0 or (c.a or 0.25))
-    end
-
-    -- All 8 border pieces use borderColor
-    local bc = data.config.statusBar.borderColor
-    local br, bg, bb = bc.r or 0, bc.g or 0, bc.b or 0
-    local ba = onlyBar and 0 or (bc.a or 1)
-    if data.customFrame.statusBar.borderCornerTL then data.customFrame.statusBar.borderCornerTL:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame.statusBar.borderCornerTR then data.customFrame.statusBar.borderCornerTR:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame.statusBar.borderCornerBR then data.customFrame.statusBar.borderCornerBR:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame.statusBar.borderCornerBL then data.customFrame.statusBar.borderCornerBL:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame.statusBar.borderEdgeTop    then data.customFrame.statusBar.borderEdgeTop:SetVertexColor(br, bg, bb, ba)    end
-    if data.customFrame.statusBar.borderEdgeRight  then data.customFrame.statusBar.borderEdgeRight:SetVertexColor(br, bg, bb, ba)  end
-    if data.customFrame.statusBar.borderEdgeBottom then data.customFrame.statusBar.borderEdgeBottom:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame.statusBar.borderEdgeLeft   then data.customFrame.statusBar.borderEdgeLeft:SetVertexColor(br, bg, bb, ba)   end
-end
 
 function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, trackerType)
     if SpellStyler_frames[trackerType][uniqueID] then
@@ -789,16 +755,19 @@ function FrameTrackerManager:CreateTrackerFrame(uniqueID, trackerConfig, tracker
             uniqueID = self.uniqueID,
             config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
         })
-        C_Timer.After(0, function()
-            -- must occur one update cycle after this callback so the required information is updated.
-            -- Attempt to reapply cooldown duration incase the spell has multiple charges that are still on cooldown.
-            FrameTrackerManager:ApplyCooldownDuration({
-                customFrame = frame,
-                trackerType = trackerType,
-                uniqueID = self.uniqueID,
-                config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
-            })
-        end)
+        if trackerType ~= 'buffs' then
+            C_Timer.After(0, function()
+                -- must occur one update cycle after this callback so the required information is updated.
+                -- Attempt to reapply cooldown duration incase the spell has multiple charges that are still on cooldown.
+
+                FrameTrackerManager:ApplyCooldownDuration({
+                    customFrame = frame,
+                    trackerType = trackerType,
+                    uniqueID = self.uniqueID,
+                    config = FrameTrackerManager:GetSpecificTrackerValue(self.uniqueID, trackerType)
+                })
+            end)
+        end
     end)
     
     -- Create StatusBar for tracker cooldown progress (secret-value compatible)
@@ -1346,32 +1315,6 @@ function FrameTrackerManager:BrieflyHighlightFrame(uniqueID, trackerType)
     end
 end
 
-
---- Applies secret-value alpha–based icon visibility for spells with charges.
---- Must be called after the binary Show/Hide decision so it can override it.
---- 'active'/'cooldown' states are intentionally skipped: those states want the
---- icon visible when all charges are consumed (canBeCast=false), which the
---- binary showSpellIcon path already handles correctly via canBeCast logic.
---- @param frame table            The tracker frame
---- @param iconDisplayState string The configured iconDisplayState setting
---- @param activeSpellID number   The active spell ID to query charges for
-function FrameTrackerManager:ControlIconVisibilityUsingSpellCharges(frame, iconDisplayState, activeSpellID)
-    local charges = C_Spell.GetSpellCharges(activeSpellID) or {}
-    if iconDisplayState == 'always' then
-        frame.icon:Show()
-        frame.icon:SetAlpha(1)
-    elseif iconDisplayState == 'never' then
-        frame.icon:Hide()
-    elseif iconDisplayState ~= 'active' and iconDisplayState ~= 'cooldown' then
-        frame.icon:Show()
-        if charges.currentCharges ~= nil then
-            frame.icon:SetAlpha(charges.currentCharges)
-        else
-            frame.icon:SetAlphaFromBoolean(frame.meta.isDurationActive, 0, 1)
-        end
-    end
-end
-
 --- @param data ApplyCooldownDurationData
 function FrameTrackerManager:UpdateFrame_Duration_Inactive(data)
     local trackerConfig = data.config
@@ -1389,33 +1332,6 @@ function FrameTrackerManager:UpdateFrame_Duration_Inactive(data)
         or trackerConfig.iconSettings.iconDisplayState == 'inactive'
     )
     local suc, err = pcall(function()
-        if showstatusBar then
-            local barColor = trackerConfig.statusBar.color
-            local isFull = trackerConfig.statusBar.defaultFillValue == 'full'
-            frame.statusBar:Show()
-            frame.statusBar:SetStatusBarColor(
-                barColor.r or 0.2,
-                barColor.g or 0.8,
-                barColor.b or 1,
-                0  -- always hide the timer-driven fill; fullCoverTexture handles the 'full' visual
-            )
-            -- frame.statusBar:SetValue(isFull and 1 or 0)
-            -- Show/hide the cover texture for 'full' defaultFillValue.
-            -- This overlay sits above the fill (ARTWORK sublayer 1) and visually
-            -- fills the bar without interacting with SetTimerDuration, so it is
-            -- immune to GCD timer interference.
-            if frame.statusBar.fullCoverTexture then
-                if isFull then
-                    local c = trackerConfig.statusBar.color
-                    frame.statusBar.fullCoverTexture:SetVertexColor(c.r or 0.2, c.g or 0.8, c.b or 1, c.a or 0.9)
-                    frame.statusBar.fullCoverTexture:Show()
-                else
-                    frame.statusBar.fullCoverTexture:Hide()
-                end
-            end
-        else
-            frame.statusBar:Hide()
-        end
         frame.cooldown:SetDrawSwipe(false)
         frame.cooldown:SetDrawEdge(false)
         frame.cooldown:SetHideCountdownNumbers(true)
@@ -1446,7 +1362,6 @@ function FrameTrackerManager:UpdateFrame_Duration_Inactive(data)
             )
         end
     end)
-    FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
 end
 
 --- @param data ApplyCooldownDurationData
@@ -1475,16 +1390,6 @@ function FrameTrackerManager:UpdateFrame_Duration_Active(data)
         ))
     )
     local suc, err = pcall(function()
-        if showstatusBar then
-            frame.statusBar:Show()
-            local barColor = trackerConfig.statusBar.color
-            frame.statusBar:SetStatusBarColor(
-                barColor.r or 0.2,
-                barColor.g or 0.8,
-                barColor.b or 1,
-                barColor.a or 0.9
-            )
-        end
         frame.cooldown:SetDrawSwipe(not trackerConfig.iconSettings.hideDefaultSweep)
         frame.cooldown:SetDrawEdge(not trackerConfig.iconSettings.hideDefaultSweep)
         frame.cooldown:SetHideCountdownNumbers(not trackerConfig.cooldownText.display)
@@ -1504,13 +1409,7 @@ function FrameTrackerManager:UpdateFrame_Duration_Active(data)
             -- Apply grayscale vertex color for "on cooldown" feel
             frame.icon:SetVertexColor(0.6, 0.6, 0.6, 0.6)
         end
-        
-        -- A real cooldown is active; hide the full-cover overlay so the timer-driven fill shows through.
-        if frame.statusBar.fullCoverTexture then
-            frame.statusBar.fullCoverTexture:Hide()
-        end
     end)
-    FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
 end
 
 function FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
@@ -1946,6 +1845,14 @@ function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
                 color.a or 1
             )
         end
+
+        FrameTrackerManager:ApplyProperStatusBarVisibility({
+            uniqueID = uniqueID,
+            customFrame = frame,
+            config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, 'buffs'),
+            trackerType = 'buffs',
+            isBuffActive = true
+        })
     else
         frame.count:SetText("")
         if config.iconSettings.iconDisplayState == 'always' or config.iconSettings.iconDisplayState == 'inactive' or config.iconSettings.iconDisplayState == 'available' then
@@ -1958,6 +1865,15 @@ function FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
             frame.icon:SetVertexColor(0.6, 0.6, 0.6, 0.6)
             frame.icon:SetDesaturated(true)
         end
+
+        FrameTrackerManager:ApplyProperStatusBarVisibility({
+            uniqueID = uniqueID,
+            customFrame = frame,
+            spellID = uniqueID,
+            config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, 'buffs'),
+            isBuffActive = false,
+            trackerType = 'buffs',
+        })
     end
 end
 
@@ -2087,13 +2003,25 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                         end)
                         pcall(function()
                             durationObj = C_UnitAuras.GetAuraDuration("player", self:GetAuraSpellInstanceID())
+                            local config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
+                            local frame = SpellStyler_frames[trackerType][uniqueID]
+                            frame.meta.currentAuraInstanceID = cdm_frame:GetAuraSpellInstanceID()
+                            local isFull = config.statusBar.defaultFillValue == 'full'
+                            if frame.statusBar.fullCoverTexture then
+                                if isFull then
+                                    local c = config.statusBar.color
+                                    frame.statusBar.fullCoverTexture:SetVertexColor(c.r or 0.2, c.g or 0.8, c.b or 1, c.a or 0.9)
+                                    frame.statusBar.fullCoverTexture:Show()
+                                else
+                                    frame.statusBar.fullCoverTexture:Hide()
+                                end
+                            end
                             if durationObj then
-                                local frame = SpellStyler_frames[trackerType][uniqueID]
                                 FrameTrackerManager:ApplyCooldownDuration({
                                     customFrame = frame,
                                     uniqueID = uniqueID,
                                     trackerType = trackerType,
-                                    config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType),
+                                    config = config,
                                     durationObject = durationObj
                                 })
                             end
@@ -2124,9 +2052,14 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                         if not customFrame then return end
                         local spellInfo = C_Spell.GetSpellInfo(uniqueID)
                         local durationObj = nil
-                        if trackerType ~= "buffs" then return end
+                        if trackerType ~= "buffs" then return end  
                         local success, erro = pcall(function()
                             durationObj = C_UnitAuras.GetAuraDuration("player", cdm_frame:GetAuraSpellInstanceID())
+
+                            if customFrame.statusBar.fullCoverTexture then
+                                customFrame.statusBar.fullCoverTexture:Hide()
+                            end
+                            --TODO: Add a setting if you want to "Set buff active as status bar full" which should result in THIS handling the status bar, rather than duration inactive or w/e 
                             customFrame.meta.currentAuraInstanceID = cdm_frame:GetAuraSpellInstanceID()
                             if durationObj then
                                 FrameTrackerManager:ApplyCooldownDuration({
@@ -2224,49 +2157,155 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
             Enum.StatusBarInterpolation.Immediate,
             cdTimerDir
         )
-        --Apply cooldown to the statusbar first and set hidden. If a real cooldown is happening, the SetScript('OnShow') callback for the cooldown frame will properly apply the visibility
-        if not data.customFrame.meta.isDurationActive then
-            local showstatusBar = (
-                data.config.statusBar.displayState == "always"
-                or data.config.statusBar.displayState == "available"
-                or data.config.statusBar.displayState == "inactive"
-            )
-            local suc, err = pcall(function()
-                if showstatusBar then
-                    local barColor = data.config.statusBar.color
-                    local isFull = data.config.statusBar.defaultFillValue == 'full'
-                    data.customFrame.statusBar:Show()
-                    data.customFrame.statusBar:SetStatusBarColor(
-                        barColor.r or 0.2,
-                        barColor.g or 0.8,
-                        barColor.b or 1,
-                        0  -- always hide the timer-driven fill; fullCoverTexture handles the 'full' visual
-                    )
-                    -- data.customFrame.statusBar:SetValue(isFull and 1 or 0)
-                    -- Show/hide the cover texture for 'full' defaultFillValue.
-                    -- This overlay sits above the fill (ARTWORK sublayer 1) and visually
-                    -- fills the bar without interacting with SetTimerDuration, so it is
-                    -- immune to GCD timer interference.
-                    if data.customFrame.statusBar.fullCoverTexture then
-                        if isFull then
-                            local c = data.config.statusBar.color
-                            data.customFrame.statusBar.fullCoverTexture:SetVertexColor(c.r or 0.2, c.g or 0.8, c.b or 1, c.a or 0.9)
-                            data.customFrame.statusBar.fullCoverTexture:Show()
-                        else
-                            data.customFrame.statusBar.fullCoverTexture:Hide()
-                        end
-                    end
-                else
-                    data.customFrame.statusBar:Hide()
-                end
-            end)
-        end
+        data.durationObject = durationObject
+        FrameTrackerManager:ApplyProperStatusBarVisibility(data)
     end
-    FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
+    
+    -- -----------------------------------------------------------------------
     data.customFrame.cooldown:SetCooldown(durationObject:GetStartTime(), durationObject:GetTotalDuration())
 end
 
 
+--- Applies secret-value alpha–based icon visibility for spells with charges.
+--- Must be called after the binary Show/Hide decision so it can override it.
+--- 'active'/'cooldown' states are intentionally skipped: those states want the
+--- icon visible when all charges are consumed (canBeCast=false), which the
+--- binary showSpellIcon path already handles correctly via canBeCast logic.
+--- @param frame table            The tracker frame
+--- @param iconDisplayState string The configured iconDisplayState setting
+--- @param activeSpellID number   The active spell ID to query charges for
+function FrameTrackerManager:ControlIconVisibilityUsingSpellCharges(frame, iconDisplayState, activeSpellID)
+    local charges = C_Spell.GetSpellCharges(activeSpellID) or {}
+    if iconDisplayState == 'always' then
+        frame.icon:Show()
+        frame.icon:SetAlpha(1)
+    elseif iconDisplayState == 'never' then
+        frame.icon:Hide()
+    elseif iconDisplayState ~= 'active' and iconDisplayState ~= 'cooldown' then
+        frame.icon:Show()
+        if charges.currentCharges ~= nil then
+            frame.icon:SetAlpha(charges.currentCharges)
+        elseif frame.meta.isDurationActive then
+            -- if the duration is active, check if its the GCD to attempt to "ignore" it by displaying the icon
+            local gcdCurve    = SpellStyler.Util:IsValidCooldownCurve()
+            local alpha =  C_Spell.GetSpellCooldownDuration(activeSpellID):EvaluateRemainingDuration(gcdCurve)
+            frame.icon:SetAlpha(alpha)
+        else
+            -- it must not be displaying an active cooldown, so show it
+            frame.icon:SetAlpha(1)
+        end
+    end
+end
+
+
+function FrameTrackerManager:ApplyProperStatusBarVisibility(data)
+    local alpha_overlayBar = nil
+    local alpha_actualBar = nil
+    if data.trackerType == 'buffs' then
+        if data.isBuffActive then
+            alpha_overlayBar = 1
+            alpha_actualBar = 0
+        else
+            alpha_overlayBar = 0
+            alpha_actualBar = 1
+        end
+    elseif data.durationObject ~= nil then
+        pcall(function()
+            local gcdCurve    = SpellStyler.Util:IsValidCooldownCurve()  -- if  the comparison == GCD then return 1
+            local gcdCurve_inverse    = SpellStyler.Util:IsValidCooldownCurve(true)
+            alpha_overlayBar = data.durationObject:EvaluateRemainingDuration(gcdCurve)
+            alpha_actualBar = data.durationObject:EvaluateRemainingDuration(gcdCurve_inverse)
+            -- This results in the overlay bar having an alpha of 1 - making it fully visible if used (basically makign the GCD cooldown not render)
+            -- The alpha_actualBar would be the inverse, thus hiding it.
+        end)
+    elseif data.customFrame.meta.isDurationActive then
+        alpha_overlayBar = 0
+        alpha_actualBar = 1
+        -- If not passing a duration object, assume the isDurationActive is providing a valid state (not GCD) and make the status bar show the duration animation
+    else
+        alpha_overlayBar = 1
+        alpha_actualBar = 0
+        -- Not active duration, hide the actual bar and show the overlay
+    end
+    if data.customFrame.statusBar then
+        local isFull = data.config
+            and data.config.statusBar
+            and data.config.statusBar.defaultFillValue == 'full'
+        if data.config.statusBar.displayState == 'always'
+            or (
+                (data.config.statusBar.displayState == 'cooldown' or data.config.statusBar.displayState == 'active')
+                and (
+                    (data.customFrame.meta.isDurationActive and data.trackerType ~= 'buffs')
+                    or (data.isBuffActive and data.trackerType == 'buffs')
+                )
+            ) then
+            if isFull then
+                -- Try to set the alpha over the overlay bar. If using the duraiton object, this will dynamically try to hide or show the overlay and statusBar to essetially not render the GCD. This might cause the cooldown to appear to "skip" to a compelted state, but thats better than it rendering the GCD (potentially over and over)
+                if data.customFrame.statusBar.fullCoverTexture then
+                    local c = data.config.statusBar.color
+                    data.customFrame.statusBar.fullCoverTexture:SetVertexColor(
+                        data.config.statusBar.color.r,
+                        data.config.statusBar.color.g,
+                        data.config.statusBar.color.b,
+                        1
+                    )
+                    data.customFrame.statusBar.fullCoverTexture:Show()
+                    data.customFrame.statusBar.fullCoverTexture:SetAlpha(alpha_overlayBar)
+                end
+            else
+                data.customFrame.statusBar.fullCoverTexture:Hide()
+            end
+            -- Suppress the bar during GCD by tying its alpha to the curve.
+            data.customFrame.statusBar:Show()
+            data.customFrame.statusBar:SetStatusBarColor(
+                data.config.statusBar.color.r or 0.2,
+                data.config.statusBar.color.g or 0.8,
+                data.config.statusBar.color.b or 1,
+                alpha_actualBar
+            )
+            FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
+        else
+            data.customFrame.statusBar:Hide()
+            data.customFrame.statusBar.fullCoverTexture:Hide()
+        end
+    end
+end
+
+
+-- When onlyRenderBar is true, hides bg/glow/border by zeroing their alpha.
+-- When false, restores each element to its correct config alpha via SetVertexColor.
+-- The main fill (SetStatusBarTexture) is never touched.
+
+--- @param data ApplyCooldownDurationData
+function FrameTrackerManager:ApplyStatusBar_OnlyRenderBar(data)
+    if not data.customFrame.statusBar then return end
+    local onlyBar = data.config.statusBar.onlyRenderBar
+
+    -- Background texture uses backgroundColor
+    if data.customFrame.statusBar.bgTexture then
+        local c = data.config.statusBar.backgroundColor
+        data.customFrame.statusBar.bgTexture:SetVertexColor(c.r or 0, c.g or 0, c.b or 0, onlyBar and 0 or (c.a or 0.65))
+    end
+
+    -- Glow overlay uses glowColor
+    if data.customFrame.statusBar.glowTexture then
+        local c = data.config.statusBar.glowColor
+        data.customFrame.statusBar.glowTexture:SetVertexColor(c.r or 1, c.g or 1, c.b or 1, onlyBar and 0 or (c.a or 0.25))
+    end
+
+    -- All 8 border pieces use borderColor
+    local bc = data.config.statusBar.borderColor
+    local br, bg, bb = bc.r or 0, bc.g or 0, bc.b or 0
+    local ba = onlyBar and 0 or (bc.a or 1)
+    if data.customFrame.statusBar.borderCornerTL then data.customFrame.statusBar.borderCornerTL:SetVertexColor(br, bg, bb, ba) end
+    if data.customFrame.statusBar.borderCornerTR then data.customFrame.statusBar.borderCornerTR:SetVertexColor(br, bg, bb, ba) end
+    if data.customFrame.statusBar.borderCornerBR then data.customFrame.statusBar.borderCornerBR:SetVertexColor(br, bg, bb, ba) end
+    if data.customFrame.statusBar.borderCornerBL then data.customFrame.statusBar.borderCornerBL:SetVertexColor(br, bg, bb, ba) end
+    if data.customFrame.statusBar.borderEdgeTop    then data.customFrame.statusBar.borderEdgeTop:SetVertexColor(br, bg, bb, ba)    end
+    if data.customFrame.statusBar.borderEdgeRight  then data.customFrame.statusBar.borderEdgeRight:SetVertexColor(br, bg, bb, ba)  end
+    if data.customFrame.statusBar.borderEdgeBottom then data.customFrame.statusBar.borderEdgeBottom:SetVertexColor(br, bg, bb, ba) end
+    if data.customFrame.statusBar.borderEdgeLeft   then data.customFrame.statusBar.borderEdgeLeft:SetVertexColor(br, bg, bb, ba)   end
+end
 
 --- @param spellID number
 --- @return ApplyCooldownDurationData|nil
@@ -2390,6 +2429,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         for uniqueID, customFrame in pairs(SpellStyler_frames["buffs"]) do
             local currentAuraInstanceID = customFrame.meta.currentAuraInstanceID or 0
             if removedAuraSet[currentAuraInstanceID] then
+                customFrame.meta.currentAuraInstanceID = 0 --clear
                 customFrame.cooldown:Clear()
                 customFrame.statusBar:SetValue(0)
                 FrameTrackerManager:UpdateFrame_AuraEvent(uniqueID)
@@ -2474,22 +2514,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         end
                     end
                     
-                    for _, tType in ipairs({"essential", "utility"}) do
-                        for uniqueID, trackedFrame in pairs(SpellStyler_frames[tType]) do
-                            -- skip the frame that was already matched
-                            if not match or uniqueID ~= match.uniqueID or tType ~= match.trackerType then
-                                local spellInfo = C_Spell.GetSpellInfo(uniqueID)
-                                if trackedFrame.meta.isDurationActive then
-                                    FrameTrackerManager:ApplyCooldownDuration({
-                                        customFrame = trackedFrame,
-                                        config = FrameTrackerManager:GetSpecificTrackerValue(uniqueID, tType),
-                                        uniqueID = uniqueID,
-                                        trackerType = tType
-                                    })
-                                end
-                            end
-                        end
-                    end
                 end)
             end
         end)
@@ -2504,6 +2528,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
         if frameMatchData then
             local success, error = pcall(function()
+                if frameMatchData.customFrame.meta.isDurationActive then
+                    FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
+                end
+
                 if cooldownInfo.isOnGCD == true then
                     return  -- GCD only – nothing to do
                 end
