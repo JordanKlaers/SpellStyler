@@ -300,6 +300,50 @@ local function ShowBorderDemo()
             end
         end)
 
+        -- ---- Global Visibility section ----
+        local globalVisLabel = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        globalVisLabel:SetPoint("TOPLEFT", wipeDbBtn, "BOTTOMLEFT", 0, -28)
+        globalVisLabel:SetText("|cFFFFD700Global Visibility|r")
+
+        local globalVisSep = utilityContentFrame:CreateTexture(nil, "ARTWORK")
+        globalVisSep:SetColorTexture(0.4, 0.4, 0.4, 0.5)
+        globalVisSep:SetHeight(1)
+        globalVisSep:SetPoint("TOPLEFT",  globalVisLabel, "BOTTOMLEFT", 0, -4)
+        globalVisSep:SetPoint("TOPRIGHT", utilityContentFrame, "TOPRIGHT", -12, 0)
+
+        local hideOutOfCombatCB = CreateFrame("CheckButton", nil, utilityContentFrame, "UICheckButtonTemplate")
+        hideOutOfCombatCB:SetSize(26, 26)
+        hideOutOfCombatCB:SetPoint("TOPLEFT", globalVisSep, "BOTTOMLEFT", 0, -6)
+        hideOutOfCombatCB:SetFrameLevel(utilityContentFrame:GetFrameLevel() + 1)
+
+        local hideOutOfCombatLbl = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        hideOutOfCombatLbl:SetPoint("LEFT", hideOutOfCombatCB, "RIGHT", 4, 0)
+        hideOutOfCombatLbl:SetText("Hide when out of combat")
+        hideOutOfCombatLbl:SetTextColor(0.9, 0.9, 0.9)
+
+        local function RefreshGlobalVisCheckbox()
+            local FTM = SpellStyler.FrameTrackerManager
+            if FTM and FTM.GetGlobalSettings then
+                local gs = FTM:GetGlobalSettings()
+                hideOutOfCombatCB:SetChecked(
+                    gs and gs.visibilitySettings and gs.visibilitySettings.hideWhenOutOfCombat or false
+                )
+            end
+        end
+
+        hideOutOfCombatCB:SetScript("OnClick", function(self)
+            local FTM = SpellStyler.FrameTrackerManager
+            if FTM and FTM.GetGlobalSettings then
+                local gs = FTM:GetGlobalSettings()
+                if gs and gs.visibilitySettings then
+                    gs.visibilitySettings.hideWhenOutOfCombat = self:GetChecked()
+                    FTM:ApplyGlobalVisibility()
+                end
+            end
+        end)
+
+        utilityContentFrame:HookScript("OnShow", RefreshGlobalVisCheckbox)
+
         SpellStyler.HelpContentRenderer:RenderHelpView(helpContentFrame)
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
         SpellStyler.ContainerSettingsRenderer:RenderContainerView(containerContentFrame)

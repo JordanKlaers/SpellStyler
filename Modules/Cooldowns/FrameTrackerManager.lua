@@ -259,7 +259,16 @@ function FrameTrackerManager:GetDataBase_V2()
     specDB.essential = specDB.essential or {}
     specDB.utility = specDB.utility or {}
     specDB.docks = specDB.docks or {}
-    
+    specDB.globalSettings = specDB.globalSettings or {
+        visibilitySettings = {
+            hideWhenOutOfCombat = false,
+        }
+    }
+    -- Ensure nested tables always exist for older saved data
+    specDB.globalSettings.visibilitySettings = specDB.globalSettings.visibilitySettings or {
+        hideWhenOutOfCombat = false,
+    }
+
     return specDB
     --[[
     ============================================================================
@@ -500,6 +509,40 @@ function FrameTrackerManager:ApplyViewerVisibility(trackerType)
         viewer:SetAlpha(0)
     else
         viewer:SetAlpha(1)
+    end
+end
+
+-- ============================================================================
+-- GLOBAL SETTINGS
+-- ============================================================================
+
+function FrameTrackerManager:GetGlobalSettings()
+    local db = FrameTrackerManager:GetDataBase_V2()
+    return db.globalSettings
+end
+
+--- Applies the globalSettings.visibilitySettings to all tracker frames.
+--- Called on PLAYER_REGEN_ENABLED / PLAYER_REGEN_DISABLED.
+--- Uses SetAlpha so cooldown callbacks keep firing regardless of visibility.
+function FrameTrackerManager:ApplyGlobalVisibility()
+    local gs = FrameTrackerManager:GetGlobalSettings()
+    if not gs then return end
+    if not gs.visibilitySettings then
+        gs.visibilitySettings = { hideWhenOutOfCombat = false }
+    end
+    local vs = gs.visibilitySettings
+
+    local inCombat = InCombatLockdown() or UnitAffectingCombat("player")
+    local shouldShow = not (vs.hideWhenOutOfCombat and not inCombat)
+
+    for _, trackerType in ipairs({"buffs", "essential", "utility"}) do
+        for _, frame in pairs(SpellStyler_frames[trackerType]) do
+            if shouldShow then
+                frame:Show()
+            else
+                frame:Hide()
+            end
+        end
     end
 end
 
@@ -2249,7 +2292,8 @@ function FrameTrackerManager:ApplyProperStatusBarVisibility(data)
                         data.config.statusBar.color.b,
                         1
                     )
-                    data.customFrame.statusBar.fullCoverTexture:Show()
+
+                        data.customFrame.statusBar.fullCoverTexture:Show()
                     data.customFrame.statusBar.fullCoverTexture:SetAlpha(alpha_overlayBar)
                 end
             else
@@ -2573,4 +2617,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
-
+-- ============================================================================
+-- GLOBAL VISIBILITY — combat state event frame
+-- Fires ApplyGlobalVisibility when the player enters or leaves combat so the
+-- "Hide when out of combat" setting takes effect immediately.
+-- ============================================================================
+local globalVisibilityFrame = CreateFrame("Frame")
+globalVisibilityFrame:RegisterEvent("PLAYER_REGEN_DISABLED")  -- entering combat
+globalVisibilityFrame:RegisterEvent("PLAYER_REGEN_ENABLED")   -- leaving combat
+globalVisibilityFrame:SetScript("OnEvent", function(self, event)
+    FrameTrackerManager:ApplyGlobalVisibility()
+end)
