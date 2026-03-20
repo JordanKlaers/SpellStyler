@@ -2246,11 +2246,11 @@ function FrameTrackerManager:ApplyProperStatusBarVisibility(data)
     local alpha_actualBar = nil
     if data.trackerType == 'buffs' then
         if data.isBuffActive then
-            alpha_overlayBar = 1
-            alpha_actualBar = 0
+            alpha_overlayBar = 0  -- hide full-cover overlay; show the animated timer bar
+            alpha_actualBar = 1   -- animated bar visible while buff is active
         else
-            alpha_overlayBar = 0
-            alpha_actualBar = 1
+            alpha_overlayBar = 1  -- show full-cover overlay when buff is inactive
+            alpha_actualBar = 0   -- hide animated bar when buff is not running
         end
     elseif data.durationObject ~= nil then
         pcall(function()
@@ -2293,7 +2293,7 @@ function FrameTrackerManager:ApplyProperStatusBarVisibility(data)
                         1
                     )
 
-                        data.customFrame.statusBar.fullCoverTexture:Show()
+                    data.customFrame.statusBar.fullCoverTexture:Show()
                     data.customFrame.statusBar.fullCoverTexture:SetAlpha(alpha_overlayBar)
                 end
             else

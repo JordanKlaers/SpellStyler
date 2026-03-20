@@ -153,3 +153,11 @@ Slightly more technical summary:
 Version 0.5.0
 
 Adds global visibility condition for out of combat - to hide icons
+
+Version 0.5.1
+
+Slightly less technical summary:
+	- Buff status bars properly show the duration
+
+Slightly more technical summary:
+	- Accidently set the inverse values for display state and didnt notice. Oops
