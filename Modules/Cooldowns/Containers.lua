@@ -4,7 +4,7 @@
 local ADDON_NAME, SpellStyler = ...
 SpellStyler.Containers = SpellStyler.Containers or {}
 local Containers = SpellStyler.Containers
-
+local State = SpellStyler.State
 -- ============================================================
 -- Texture paths
 -- ============================================================
@@ -45,6 +45,7 @@ local function AddNewContainerConfig(name)
         alignment       = "left",        -- horizontal: left|center|right  vertical: top|center|bottom
         iconWidth       = DEFAULT_ICON_SIZE,  -- width applied to each icon inside this container
         iconHeight      = DEFAULT_ICON_SIZE,  -- height applied to each icon inside this container
+        collapsible     = false,              -- when true, CollapseLayout hides inactive icons
     }
 end
 
@@ -58,7 +59,7 @@ function Containers:GetDB()
     SpellStyler_CharDB = SpellStyler_CharDB or {}
     SpellStyler_CharDB.classSpecializations = SpellStyler_CharDB.classSpecializations or {}
 
-    local specID = SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager:GetCurrentSpecID()
+    local specID = SpellStyler.State and SpellStyler.State:GetCurrentSpecID()
     if not specID then return {} end
 
     if not SpellStyler_CharDB.classSpecializations[specID] then
@@ -288,6 +289,104 @@ function Containers:LayoutContainer(name)
                 frame:SetScript("OnDragStop",  nil)
                 break
             end
+        end
+    end
+
+    local names = Containers:GetNames()
+    for _, name in ipairs(names) do
+        Containers:CollapseLayout(name)
+    end
+end
+
+-- ============================================================
+-- Collapse layout (public)
+-- ============================================================
+
+--- Shows only the icons currently on cooldown (meta.isDurationActive == true) and
+--- packs them sequentially inside the container.  Icons that are not on cooldown
+--- are hidden and their slot is reclaimed by the next active icon.
+---
+--- This is intentionally simpler than LayoutContainer: no alignment offsets,
+--- no column/row wrapping — just a straight left-to-right (or top-to-bottom)
+--- sequence of whatever is active right now.
+---
+--- Only icons already associated with the named container are processed.
+--- Call this whenever you need the container to reflect live cooldown state.
+---
+--- @param name string|nil  Container name; defaults to activeName.
+function Containers:CollapseLayout(name)
+    name = name or activeName
+    if not name then return end
+    local containers = self:GetDB()
+    local config = containers[name]
+    if not config then return end
+
+    -- If the container is not marked collapsible, do nothing.
+    if not config.collapsible then return end
+
+    local containerFrame = containerFrames[name]
+    if not containerFrame then return end
+
+    local FTM = SpellStyler.FrameTrackerManager
+    if not FTM then return end
+
+    local trackerTypes   = { "buffs", "essential", "utility" }
+    local vertical       = (config.orientation == "vertical")
+    local containerIconW = (type(config.iconWidth)  == "number" and config.iconWidth  > 0) and config.iconWidth  or DEFAULT_ICON_SIZE
+    local containerIconH = (type(config.iconHeight) == "number" and config.iconHeight > 0) and config.iconHeight or DEFAULT_ICON_SIZE
+    local PADDING        = 5
+    local GAP            = 4
+
+    -- Walk associated icons in configured order; split into active / inactive.
+    local activeFrames = {}
+    for _, uid in ipairs(config.associatedIcons) do
+        for _, tType in ipairs(trackerTypes) do
+            local frame = FTM:GetTrackerFrame(uid, tType)
+            if frame then
+                if frame.meta and frame.meta.isDurationActive then
+                    DevTool:AddData({frame.meta}, "its active")
+                    table.insert(activeFrames, frame)
+                else
+                    frame:Hide()
+                end
+                break
+            end
+        end
+    end
+
+    local N = #activeFrames
+    if N == 0 then
+        -- Nothing active; keep the container at minimum size (icons are already hidden).
+        containerFrame:SetSize(PADDING * 2 + containerIconW, PADDING * 2 + containerIconH)
+        return
+    end
+
+    -- Resize the container to fit exactly the active icons.
+    if vertical then
+        containerFrame:SetSize(
+            PADDING * 2 + containerIconW,
+            PADDING * 2 + N * containerIconH + (N - 1) * GAP
+        )
+    else
+        containerFrame:SetSize(
+            PADDING * 2 + N * containerIconW + (N - 1) * GAP,
+            PADDING * 2 + containerIconH
+        )
+    end
+
+    -- Position active icons sequentially from the top-left of the container.
+    for i, frame in ipairs(activeFrames) do
+        local idx = i - 1  -- 0-based
+        frame:Show()
+        frame:ClearAllPoints()
+        if vertical then
+            frame:SetPoint("TOPLEFT", containerFrame, "TOPLEFT",
+                PADDING,
+                -(PADDING + idx * (containerIconH + GAP)))
+        else
+            frame:SetPoint("TOPLEFT", containerFrame, "TOPLEFT",
+                PADDING + idx * (containerIconW + GAP),
+                -PADDING)
         end
     end
 end

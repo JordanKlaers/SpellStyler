@@ -1,6 +1,8 @@
 local ADDON_NAME, SpellStyler = ...
 SpellStyler.IconSettingsRenderer = SpellStyler.IconSettingsRenderer or {}
 local IconSettingsRenderer = SpellStyler.IconSettingsRenderer
+local State = SpellStyler.State
+
 local controlsPanel
 local settingsMenuIconList = {}
 
@@ -29,10 +31,10 @@ local function EnsureKeyboardFrame()
         _keyboardFrame:EnableKeyboard(false)
         _keyboardFrame:SetScript("OnKeyDown", function(self, key)
             if key ~= "UP" and key ~= "DOWN" and key ~= "LEFT" and key ~= "RIGHT" then
-                self:SetPropagateKeyboardInput(true)
+                pcall(function() self:SetPropagateKeyboardInput(true) end)
                 return
             end
-            self:SetPropagateKeyboardInput(false)
+            pcall(function() self:SetPropagateKeyboardInput(false) end)
             local cfg = IsShiftKeyDown() and _activePositionConfigs[2] or _activePositionConfigs[1]
             if not cfg then return end
             if key == "UP"    then cfg:setValue("y",  1)
@@ -427,6 +429,29 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     min = 0,
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.opacity") or 1.0 end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.opacity", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Frame Strata:",
+                    options = {
+                        { label = "BACKGROUND",       value = "BACKGROUND" },
+                        { label = "LOW",              value = "LOW" },
+                        { label = "MEDIUM",           value = "MEDIUM" },
+                        { label = "HIGH",             value = "HIGH" },
+                        { label = "DIALOG",           value = "DIALOG" },
+                        { label = "FULLSCREEN",       value = "FULLSCREEN" },
+                        { label = "FULLSCREEN_DIALOG",value = "FULLSCREEN_DIALOG" },
+                        { label = "TOOLTIP",          value = "TOOLTIP" },
+                    },
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataLevel") or "MEDIUM" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataLevel", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Frame Level:",
+                    numeric = true,
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataValue") or 100 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataValue", value) end,
                 },
                 {
                     type = "checkbox",
@@ -845,10 +870,10 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     local config = {
         trackerType = trackerType,  -- Store to avoid repeated lookups
         getValue = function(uniqueID, path) 
-            return SpellStyler.FrameTrackerManager:GetTrackerValueConfigProperty(uniqueID, trackerType, path) 
+            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, path) 
         end,
         setValue = function(uniqueID, path, value) 
-            SpellStyler.FrameTrackerManager:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value) 
+            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value) 
         end
     }
     
@@ -868,7 +893,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     local lastControl = nil
     
     -- Render main header with icon name
-    local trackedValue = SpellStyler.FrameTrackerManager:GetSpecificTrackerValue(uniqueID, trackerType)
+    local trackedValue = SpellStyler.State:GetSpecificTrackerValue(uniqueID, trackerType)
     if trackedValue then
         local header = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         header:SetPoint("TOPLEFT", 0, -10)
@@ -883,7 +908,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 		resetBtn:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -10)
 		resetBtn:SetText("Reset to Defaults")
 		resetBtn:SetScript("OnClick", function()
-			SpellStyler.FrameTrackerManager:ResetTrackerValueConfig(uniqueID, trackerType)
+			SpellStyler.State:ResetTrackerValueConfig(uniqueID, trackerType)
 			IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 		end)
 
@@ -1013,7 +1038,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 							sourceTrackerType = sourceTrackerType,
 							category = category
 						}
-						SpellStyler.FrameTrackerManager:CopySettings(copyInfo)
+						SpellStyler.State:CopySettings(copyInfo)
 						-- CopySettingsSection(sourceSectionIndex, sourceUniqueID, sourceTrackerType, targetUniqueID, targetTrackerType)
 					end
 					-- Always clear glow on drop
@@ -1128,7 +1153,7 @@ end
 -- ============================================================================
 function IconSettingsRenderer:getTrackerTypeForID(uniqueID)
 	for _, tType in ipairs({"buffs", "essential", "utility"}) do
-		if SpellStyler.FrameTrackerManager:CheckIsAlreadyTracker(uniqueID, tType) then
+		if SpellStyler.State:CheckIsAlreadyTracker(uniqueID, tType) then
 			return tType
 		end
 	end
@@ -1193,8 +1218,8 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 	
     -- Render icons directly into the scroll child in a single column
     IconSettingsRenderer.iconSelectorButtons = {}
-    if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.getTrackerValuesListForSettings then
-        local trackerList = SpellStyler.FrameTrackerManager:getTrackerValuesListForSettings()
+    if SpellStyler.State and SpellStyler.State.getTrackerValuesListForSettings then
+        local trackerList = SpellStyler.State:getTrackerValuesListForSettings()
         local count = #trackerList
         local iconPadding = 7
         local totalHeight = count * iconSize + (count + 1) * minPadding

@@ -4,7 +4,7 @@
 local ADDON_NAME, SpellStyler = ...
 SpellStyler.ContainerSettingsRenderer = SpellStyler.ContainerSettingsRenderer or {}
 local ContainerSettingsRenderer = SpellStyler.ContainerSettingsRenderer
-
+local State = SpellStyler.State
 -- ============================================================
 -- Shared helpers
 -- ============================================================
@@ -222,7 +222,7 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
         lbl:SetTextColor(0.75, 0.75, 0.75)
         local box = CreateFrame("EditBox", nil, contentFrame, "InputBoxTemplate")
         box:SetSize(44, 20)
-        box:SetPoint("LEFT", lbl, "RIGHT", 6, 0)
+        box:SetPoint("TOPLEFT", lbl, "BOTTOMLEFT", 6, -5)
         box:SetAutoFocus(false)
         box:SetNumeric(true)
         box:SetMaxLetters(4)
@@ -251,7 +251,7 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
     }
 
     local alignLabel = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    alignLabel:SetPoint("TOPLEFT", orientDropdown, "BOTTOMLEFT", 16, -34)
+    alignLabel:SetPoint("LEFT", orientLabel, "RIGHT", 70, 0)
     alignLabel:SetText("|cFFFFD700Alignment|r")
     alignLabel:SetTextColor(0.75, 0.75, 0.75)
 
@@ -303,7 +303,7 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
     end
 
     -- Forward declared so RefreshOrientationDropdown can reference them before they are created.
-    local iconWidthBox, iconHeightBox
+    local iconWidthBox, iconHeightBox, collapsibleCheck
 
     -- RefreshOrientationDropdown defined here so it closes over limit boxes + align dropdown
     RefreshOrientationDropdown = function()
@@ -337,6 +337,15 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
             end
         end
 
+        -- Populate collapsible checkbox
+        if collapsibleCheck then
+            if config then
+                collapsibleCheck:SetChecked(config.collapsible == true)
+            else
+                collapsibleCheck:SetChecked(false)
+            end
+        end
+
         RefreshAlignmentDropdown()
     end
 
@@ -347,7 +356,7 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
     iconSizeLabel:SetTextColor(0.75, 0.75, 0.75)
 
     local iconWidthLbl = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    iconWidthLbl:SetPoint("TOPLEFT", iconSizeLabel, "BOTTOMLEFT", 0, -4)
+    iconWidthLbl:SetPoint("TOPLEFT", iconSizeLabel, "BOTTOMLEFT", 0, -10)
     iconWidthLbl:SetText("Width:")
     iconWidthLbl:SetTextColor(0.75, 0.75, 0.75)
 
@@ -383,11 +392,31 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
     iconHeightBox:SetScript("OnEnterPressed",  function(self) self:ClearFocus() SaveIconSize(self, "iconHeight") end)
     iconHeightBox:SetScript("OnEditFocusLost", function(self) SaveIconSize(self, "iconHeight") end)
 
+    -- ---- Collapsible checkbox ----------------------------------------------
+    local collapsibleLbl = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    collapsibleLbl:SetPoint("TOPLEFT", orientLabel, "BOTTOMLEFT", 0, -90)
+    collapsibleLbl:SetText("Collapsible:")
+    collapsibleLbl:SetTextColor(0.75, 0.75, 0.75)
+
+    collapsibleCheck = CreateFrame("CheckButton", nil, contentFrame, "UICheckButtonTemplate")
+    collapsibleCheck:SetSize(20, 20)
+    collapsibleCheck:SetPoint("LEFT", collapsibleLbl, "RIGHT", 6, 0)
+    collapsibleCheck:SetScript("OnClick", function(self)
+        local cfg = SpellStyler.Containers:GetActiveConfig()
+        if cfg then
+            cfg.collapsible = self:GetChecked() == true
+        end
+    end)
+
+    local collapsibleTooltipLbl = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    collapsibleTooltipLbl:SetPoint("LEFT", collapsibleCheck, "RIGHT", 4, 0)
+    collapsibleTooltipLbl:SetText("|cFF888888Hide inactive icons|r")
+
     -- Separator between settings and icon lists
     local orientSep = contentFrame:CreateTexture(nil, "ARTWORK")
     orientSep:SetColorTexture(0.4, 0.4, 0.4, 0.4)
     orientSep:SetHeight(1)
-    orientSep:SetPoint("TOPLEFT",  iconWidthLbl, "BOTTOMLEFT",  0, -8)
+    orientSep:SetPoint("TOPLEFT",  orientLabel, "BOTTOMLEFT",  0, -120)
     orientSep:SetPoint("RIGHT", contentFrame, "RIGHT", -16, 0)
 
     -- ---- Icon lists --------------------------------------------------------
@@ -489,7 +518,7 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
             for _, uid in ipairs(config.associatedIcons) do inContainer[uid] = true end
         end
 
-        local trackerList = FTM:getTrackerValuesListForSettings()
+        local trackerList = State:getTrackerValuesListForSettings()
 
         -- ---- Row 1: all icons --------------------------------------------------
         ClearScrollChild(allSC)

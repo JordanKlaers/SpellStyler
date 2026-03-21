@@ -19,6 +19,7 @@ Libs\LibFlyPaper-2.0\LibFlyPaper-2.0.lua
 # ============================================================================
 # Modules
 # ============================================================================
+Modules\Cooldowns\State.lua
 Modules\Cooldowns\GlowAnimation.lua
 Modules\Cooldowns\Util.lua
 Modules\Cooldowns\Containers.lua

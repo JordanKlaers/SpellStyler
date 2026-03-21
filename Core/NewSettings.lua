@@ -1,3 +1,6 @@
+local addonName, SpellStyler = ...
+local FrameTrackerManager = SpellStyler.FrameTrackerManager
+local State = SpellStyler.State
 -- NewSettings.lua
 -- Simple border demo using the finalized border frame values
 
@@ -214,9 +217,8 @@ local function ShowBorderDemo()
             end
 
             local function RefreshLabel()
-                local FTM = SpellStyler.FrameTrackerManager
-                if FTM and FTM.GetViewerHidden then
-                    if FTM:GetViewerHidden(trackerType) then
+                if FrameTrackerManager.GetViewerHidden then
+                    if FrameTrackerManager:GetViewerHidden(trackerType) then
                         btn:SetText("|cFF888888" .. label .. "|r")
                     else
                         btn:SetText("|cFFFFD700" .. label .. "|r")
@@ -227,10 +229,9 @@ local function ShowBorderDemo()
             end
 
             btn:SetScript("OnClick", function()
-                local FTM = SpellStyler.FrameTrackerManager
-                if FTM and FTM.SetViewerHidden and FTM.ApplyViewerVisibility then
-                    FTM:SetViewerHidden(trackerType, not FTM:GetViewerHidden(trackerType))
-                    FTM:ApplyViewerVisibility(trackerType)
+                if FrameTrackerManager.SetViewerHidden and FrameTrackerManager.ApplyViewerVisibility then
+                    FrameTrackerManager:SetViewerHidden(trackerType, not FrameTrackerManager:GetViewerHidden(trackerType))
+                    FrameTrackerManager:ApplyViewerVisibility(trackerType)
                 end
                 RefreshLabel()
             end)
@@ -322,9 +323,8 @@ local function ShowBorderDemo()
         hideOutOfCombatLbl:SetTextColor(0.9, 0.9, 0.9)
 
         local function RefreshGlobalVisCheckbox()
-            local FTM = SpellStyler.FrameTrackerManager
-            if FTM and FTM.GetGlobalSettings then
-                local gs = FTM:GetGlobalSettings()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
                 hideOutOfCombatCB:SetChecked(
                     gs and gs.visibilitySettings and gs.visibilitySettings.hideWhenOutOfCombat or false
                 )
@@ -332,12 +332,11 @@ local function ShowBorderDemo()
         end
 
         hideOutOfCombatCB:SetScript("OnClick", function(self)
-            local FTM = SpellStyler.FrameTrackerManager
-            if FTM and FTM.GetGlobalSettings then
-                local gs = FTM:GetGlobalSettings()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
                 if gs and gs.visibilitySettings then
                     gs.visibilitySettings.hideWhenOutOfCombat = self:GetChecked()
-                    FTM:ApplyGlobalVisibility()
+                    State:ApplyGlobalVisibility()
                 end
             end
         end)
@@ -434,19 +433,21 @@ end
 
 -- Combat-delay event frame: opens settings after combat, force-closes on combat enter
 local combatDelayFrame = CreateFrame("Frame")
-combatDelayFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-combatDelayFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
-combatDelayFrame:SetScript("OnEvent", function(self, event)
-    if event == "PLAYER_REGEN_DISABLED" then
+combatDelayFrame:RegisterEvent("PLAYER_IN_COMBAT_CHANGED")
+combatDelayFrame:SetScript("OnEvent", function(self, event, ...)
+    if event == "PLAYER_IN_COMBAT_CHANGED" then
         -- Force-close the settings menu when entering combat
-        if settingsMenu and settingsMenu:IsShown() then
-            settingsMenu:Hide()
-            pendingShowAfterCombat = true -- automatically reopen if it was forced closed
-        end
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        if pendingShowAfterCombat then
-            pendingShowAfterCombat = false
-            ShowBorderDemo()
+        local isInCombat = ...
+        if isInCombat then
+            if settingsMenu and settingsMenu:IsShown() then
+                settingsMenu:Hide()
+                pendingShowAfterCombat = true -- automatically reopen if it was forced closed
+            end
+        else
+            if pendingShowAfterCombat then
+                pendingShowAfterCombat = false
+                ShowBorderDemo()
+            end
         end
     end
 end)
