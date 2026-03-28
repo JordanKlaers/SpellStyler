@@ -8,6 +8,9 @@ local function accessNestedValue(tbl, path, value, action)
         table.insert(keys, key)
     end
     local current = tbl
+	if current == nil then
+		return
+	end
     for i = 1, #keys - 1 do        
         if current[keys[i]] == nil then
             current[keys[i]] = {}
@@ -24,9 +27,49 @@ local function accessNestedValue(tbl, path, value, action)
     end
 end
 
+-- ============================================================================
+-- DEEP COPY HELPER
+-- Returns a fully independent recursive copy of `orig`.
+-- Primitives are copied by value; tables are recursively cloned so the result
+-- shares no references with the source.
+-- ============================================================================
+local function DeepCopy(orig)
+    local copy
+    if type(orig) == "table" then
+        copy = {}
+        for k, v in pairs(orig) do
+            copy[k] = DeepCopy(v)
+        end
+    else
+        copy = orig
+    end
+    return copy
+end
+
+-- ============================================================================
+-- DEEP MERGE HELPER
+-- Recursively fills missing keys in `target` with values from `defaults`.
+-- Existing values in `target` are never overwritten.
+-- ============================================================================
+local function DeepMergeDefaults(target, defaults)
+    for k, defaultVal in pairs(defaults) do
+        if target[k] == nil then
+            if type(defaultVal) == "table" then
+                target[k] = {}
+                DeepMergeDefaults(target[k], defaultVal)
+            else
+                target[k] = defaultVal
+            end
+        elseif type(target[k]) == "table" and type(defaultVal) == "table" then
+            DeepMergeDefaults(target[k], defaultVal)
+        end
+    end
+end
+
 local function AddNewTrackerValueConfig(data)
     return {
-        uniqueID = data.uniqueID,
+		isEnabled = true,
+		overrideSpellID = data.overrideSpellID,
         trackerType = data.trackerType, -- essential, utility, buffs
         name = data.name,
         defaultIconTexturePath = data.defaultIconTexturePath,
@@ -147,9 +190,11 @@ local function AddNewTrackerValueConfig(data)
             anchorParent = "RIGHT",
             anchorSelf = "LEFT"
         },
-        showProcGlow = true  -- Show spell activation glow
+        showProcGlow = true,  -- Show spell activation glow
+		persistentData = {} -- This will be populated with data to be used when secret values would otherwise throw an error (The purpose is to help with reloading while in combat)
     }
 end
+
 local _cachedSpecID = nil
 function State:GetCurrentSpecID()
     local specIndex = GetSpecialization()
@@ -163,6 +208,7 @@ function State:GetCurrentSpecID()
     -- During loading screens GetSpecialization() returns nil; fall back to last known spec
     return _cachedSpecID
 end
+
 function State:GetDataBase_V2()
     local classSpecialization = State:GetCurrentSpecID()
     if not SpellStyler_CharDB.classSpecializations then 
@@ -180,6 +226,7 @@ function State:GetDataBase_V2()
     specDB.buffs = specDB.buffs or {}
     specDB.essential = specDB.essential or {}
     specDB.utility = specDB.utility or {}
+    specDB.spells = specDB.spells or {}
     specDB.docks = specDB.docks or {}
     specDB.globalSettings = specDB.globalSettings or {
         visibilitySettings = {
@@ -204,14 +251,38 @@ function State:GetDataBase_V2()
     --]]
 end
 
+function State:SetCorrectOverride(specDB)
+	-- make sure the default Icon Texture Path and overrideSpellID match the current spell override when loading in
+	for baseSpellID, trackerValue in pairs(specDB.spells) do
+		pcall(function()
+			local overrideID = baseSpellID
+			pcall(function() overrideID = C_Spell.GetOverrideSpell(baseSpellID) end)
+			local defaultIconTexturePath = overrideID
+			local overrideInfo = C_Spell.GetSpellInfo(overrideID)
+			if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
+			specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
+			specDB.spells[baseSpellID].overrideSpellID = overrideID
+		end)
+	end
+end
+
+
 function State:HandleTalentChange()
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
+    -- Frame teardown (Hide + table wipe) was already done synchronously by
+    -- FrameTrackerManager:TeardownSpecFrames() the moment the talent spell was
+    -- detected. By the time this deferred call runs both tables are empty.
+    -- Reset them again defensively in case HandleTalentChange is ever called
+    -- from a path that didn't go through TeardownSpecFrames.
+    FrameTrackerManager:TeardownSpecFrames()
+	local specDB = SpellStyler_CharDB.classSpecializations[State:GetCurrentSpecID()]
+	State:SetCorrectOverride(specDB)
     -- Re-hook all buff cooldown frames
-    for _, tType in ipairs({"buffs", "essential", "utility"}) do
+    for _, tType in ipairs({"buffs"}) do
         FrameTrackerManager:HookAllBuffCooldownFrames(tType)
         FrameTrackerManager:ApplyViewerVisibility(tType)
     end
-
+	FrameTrackerManager:CreateNonBuffTrackerFrames()
     -- Re-layout containers for the newly active spec
     if SpellStyler.Containers then
         local containers = SpellStyler.Containers:GetDB()
@@ -229,33 +300,133 @@ function State:HandleTalentChange()
     end
 end
 
-function State:AddTrackerValue(trackerValueConstructorData)
-    local db = State:GetDataBase_V2()
-    local trackerType = trackerValueConstructorData.trackerType or "buffs"
-    db[trackerType][trackerValueConstructorData.uniqueID] = AddNewTrackerValueConfig(trackerValueConstructorData)
-    return db[trackerType][trackerValueConstructorData.uniqueID]
+-- ============================================================================
+-- DATABASE MIGRATION
+-- Called once from Main.lua Initialize() on PLAYER_LOGIN.
+--
+-- IMPORTANT: Steps that call C_Spell.GetBaseSpell / C_Spell.GetOverrideSpell
+-- are SPEC-SENSITIVE — the same spell ID can resolve to a completely different
+-- base/override depending on which spec is currently loaded (e.g. Holy Bulwark
+-- exists as a standalone spell on Protection but is an override of Divine Toll
+-- on Holy). Running those steps against an offline spec's DB would remap and
+-- corrupt entries using the wrong spec's game state, potentially deleting spells
+-- entirely. Those steps run ONLY for the currently active spec. All
+-- spec-agnostic structural fixes (table init, utility/essential migration,
+-- barFillDirection rename, DeepMergeDefaults backfill) are safe to run on
+-- every stored spec.
+-- ============================================================================
+function State:MigrateDatabase()
+    if not SpellStyler_CharDB or not SpellStyler_CharDB.classSpecializations then return end
+
+    local currentSpecID = State:GetCurrentSpecID()
+
+    for specID, specDB in pairs(SpellStyler_CharDB.classSpecializations) do
+        -- Ensure destination tables exist
+        specDB.spells    = specDB.spells    or {}
+        specDB.buffs     = specDB.buffs     or {}
+        specDB.essential = specDB.essential or {}
+        specDB.utility   = specDB.utility   or {}
+
+        -- ── Move utility & essential entries into spells ─────────────────
+        -- Safe on all specs: pure table reshuffling, no spell API calls.
+        for _, srcType in ipairs({ "utility", "essential" }) do
+            for uniqueID, trackerValue in pairs(specDB[srcType]) do
+                if not specDB.spells[uniqueID] then
+                    trackerValue.trackerType = "spells"
+                    specDB.spells[uniqueID] = trackerValue
+                end
+                specDB[srcType][uniqueID] = nil
+            end
+        end
+
+        -- ── Validate & backfill structure for every tracked entry ────────
+        -- Safe on all specs: only reads existing values and fills missing keys.
+        for _, trackerType in ipairs({ "buffs", "spells" }) do
+            for baseSpellID, trackerValue in pairs(specDB[trackerType]) do
+                -- Legacy: barFillDirection -> fillOrEmpty
+                if trackerValue.statusBar
+                    and trackerValue.statusBar.barFillDirection ~= nil
+                    and trackerValue.statusBar.fillOrEmpty == nil
+                then
+                    trackerValue.statusBar.fillOrEmpty = trackerValue.statusBar.barFillDirection
+                    trackerValue.statusBar.barFillDirection = nil
+                end
+
+                local defaults = AddNewTrackerValueConfig({
+                    baseSpellID            = baseSpellID,
+                    trackerType            = trackerType,
+                    name                   = trackerValue.name,
+                    defaultIconTexturePath = trackerValue.defaultIconTexturePath,
+                    overrideSpellID        = trackerValue.overrideSpellID,
+                })
+                DeepMergeDefaults(trackerValue, defaults)
+            end
+        end
+
+        -- ── Spec-sensitive steps: ONLY run for the currently loaded spec ──
+        -- C_Spell.GetBaseSpell and C_Spell.GetOverrideSpell return results
+        -- relative to the active spec. Applying them to a different spec's DB
+        -- would remap spell IDs using the wrong spec's data and corrupt/delete
+        -- entries (e.g. Holy Bulwark on Prot gets mistaken for an override of
+        -- Divine Toll when queried from Holy).
+        if specID == currentSpecID then
+            -- Remap spells stored under a non-base spell ID to their base ID.
+            local spellRemaps = {}
+            for uniqueID, trackerValue in pairs(specDB.spells) do
+                local baseID = nil
+                pcall(function() baseID = C_Spell.GetBaseSpell(uniqueID) end)
+                if baseID and baseID ~= uniqueID then
+                    table.insert(spellRemaps, { oldID = uniqueID, newID = baseID, entry = trackerValue })
+                end
+            end
+            for _, remap in ipairs(spellRemaps) do
+                local baseID = remap.newID
+                if not specDB.spells[baseID] then
+                    local entry = remap.entry
+                    entry.uniqueID = baseID
+                    specDB.spells[baseID] = entry
+                end
+                local overrideID = baseID
+                pcall(function() overrideID = C_Spell.GetOverrideSpell(baseID) end)
+                specDB.spells[baseID].overrideSpellID = overrideID
+                specDB.spells[remap.oldID] = nil
+            end
+
+            -- Refresh overrideSpellID and defaultIconTexturePath for the active spec.
+            State:SetCorrectOverride(specDB)
+        end
+    end
 end
 
-function State:ResetTrackerValueConfig(uniqueID, trackerType)
+function State:AddTrackerValue(trackerValueConstructorData)
+    local db = State:GetDataBase_V2()
+    local trackerType = trackerValueConstructorData.trackerType
+	if not trackerType then return end
+    db[trackerType][trackerValueConstructorData.baseSpellID] = AddNewTrackerValueConfig(trackerValueConstructorData)
+    return db[trackerType][trackerValueConstructorData.baseSpellID]
+end
+
+function State:ResetTrackerValueConfig(baseSpellID, trackerType)
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local db = State:GetDataBase_V2()
-    local existing = db[trackerType] and db[trackerType][uniqueID]
+    local existing = db[trackerType] and db[trackerType][baseSpellID]
     if not existing then return end
     -- Rebuild from defaults, preserving identity fields
     local defaults = AddNewTrackerValueConfig({
-        uniqueID = uniqueID,
+        baseSpellID = baseSpellID,
         trackerType = trackerType,
         name = existing.name,
         defaultIconTexturePath = existing.defaultIconTexturePath,
+        overrideSpellID = existing.overrideSpellID,
     })
-    db[trackerType][uniqueID] = defaults
+    db[trackerType][baseSpellID] = defaults
     -- Refresh the live frame if it exists
-    if FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID] then
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
+    if FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
         FrameTrackerManager:UpdateFrame_copyCharges({
-            customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID],
+            customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID],
             config = existing,
-            uniqueID = uniqueID,
+            baseSpellID = baseSpellID,
             trackerType = trackerType
         })
     end
@@ -267,87 +438,115 @@ function State:GetAllTrackerValues(trackerType)
     return db[trackerType]
 end
 
-function State:GetSpecificTrackerValue(uniqueID, trackerType)
+function State:GetSpecificTrackerValue(baseSpellID, trackerType)
     local db = State:GetDataBase_V2()
-    local iconConfig = db[trackerType][uniqueID] or {}
-    -- Migrate legacy barFillDirection -> fillOrEmpty (one-time per-entry migration)
-    if iconConfig.statusBar and iconConfig.statusBar.barFillDirection ~= nil and iconConfig.statusBar.fillOrEmpty == nil then
-        iconConfig.statusBar.fillOrEmpty = iconConfig.statusBar.barFillDirection
-        iconConfig.statusBar.barFillDirection = nil
-    end
-    -- Backfill glowNotification for entries created before this setting existed
-    if iconConfig.glowNotification == nil then
-        iconConfig.glowNotification = {
-            shouldDisplay = false,
-            glowStyle = 'thin',
-            duration = 1,
-            glowColor = { r = 1, g = 1, b = 1, a = 1 },
-        }
-    end
+    local iconConfig = db[trackerType][baseSpellID] or {}
     return iconConfig
 end
 
-function State:CheckIsAlreadyTracker(uniqueID, trackerType)
+function State:CheckIsAlreadyTracker(baseSpellID, trackerType)
     local db = State:GetDataBase_V2()
-    return db[trackerType][uniqueID] and true or false
+    return db[trackerType][baseSpellID] and true or false
 end
 
-function State:RemoveTrackerValue(uniqueID, trackerType)
+function State:RemoveTrackerValue(baseSpellID, trackerType)
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local db = State:GetDataBase_V2()
-    if State:CheckIsAlreadyTracker(uniqueID, trackerType) then
+    if State:CheckIsAlreadyTracker(baseSpellID, trackerType) then
         -- Clean up the frame
-        local frame = FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
+        local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
         if frame then
             frame:Hide()
             frame:ClearAllPoints()
-            FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID] = nil
+            FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] = nil
         end
         
         -- Remove from database
-        db[trackerType][uniqueID] = nil
+        db[trackerType][baseSpellID] = nil
     end
 end
 
-function State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value)
+function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, value)
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local db = State:GetDataBase_V2()
-    accessNestedValue(db[trackerType][uniqueID], path, value, "set")
-    local trackerValue = db[trackerType][uniqueID]
-    if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID] then
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
+    accessNestedValue(db[trackerType][baseSpellID], path, value, "set")
+    local trackerValue = db[trackerType][baseSpellID]
+    if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
         FrameTrackerManager:UpdateFrame_copyCharges({
             config = trackerValue,
-            customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID],
-            uniqueID = uniqueID,
+            customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID],
+            baseSpellID = baseSpellID,
             trackerType = trackerType
         })
     end
 end
 
-function State:GetTrackerValueConfigProperty(uniqueID, trackerType, path)
+function State:GetTrackerValueConfigProperty(baseSpellID, trackerType, path)
     local db = State:GetDataBase_V2()
-    return accessNestedValue(db[trackerType][uniqueID], path, nil, "get")
+    return accessNestedValue(db[trackerType][baseSpellID], path, nil, "get")
 end
 
 function State:getTrackerValuesListForSettings()
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local listTrackerValues = {}
-    for key, value in ipairs({ "buffs", "essential", "utility" }) do
-        local trackerValues = State:GetAllTrackerValues(value)
-        -- Loop through the buffs values
-        for uniqueID, trackerValue in pairs(trackerValues) do
-            -- Only add frames that are currently tracked by the cooldown manager
-            if FrameTrackerManager.cooldownManagerFrames[value][uniqueID] then
-                table.insert(listTrackerValues, {
-                    uniqueID = uniqueID,
+    for _, trackerType in ipairs({ "buffs" }) do
+        local trackerValues = State:GetAllTrackerValues(trackerType)
+        local group = {}
+        for baseSpellID, trackerValue in pairs(trackerValues) do
+            if FrameTrackerManager.cooldownManagerFrames[trackerType][baseSpellID] then
+                local frame = FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
+                local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
+                local displayName = (spellInfo and spellInfo.name) or trackerValue.name
+                table.insert(group, {
+                    uniqueID = baseSpellID,
+                    baseSpellID = baseSpellID,
+                    activeSpellID = activeSpellID,
                     trackerType = trackerValue.trackerType,
-                    name = trackerValue.name,
+                    name = displayName,
                     defaultIconTexturePath = trackerValue.defaultIconTexturePath
                 })
             end
         end
+        if #group > 0 then
+            -- Insert a header sentinel before each non-empty group
+            table.insert(listTrackerValues, {
+                isHeader = true,
+                label = trackerType:sub(1,1):upper() .. trackerType:sub(2)
+            })
+            for _, entry in ipairs(group) do
+                table.insert(listTrackerValues, entry)
+            end
+        end
     end
+
+    -- Manually-added spells (no viewer frame required)
+    local spellsValues = State:GetAllTrackerValues("spells")
+    local spellsGroup = {}
+    for baseSpellID, trackerValue in pairs(spellsValues or {}) do
+        if trackerValue.isEnabled ~= false and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerValue.overrideSpellID)) then
+            local frame = FrameTrackerManager.SpellStyler_frames["spells"] and FrameTrackerManager.SpellStyler_frames["spells"][baseSpellID]
+            local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
+            local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
+            local displayName = (spellInfo and spellInfo.name) or trackerValue.name
+            table.insert(spellsGroup, {
+                uniqueID = baseSpellID,
+                baseSpellID = baseSpellID,
+                activeSpellID = activeSpellID,
+                trackerType = "spells",
+                name = displayName,
+                defaultIconTexturePath = trackerValue.defaultIconTexturePath
+            })
+        end
+    end
+    if #spellsGroup > 0 then
+        table.insert(listTrackerValues, { isHeader = true, label = "Spells" })
+        for _, entry in ipairs(spellsGroup) do
+            table.insert(listTrackerValues, entry)
+        end
+    end
+
     return listTrackerValues
 end
 
@@ -365,9 +564,13 @@ function State:CopySettings(copyInfo)
     elseif copyInfo.category == 'Custom Label (Accessibility)' then
         key = 'customLabel'
     end
-    
-    local sourceConfig = State:GetSpecificTrackerValue(copyInfo.sourceUniqueID, copyInfo.sourceTrackerType)
-    State:SetTrackerValueConfigProperty(copyInfo.targetUniqueID, copyInfo.targetTrackerType, key, sourceConfig[key])
+
+    local sourceConfig = State:GetSpecificTrackerValue(copyInfo.sourceBaseSpellID, copyInfo.sourceTrackerType)
+    -- Deep-copy so the target gets its own independent table, not a shared
+    -- reference that would cause writes on one spell to silently affect the other.
+    local valueCopy = DeepCopy(sourceConfig[key])
+
+    State:SetTrackerValueConfigProperty(copyInfo.targetBaseSpellID, copyInfo.targetTrackerType, key, valueCopy)
 end
 
 
@@ -392,7 +595,7 @@ function State:ApplyGlobalVisibility()
     local inCombat = InCombatLockdown() or UnitAffectingCombat("player")
     local shouldShow = not (vs.hideWhenOutOfCombat and not inCombat)
 
-    for _, trackerType in ipairs({"buffs", "essential", "utility"}) do
+    for _, trackerType in ipairs({"buffs", "essential", "utility", "spells"}) do
         for _, frame in pairs(FrameTrackerManager.SpellStyler_frames[trackerType]) do
             if shouldShow then
                 frame:Show()

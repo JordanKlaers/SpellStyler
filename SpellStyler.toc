@@ -28,7 +28,8 @@ Modules\Cooldowns\FrameTrackerManager.lua
 # ============================================================================
 # Core - UI Framework
 # ============================================================================
-Core\NewSettings.lua
+Core\Settings.lua
+Core\AddSpells.lua
 Core\IconSettingsRenderer.lua
 Core\HelpContentRenderer.lua
 Core\ContainerSettings.lua

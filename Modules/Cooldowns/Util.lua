@@ -38,3 +38,22 @@ function Util:IsValidCooldownCurve(inverse)
 
     return C
 end
+
+--[[
+    If duration == 0 AND inverse == false → returns 1  (spell available)
+    If duration  > 0 AND inverse == false → returns 0  (spell on cooldown)
+
+    inverse == true swaps the above:
+    If duration == 0 → returns 0
+    If duration  > 0 → returns 1
+]]
+function Util:IsZeroDurationCurve(inverse)
+    local onZero    = inverse and 0 or 1
+    local onNonZero = inverse and 1 or 0
+
+    local C = C_CurveUtil.CreateCurve()
+    C:SetType(Enum.LuaCurveType.Step)
+    C:AddPoint(0, onZero)
+    C:AddPoint(.0001, onNonZero)
+    return C
+end

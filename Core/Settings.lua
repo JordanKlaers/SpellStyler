@@ -128,12 +128,14 @@ local function ShowBorderDemo()
         local closeBtn = CreateFrame("Button", nil, settingsMenu, "UIPanelCloseButton")
         closeBtn:SetPoint("TOPRIGHT", settingsMenu, "TOPRIGHT", -3, -2)
         closeBtn:SetScript("OnClick", function()
+            if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
             settingsMenu:Hide()
         end)
 
         -- ESC key handler
         settingsMenu:SetScript("OnKeyDown", function(self, key)
             if key == "ESCAPE" then
+                if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
                 self:Hide()
             end
         end)
@@ -360,10 +362,11 @@ local function ShowBorderDemo()
 
         -- Now that settingsContentFrame exists, wire up the Update button
         updateBtn:SetScript("OnClick", function()
-            for _, tType in ipairs({"buffs", "essential", "utility"}) do
-                SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames(tType)
-                SpellStyler.FrameTrackerManager:ApplyViewerVisibility(tType)
-            end
+            -- Only "buffs" is a valid scan-based tracker type; "essential" and
+            -- "utility" were legacy types migrated into "spells" and must not be
+            -- passed here (doing so caused phantom frames to be created).
+            SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
+            SpellStyler.FrameTrackerManager:ApplyViewerVisibility("buffs")
             -- Re-render the icon list so new/removed trackers appear
             SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
             -- Enable dragging for any newly created frames
@@ -389,6 +392,7 @@ local function ShowBorderDemo()
         -- Keep tabBar visible only while settingsMenu is shown
         settingsMenu:HookScript("OnShow", function()
             tabBar:Show()
+            SpellStyler.IconSettingsRenderer:ReactivateKeyboard()
             if SpellStyler.Containers then
                 SpellStyler.Containers:SetEditMode(true)
             end
@@ -418,8 +422,16 @@ local function ShowBorderDemo()
         SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabContainers, tabUtility })
         tabSpells:SetSelected(true)
     end
+	-- When the settings menu is open and the user clicks a tracker frame in the
+	-- game world, switch to the Spells tab and select that icon.
+	SpellStyler._selectIconInSettings = function(uniqueID, trackerType)
+		if not (settingsMenu and settingsMenu:IsShown()) then return end
+		SwitchToView("icons")
+		SpellStyler.IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
+	end
+
 	if SpellStyler.FrameTrackerManager then
-		if SpellStyler.FrameTrackerManager.SetFrameClickCallback and SpellStyler._selectIconInSettings then
+		if SpellStyler.FrameTrackerManager.SetFrameClickCallback then
 			SpellStyler.FrameTrackerManager:SetFrameClickCallback(function(uniqueID, trackerType)
 				SpellStyler._selectIconInSettings(uniqueID, trackerType)
 			end)
@@ -439,14 +451,20 @@ combatDelayFrame:SetScript("OnEvent", function(self, event, ...)
         -- Force-close the settings menu when entering combat
         local isInCombat = ...
         if isInCombat then
+            if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
             if settingsMenu and settingsMenu:IsShown() then
                 settingsMenu:Hide()
                 pendingShowAfterCombat = true -- automatically reopen if it was forced closed
             end
         else
             if pendingShowAfterCombat then
+                if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(true) end
                 pendingShowAfterCombat = false
                 ShowBorderDemo()
+            end
+            if FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat then
+                FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = false
+                FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
             end
         end
     end

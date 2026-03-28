@@ -130,7 +130,7 @@ _G.SpellStyler = SpellStyler
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("ADDON_LOADED")
 initFrame:RegisterEvent("PLAYER_LOGIN")
-
+initFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 local addonLoaded = false
 local playerLoggedIn = false
 
@@ -138,6 +138,9 @@ local function Initialize()
     if not addonLoaded or not playerLoggedIn then
         return
     end
+
+    -- Run DB migrations before anything else accesses the database
+    SpellStyler.State:MigrateDatabase()
 
     if SpellStyler.MinimapButton then
         SpellStyler.MinimapButton:Initialize()
@@ -157,6 +160,7 @@ initFrame:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "PLAYER_LOGIN" then
         playerLoggedIn = true
         Initialize()
+    elseif event == "PLAYER_ENTERING_WORLD" then
     end
 end)
 

@@ -344,7 +344,6 @@ function Containers:CollapseLayout(name)
             local frame = FTM:GetTrackerFrame(uid, tType)
             if frame then
                 if frame.meta and frame.meta.isDurationActive then
-                    DevTool:AddData({frame.meta}, "its active")
                     table.insert(activeFrames, frame)
                 else
                     frame:Hide()

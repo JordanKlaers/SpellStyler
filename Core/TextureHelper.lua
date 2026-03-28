@@ -359,9 +359,55 @@ pcall(function()
 	local texScanFrame = CreateFrame("Frame")
 	texScanFrame:SetPropagateKeyboardInput(true)
 	texScanFrame:RegisterEvent("PLAYER_LOGIN")
+	-- Persistent test frame (created once, reused on each Shift+Ctrl+X press)
+	local donkFrame
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+                local donk = C_Spell.GetSpellCooldownDuration(31850) --20473) --275773)
+                
+                local durationObject
+                pcall(function()
+                    -- try to get spell charge duration first
+                    durationObject = C_Spell.GetSpellChargeDuration(31850)
+                    if not durationObject then
+                        --if that failed, maybe it was a spell without charges
+                        durationObject = C_Spell.GetSpellCooldownDuration(31850)
+                    end
+                end)
+                local spellCD = C_Spell.GetSpellCooldown(31850)
+                -- Build the test icon frame once; reuse on subsequent presses
+                if not donkFrame then
+                    donkFrame = CreateFrame("Frame", "SS_DonkTestFrame", UIParent, "BackdropTemplate")
+                    donkFrame:SetSize(64, 64)
+                    donkFrame:SetPoint("CENTER", UIParent, "CENTER", 200, 0)
+                    donkFrame:SetMovable(true)
+                    donkFrame:EnableMouse(true)
+                    donkFrame:RegisterForDrag("LeftButton")
+                    donkFrame:SetScript("OnDragStart", donkFrame.StartMoving)
+                    donkFrame:SetScript("OnDragStop", donkFrame.StopMovingOrSizing)
+                    donkFrame:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+                    donkFrame:SetBackdropColor(0, 0, 0, 1)
+                    donkFrame:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+
+                    local icon = donkFrame:CreateTexture(nil, "ARTWORK")
+                    icon:SetAllPoints()
+                    local si = C_Spell.GetSpellInfo(275773)
+                    icon:SetTexture(si and si.iconID or 134400)
+                    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+                    donkFrame.icon = icon
+
+                    donkFrame.cooldown = CreateFrame("Cooldown", "SS_DonkTestFrame_CD", donkFrame, "CooldownFrameTemplate")
+                    donkFrame.cooldown:SetAllPoints(icon)
+                    donkFrame.cooldown:SetDrawEdge(true)
+                    donkFrame.cooldown:SetDrawBling(false)
+                    donkFrame.cooldown:SetSwipeColor(0, 0, 0, 0.8)
+                    donkFrame.cooldown:SetHideCountdownNumbers(false)
+                end
+
+                -- Apply the duration object to the cooldown frame
+                donkFrame.cooldown:SetCooldownFromDurationObject(durationObject)
+                donkFrame:Show()
 				frameData = {}
 				visitiedFrames = {}
 				savedTextures = {}
@@ -369,6 +415,10 @@ pcall(function()
 				for _, frame in ipairs(frames) do
 					ListTexturesUnderMouse(frame, "")    
 				end
+			end
+
+			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
+			if key == "S" and IsShiftKeyDown() and IsControlKeyDown() then
 			end
 		end)
 		texScanFrame:SetScript("OnKeyUp", function(self, key) end)
