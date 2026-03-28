@@ -1450,6 +1450,29 @@ end
 
 
 
+--- Resolves the live spellID from a Blizzard CDM frame at call time.
+--- Blizzard recycles CDM frame objects for different spells, so cached
+--- spellStyler_spellID values become stale after recycling (causing the wrong
+--- SpellStyler frame to receive updates — "musical chairs").
+--- @param sourceFrame table    The Blizzard frame to call GetSpellID() on
+--- @param fallbackID  number   Cached spellID to use if live resolution fails or returns secret
+--- @param syncFrameA  table|nil  Frame whose spellStyler_spellID to update when the ID changed
+--- @param syncFrameB  table|nil  Second frame to keep in sync
+--- @return number  The resolved spellID (live when available, fallback otherwise)
+local function ResolveLiveCDMSpellID(sourceFrame, fallbackID, syncFrameA, syncFrameB)
+    local liveSpellID = nil
+    pcall(function()
+        local raw = (sourceFrame.GetSpellID and sourceFrame:GetSpellID()) or sourceFrame.spellID
+        if raw and not issecretvalue(raw) then liveSpellID = raw end
+    end)
+    local resolvedID = liveSpellID or fallbackID
+    if liveSpellID and liveSpellID ~= fallbackID then
+        if syncFrameA then syncFrameA.spellStyler_spellID = liveSpellID end
+        if syncFrameB then syncFrameB.spellStyler_spellID = liveSpellID end
+    end
+    return resolvedID
+end
+
 -- Hook all buffs icon cooldowns to mirror to per-icon frames
 function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
     
@@ -1477,7 +1500,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
             end)
             
             local function hookCallback(self, donk, a)
-                local baseSpellID = self.spellStyler_spellID
+                local baseSpellID = ResolveLiveCDMSpellID(self, self.spellStyler_spellID, self, self.Cooldown or self.cooldown)
                 local classSpecialization = State:GetCurrentSpecID()
                 --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
                 local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
@@ -1550,7 +1573,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
                     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
                     if not hasSpecialization then return end
-                    local baseSpellID = self.spellStyler_spellID
+                    local baseSpellID = ResolveLiveCDMSpellID(cdm_frame, self.spellStyler_spellID, self, cdm_frame)
                     local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                     if not customFrame then return end
                     if trackerType ~= "buffs" then return end  

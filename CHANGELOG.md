@@ -161,3 +161,8 @@ Slightly less technical summary:
 
 Slightly more technical summary:
 	- Accidently set the inverse values for display state and didnt notice. Oops
+
+Version 1.0.0
+
+	- Buffs are still tracked by the cooldown manager
+	- Spells are completely detached from the cooldown manager and you can track any personal spell
