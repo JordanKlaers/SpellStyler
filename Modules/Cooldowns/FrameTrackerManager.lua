@@ -1352,7 +1352,6 @@ function FrameTrackerManager:SetupCooldownManagerHooks()
             self:HookAllBuffCooldownFrames("buffs")
         end)
         if err then
-            DevTool:AddData({ err = err }, "[SpellStyler] SetupCooldownManagerHooks scan error")
             FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = true
         end
     end

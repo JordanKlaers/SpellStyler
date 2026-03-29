@@ -440,7 +440,7 @@ pcall(function()
                                     end
                                 end
                                 if matched then
-                                    DevTool:AddData(args, "viewer." .. funcName)
+                                    -- DevTool:AddData(args, "viewer." .. funcName)
                                 end
                             end)
                         end)
@@ -453,7 +453,7 @@ pcall(function()
                                 local out = {}
                                 for i, v in ipairs(results) do out[i] = tostring(v) end
                                 if #out > 0 then
-                                    DevTool:AddData(results, "BuffIconCooldownViewer." .. funcName .. " [scan]")
+                                    -- DevTool:AddData(results, "BuffIconCooldownViewer." .. funcName .. " [scan]")
                                 end
                             end)
                         end
@@ -481,25 +481,25 @@ pcall(function()
                     local cooldown_baseSpellID = frame.Cooldown.GetBaseSpellID and frame.Cooldown:GetBaseSpellID()
                     local cooldown_spellChargeInfo = frame.Cooldown.GetSpellChargeInfo and frame.Cooldown:GetSpellChargeInfo()
                     local cooldown_spellID = frame.Cooldown.GetSpellID and frame.Cooldown:GetSpellID()
-                    DevTool:AddData({
-                        BuffIconCooldownViewer = BuffIconCooldownViewer,
-                        cooldownIDs = BuffIconCooldownViewer:GetCooldownIDs(),
-                        frame = frame,
-                        cooldown_auraSpellID = cooldown_auraSpellID,
-                        cooldown_baseSpellID=cooldown_baseSpellID,
-                        cooldown_spellChargeInfo = cooldown_spellChargeInfo,
-                        cooldown_spellID = cooldown_spellID,
-                        auraSpellID = auraSpellID,
-                        auraSpellID_info = auraSpellID and C_Spell.GetSpellInfo(auraSpellID),
-                        baseSpellID = baseSpellID,
-                        baseSpellID_info = baseSpellID and C_Spell.GetSpellInfo(baseSpellID),
-                        spellChargeInfo = spellChargeInfo,
-                        spellChargeInfo_info = spellChargeInfo and C_Spell.GetSpellInfo(spellChargeInfo),
-                        spellID = spellID,
-                        spellID_info = spellID and C_Spell.GetSpellInfo(spellID),
-                        SpellStyler_frames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
-                        database = SpellStyler_CharDB.classSpecializations[SpellStyler.State:GetCurrentSpecID()]
-                    }, "frame - ")
+                    -- DevTool:AddData({
+                    --     BuffIconCooldownViewer = BuffIconCooldownViewer,
+                    --     cooldownIDs = BuffIconCooldownViewer:GetCooldownIDs(),
+                    --     frame = frame,
+                    --     cooldown_auraSpellID = cooldown_auraSpellID,
+                    --     cooldown_baseSpellID=cooldown_baseSpellID,
+                    --     cooldown_spellChargeInfo = cooldown_spellChargeInfo,
+                    --     cooldown_spellID = cooldown_spellID,
+                    --     auraSpellID = auraSpellID,
+                    --     auraSpellID_info = auraSpellID and C_Spell.GetSpellInfo(auraSpellID),
+                    --     baseSpellID = baseSpellID,
+                    --     baseSpellID_info = baseSpellID and C_Spell.GetSpellInfo(baseSpellID),
+                    --     spellChargeInfo = spellChargeInfo,
+                    --     spellChargeInfo_info = spellChargeInfo and C_Spell.GetSpellInfo(spellChargeInfo),
+                    --     spellID = spellID,
+                    --     spellID_info = spellID and C_Spell.GetSpellInfo(spellID),
+                    --     SpellStyler_frames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
+                    --     database = SpellStyler_CharDB.classSpecializations[SpellStyler.State:GetCurrentSpecID()]
+                    -- }, "frame - ")
                 end
                 -- DevTool:AddData({
                 --     BuffIconCooldownViewer = BuffIconCooldownViewer,
