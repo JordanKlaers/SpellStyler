@@ -595,7 +595,7 @@ function State:ApplyGlobalVisibility()
     local inCombat = InCombatLockdown() or UnitAffectingCombat("player")
     local shouldShow = not (vs.hideWhenOutOfCombat and not inCombat)
 
-    for _, trackerType in ipairs({"buffs", "essential", "utility", "spells"}) do
+    for trackerType, _ in pairs(FrameTrackerManager.SpellStyler_frames) do
         for _, frame in pairs(FrameTrackerManager.SpellStyler_frames[trackerType]) do
             if shouldShow then
                 frame:Show()

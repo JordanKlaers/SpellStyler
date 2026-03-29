@@ -26,16 +26,16 @@ local FRAME_PREFIX = "TweaksUI_CustomFrameTracker_"
 -- STATE
 -- ============================================================================
 FrameTrackerManager.cooldownManagerFrames = {
-    buffs = {},
-    essential = {},
-    utility = {},
-    spells = {},
+    buffs = {}
 }
+
+-- Maps cooldownID (stable slot key from GetCooldownID) → baseSpellID (DB key).
+-- Built once at scan time; used at runtime so callbacks never call GetSpellID(),
+-- which returns a different value once a buff becomes active on that slot.
+FrameTrackerManager.cooldownIDToBaseSpellID = {}
 
 FrameTrackerManager.SpellStyler_frames = {
     buffs = {},
-    essential = {},
-    utility = {},
     spells = {},
 }
 
@@ -137,119 +137,78 @@ function FrameTrackerManager:ApplyViewerVisibility(trackerType)
 end
 
 
-local function ScanAndSaveCurrentCooldownManagerFrames(trackerType)
+function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType)
     local viewer = FrameTrackerManager:GetCooldownManagerViewer(trackerType)
-    if not viewer then return {} end
+    if not viewer or not viewer.itemFramePool then return end
 
-    -- Snapshot previously known spellIDs so we can detect removals after the scan
-    local previouslyKnown = {}
-    for spellID in pairs(FrameTrackerManager.cooldownManagerFrames[trackerType]) do
-        previouslyKnown[spellID] = true
-    end
-    local foundInThisScan = {}
-
-    local numChildren = 0
-    pcall(function() numChildren = viewer:GetNumChildren() or 0 end)
-    local indexUponCollection = 1
-    for i = 1, numChildren do
-        local child = select(i, viewer:GetChildren())
-        if child then
-            -- Buffs are grabbed by finding frames that have a spellID, texture, icon frame and cooldown frame.
-            local spellID = nil
-            local texture = nil
-            local icon = child.Icon or child.icon
-            local cooldown = child.Cooldown or child.cooldown
-            local spellData = {}
-            
-            -- Try to extract spellID
-            if child.GetSpellID then
-                spellID = child:GetSpellID()
-            elseif child.spellID then
-                spellID = child.spellID or child.spellId or child.SpellID or child.SpellId
-            end
-            if spellID then
-                local suc, err = pcall(function()
-                    local spellInfo = C_Spell.GetSpellInfo(spellID)
-                end)
-                spellData = C_Spell.GetSpellInfo(spellID)
-            end
-            if icon then
-                texture = (icon.GetTexture and icon:GetTexture()) or icon.texture or spellData.iconID
-            end
-            child.spellStyler_spellID = spellID
-            child.spellStyler_name = spellData.name
-            child.spellStyler_texture = texture
-            child.spellStyler_indexUponCollection = indexUponCollection
-            -- Should be the cooldown that holds the cached info used within the hooks but keeping on the frame as well ^
-            --save buffs to state based on the information collected
-            if spellID and texture and icon and cooldown then
-
-                if issecretvalue(spellID) then
-                    error('spellID when scanning the buff was secret')
-                end
-
-                cooldown.spellStyler_spellID = spellID
-                cooldown.spellStyler_name = spellData.name
-                cooldown.spellStyler_texture = texture
-                cooldown.spellStyler_indexUponCollection = indexUponCollection
-                -- Store the source frame reference
-                FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] = child
-                foundInThisScan[spellID] = true
-                -- Add to database if not already tracked
-                if not State:CheckIsAlreadyTracker(spellID, trackerType) then
-                    State:AddTrackerValue({
-                        baseSpellID = spellID,
-                        overrideSpellID = C_Spell.GetOverrideSpell(spellID),
-                        defaultIconTexturePath = texture,
-                        name = spellData.name,
-                        trackerType = trackerType
-                    })
-                else
-                    --make sure it has the correct default texture
-                    State:SetTrackerValueConfigProperty(spellID, trackerType, 'defaultIconTexturePath', texture)
-                end
+    -- ── Step 1: Disable and hide all existing custom frames for this tracker type ──
+    -- Mark every DB entry as disabled so entries not found in this scan stay hidden.
+    -- Frames are destroyed now so CreateTrackerFrame can rebuild cleanly below.
+    local existingTrackers = State:GetAllTrackerValues(trackerType)
+    if existingTrackers then
+        for spellID, trackerValue in pairs(existingTrackers) do
+            trackerValue.isEnabled = false
+            local frame = FrameTrackerManager.SpellStyler_frames[trackerType][spellID]
+            if frame then
+                frame:Hide()
+                frame:ClearAllPoints()
+                FrameTrackerManager.SpellStyler_frames[trackerType][spellID] = nil
             end
         end
     end
+
+    -- Wipe the CDM lookup so it only reflects what is active right now.
+    FrameTrackerManager.cooldownManagerFrames[trackerType] = {}
+    wipe(FrameTrackerManager.cooldownIDToBaseSpellID)
+
     
-    -- After scanning, create frames for any trackers in database that were scanned but don't have frames yet
-    local trackerConfigs = State:GetAllTrackerValues(trackerType)
-    if trackerConfigs then
-        for spellID, trackerConfig in pairs(trackerConfigs) do
-            -- Only create frame if this tracker was found during scan AND doesn't already have a frame
-            if FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] and not FrameTrackerManager.SpellStyler_frames[trackerType][spellID] then
-                FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType) 
+    -- ── Step 2: Enumerate only the currently active pool frames ──
+    for cdmFrame in viewer.itemFramePool:EnumerateActive() do
+        local spellID = nil
+        pcall(function() spellID = cdmFrame:GetSpellID() end)
+        -- Grab the stable slot identifier while GetSpellID() still returns the
+        -- base value (before any buff activates and mutates it).
+        local cooldownID = nil
+        pcall(function() cooldownID = cdmFrame:GetCooldownID() end)
+        if spellID and not issecretvalue(spellID) then
+            -- Bake the stable slot ID onto the frame and into the lookup table so runtime
+            -- hook callbacks can resolve the correct baseSpellID without calling GetSpellID().
+            if cooldownID then
+                FrameTrackerManager.cooldownIDToBaseSpellID[cooldownID] = spellID
+            end
+            -- Resolve texture from the live icon child; fall back to spell data.
+            -- Nothing is written back onto cdmFrame itself.
+            local icon = cdmFrame.Icon or cdmFrame.icon
+            local spellData = C_Spell.GetSpellInfo(spellID) or {}
+            local texture = (icon and icon.GetTexture and icon:GetTexture())
+                or spellData.iconID
+
+            -- Keep our own lookup table populated for HookAllBuffCooldownFrames.
+            FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] = cdmFrame
+
+            -- ── Step 3: State entry ──
+            if State:CheckIsAlreadyTracker(spellID, trackerType) then
+                -- Re-enable the existing entry and refresh the default texture.
+                -- SetTrackerValueConfigProperty guards on frame existence, so these
+                -- calls are safe even though no custom frame exists yet.
+                State:SetTrackerValueConfigProperty(spellID, trackerType, 'isEnabled', true)
+                State:SetTrackerValueConfigProperty(spellID, trackerType, 'defaultIconTexturePath', texture)
+            else
+                State:AddTrackerValue({
+                    baseSpellID = spellID,
+                    overrideSpellID = C_Spell.GetOverrideSpell(spellID),
+                    defaultIconTexturePath = texture,
+                    name = spellData.name,
+                    trackerType = trackerType
+                })
+            end
+
+            -- ── Step 4: Create the custom SpellStyler frame ──
+            local trackerConfig = State:GetSpecificTrackerValue(spellID, trackerType)
+            if trackerConfig then
+                FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType)
             end
         end
-    end
-
-    -- Collect spellIDs that were known before but absent from this scan
-    local staleIDs = {}
-    for spellID in pairs(previouslyKnown) do
-        if not foundInThisScan[spellID] then
-            table.insert(staleIDs, spellID)
-        end
-    end
-
-    -- Delay removal to allow for Blizzard's frame recycling during layout passes
-    if #staleIDs > 0 then
-        C_Timer.After(0.4, function()
-            for _, spellID in ipairs(staleIDs) do
-                -- Only remove if still absent from the LIVE lookup table, not just the local
-                -- snapshot. foundInThisScan only reflects the scan that produced staleIDs, so
-                -- checking it here is always true for every element of staleIDs (they were
-                -- absent by definition). A subsequent scan may have re-added the entry to
-                -- cooldownManagerFrames, so check the live table instead.
-                if not FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] then
-                    local frame = FrameTrackerManager.SpellStyler_frames[trackerType][spellID]
-                    if frame then
-                        frame:Hide()
-                        frame:ClearAllPoints()
-                        FrameTrackerManager.SpellStyler_frames[trackerType][spellID] = nil
-                    end
-                end
-            end
-        end)
     end
 
     -- Apply any saved viewer visibility setting
@@ -295,6 +254,7 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     frame.meta = {
         spellName = spellInfo.name,
         trackerType = trackerType,
+        buffStatus = 'absent',
         -- This is either the baseSpellID or the override spell id (if it changes into something). Use this value when getting cooldown duration objects.
         activeSpellID = trackerConfig.overrideSpellID or baseSpellID,
         -- This helps in conjunction with spellChargeState || spellChargeCount (spellHasCharges) to control the visibility state for count
@@ -1450,27 +1410,34 @@ end
 
 
 
---- Resolves the live spellID from a Blizzard CDM frame at call time.
---- Blizzard recycles CDM frame objects for different spells, so cached
---- spellStyler_spellID values become stale after recycling (causing the wrong
---- SpellStyler frame to receive updates — "musical chairs").
---- @param sourceFrame table    The Blizzard frame to call GetSpellID() on
---- @param fallbackID  number   Cached spellID to use if live resolution fails or returns secret
---- @param syncFrameA  table|nil  Frame whose spellStyler_spellID to update when the ID changed
---- @param syncFrameB  table|nil  Second frame to keep in sync
---- @return number  The resolved spellID (live when available, fallback otherwise)
-local function ResolveLiveCDMSpellID(sourceFrame, fallbackID, syncFrameA, syncFrameB)
-    local liveSpellID = nil
+--- Resolves the baseSpellID (DB key) for a Blizzard CDM frame using a stable
+--- priority chain, replacing the old ResolveLiveCDMSpellID approach.
+---
+--- Priority order:
+---   1. cooldownIDToBaseSpellID[GetCooldownID()] – slot-based,
+---      recorded at scan time and never mutated at runtime.
+---   2. live GetSpellID()  – last resort; unreliable once the buff
+---      is active (Blizzard returns a different ID at that point).
+---
+--- @param sourceFrame table  The Blizzard CDM frame to resolve for
+--- @return number|nil        The resolved baseSpellID, or nil if unresolvable
+local function ResolveCDMBaseSpellID(sourceFrame)
+    -- Priority 1: stable slot-based lookup via the cooldownID recorded at scan time
+    local cid
     pcall(function()
-        local raw = (sourceFrame.GetSpellID and sourceFrame:GetSpellID()) or sourceFrame.spellID
-        if raw and not issecretvalue(raw) then liveSpellID = raw end
+        cid = sourceFrame.GetCooldownID and sourceFrame:GetCooldownID()
     end)
-    local resolvedID = liveSpellID or fallbackID
-    if liveSpellID and liveSpellID ~= fallbackID then
-        if syncFrameA then syncFrameA.spellStyler_spellID = liveSpellID end
-        if syncFrameB then syncFrameB.spellStyler_spellID = liveSpellID end
+    if cid and FrameTrackerManager.cooldownIDToBaseSpellID[cid] then
+        return FrameTrackerManager.cooldownIDToBaseSpellID[cid]
     end
-    return resolvedID
+
+    -- Priority 2: live GetSpellID (may differ from the DB key when a buff is active)
+    local raw = nil
+    pcall(function()
+        local v = sourceFrame.GetSpellID and sourceFrame:GetSpellID()
+        if v and not issecretvalue(v) then raw = v end
+    end)
+    return raw
 end
 
 -- Hook all buffs icon cooldowns to mirror to per-icon frames
@@ -1479,7 +1446,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
     local viewer = FrameTrackerManager:GetCooldownManagerViewer(trackerType)
     if not viewer then return end
         
-    ScanAndSaveCurrentCooldownManagerFrames(trackerType)
+    FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType)
 
     for slotIndex, cdm_frame in pairs(FrameTrackerManager.cooldownManagerFrames[trackerType]) do
         -- Only hook frames that haven't been hooked yet
@@ -1500,7 +1467,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
             end)
             
             local function hookCallback(self, donk, a)
-                local baseSpellID = ResolveLiveCDMSpellID(self, self.spellStyler_spellID, self, self.Cooldown or self.cooldown)
+                local baseSpellID = ResolveCDMBaseSpellID(self)
                 local classSpecialization = State:GetCurrentSpecID()
                 --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
                 local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
@@ -1528,6 +1495,10 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                         else
                             frame.meta.buffStatus = 'absent'
                         end
+                        -- Guard: config can be nil during spec transitions when a stale CDM frame
+                        -- fires while the new spec's database hasn't been built yet, or when the
+                        -- scan picked up an old-spec spell that the new spec doesn't track.
+                        if not config or not config.statusBar then return end
                         local isFull = config.statusBar.defaultFillValue == 'full'
                         if frame.statusBar.fullCoverTexture then
                             frame.statusBar.fullCoverTexture:Show()
@@ -1573,7 +1544,7 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
                     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
                     if not hasSpecialization then return end
-                    local baseSpellID = ResolveLiveCDMSpellID(cdm_frame, self.spellStyler_spellID, self, cdm_frame)
+                    local baseSpellID = ResolveCDMBaseSpellID(cdm_frame)
                     local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                     if not customFrame then return end
                     if trackerType ~= "buffs" then return end  
@@ -1626,8 +1597,22 @@ function FrameTrackerManager:TeardownSpecFrames()
             end
         end
     end
-    FrameTrackerManager.cooldownManagerFrames = { buffs = {}, essential = {}, utility = {}, spells = {} }
-    FrameTrackerManager.SpellStyler_frames    = { buffs = {}, essential = {}, utility = {}, spells = {} }
+    -- Reset the hook-guard flag on every live CDM frame so that HookAllBuffCooldownFrames
+    -- creates fresh hooks with a new closure after the next spec scan.
+    -- Old hooksecurefunc hooks cannot be removed, but the nil-config guard inside
+    -- hookCallback makes stale firings harmless.
+    
+    if FrameTrackerManager.cooldownManagerFrames["buffs"] then
+        for _, cdmFrame in pairs(FrameTrackerManager.cooldownManagerFrames["buffs"]) do
+            if cdmFrame then
+                cdmFrame._spellStyler_hasHookedFrame = nil
+                cdmFrame.hasHookedCooldown = nil
+            end
+        end
+    end
+    FrameTrackerManager.cooldownManagerFrames    = { buffs = {} }
+    FrameTrackerManager.cooldownIDToBaseSpellID = {}
+    FrameTrackerManager.SpellStyler_frames      = { buffs = {}, essential = {}, utility = {}, spells = {} }
 end
 
 --- Loops over every non-buffs tracker type in the database and ensures a live
@@ -1844,8 +1829,8 @@ function FrameTrackerManager:SetStatusBarVisibility(data)
     local isFull = data.config
                 and data.config.statusBar
                 and data.config.statusBar.defaultFillValue == 'full'
+    local durationObj = nil
     local s, e = pcall(function()
-        local durationObj = nil
         pcall(function()
             if data.config.trackerType == 'buffs' then
                 local auraID = data.customFrame.meta.currentAuraInstanceID
@@ -2026,6 +2011,7 @@ eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
 eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
 eventFrame:RegisterEvent("SPELL_DATA_LOAD_RESULT")
+eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -2083,6 +2069,26 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         if match.customFrame and match.customFrame.statusBar then match.customFrame.statusBar:SetValue(0) end
                         FrameTrackerManager:ApplyCooldownDuration(match)
                         FrameTrackerManager:UpdateFrame_copyCharges(match)
+                    end
+                end
+            end
+        end
+    end
+    if event == "SPELL_UPDATE_USABLE" then
+        for _, tType in ipairs({"spells"}) do
+            if FrameTrackerManager.SpellStyler_frames[tType] then
+                for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                    local match = FrameTrackerManager:MatchTrackerFrame(baseSpellID)
+                    if match then
+                        local spellCooldownInfo = C_Spell.GetSpellCooldown(match.customFrame.meta.activeSpellID)
+                        if not spellCooldownInfo.isActive then
+                            if match.customFrame and match.customFrame.cooldown then match.customFrame.cooldown:Clear() end
+                            if match.customFrame and match.customFrame.statusBar then match.customFrame.statusBar:SetValue(0) end    
+                            FrameTrackerManager:SetIconVisibility(match.customFrame, match.config.iconSettings.iconDisplayState, match.customFrame.meta.activeSpellID or match.activeSpellID)
+                            FrameTrackerManager:SetStatusBarVisibility(match)
+                            FrameTrackerManager:UpdateFrame_copyCharges(match)
+                            return
+                        end
                     end
                 end
             end
@@ -2277,6 +2283,3 @@ globalVisibilityFrame:RegisterEvent("PLAYER_REGEN_ENABLED")   -- leaving combat
 globalVisibilityFrame:SetScript("OnEvent", function(self, event)
     State:ApplyGlobalVisibility()
 end)
-
-
-

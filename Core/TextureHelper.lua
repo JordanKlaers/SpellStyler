@@ -363,7 +363,7 @@ pcall(function()
 	local donkFrame
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
-			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+			if key == "Xaa" and IsShiftKeyDown() and IsControlKeyDown() then
                 local donk = C_Spell.GetSpellCooldownDuration(31850) --20473) --275773)
                 
                 local durationObject
@@ -418,7 +418,93 @@ pcall(function()
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
-			if key == "S" and IsShiftKeyDown() and IsControlKeyDown() then
+			if key == "Saa" and IsShiftKeyDown() and IsControlKeyDown() then
+
+                -- Hook every callable on the viewer frame (once, outside the pool loop).
+                if not BuffIconCooldownViewer._spellStyler_debugHooked then
+                    BuffIconCooldownViewer._spellStyler_debugHooked = true
+                    BuffIconCooldownViewer._spellStyler_scanCalled = BuffIconCooldownViewer._spellStyler_scanCalled or {}
+                    local viewerHooked = {}
+                    local function hookViewerFunc(funcName)
+                        if viewerHooked[funcName] then return end
+                        viewerHooked[funcName] = true
+                        pcall(function()
+                            hooksecurefunc(BuffIconCooldownViewer, funcName, function(...)
+                                local args = {}
+                                local matched = false
+                                for i = 1, select("#", ...) do
+                                    local v = tostring(select(i, ...))
+                                    args[i] = v
+                                    if v == "31884" or v == "53576" or v == "54149" then
+                                        matched = true
+                                    end
+                                end
+                                if matched then
+                                    DevTool:AddData(args, "viewer." .. funcName)
+                                end
+                            end)
+                        end)
+                        -- Call the function immediately and log whatever it returns (once per function)
+                        -- Skip event handlers (names starting with "On") to avoid side-effects
+                        if not BuffIconCooldownViewer._spellStyler_scanCalled[funcName] and not funcName:match("^[Oo]n") then
+                            BuffIconCooldownViewer._spellStyler_scanCalled[funcName] = true
+                            pcall(function()
+                                local results = {BuffIconCooldownViewer[funcName](BuffIconCooldownViewer)}
+                                local out = {}
+                                for i, v in ipairs(results) do out[i] = tostring(v) end
+                                if #out > 0 then
+                                    DevTool:AddData(results, "BuffIconCooldownViewer." .. funcName .. " [scan]")
+                                end
+                            end)
+                        end
+                    end
+                    for funcName, value in pairs(BuffIconCooldownViewer) do
+                        if type(value) == "function" then hookViewerFunc(funcName) end
+                    end
+                    local mt = getmetatable(BuffIconCooldownViewer)
+                    if mt and type(mt.__index) == "table" then
+                        for funcName, value in pairs(mt.__index) do
+                            if type(value) == "function" then hookViewerFunc(funcName) end
+                        end
+                    end
+                end
+
+
+                SpellStyler.FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames("buffs")
+                for frame in BuffIconCooldownViewer.itemFramePool:EnumerateActive() do
+                    local auraSpellID = frame:GetAuraSpellID()
+                    local baseSpellID = frame:GetBaseSpellID()
+                    local spellChargeInfo = frame:GetSpellChargeInfo()
+                    local spellID = frame:GetSpellID()
+
+                    local cooldown_auraSpellID = frame.Cooldown.GetAuraSpellID and frame.Cooldown:GetAuraSpellID()
+                    local cooldown_baseSpellID = frame.Cooldown.GetBaseSpellID and frame.Cooldown:GetBaseSpellID()
+                    local cooldown_spellChargeInfo = frame.Cooldown.GetSpellChargeInfo and frame.Cooldown:GetSpellChargeInfo()
+                    local cooldown_spellID = frame.Cooldown.GetSpellID and frame.Cooldown:GetSpellID()
+                    DevTool:AddData({
+                        BuffIconCooldownViewer = BuffIconCooldownViewer,
+                        cooldownIDs = BuffIconCooldownViewer:GetCooldownIDs(),
+                        frame = frame,
+                        cooldown_auraSpellID = cooldown_auraSpellID,
+                        cooldown_baseSpellID=cooldown_baseSpellID,
+                        cooldown_spellChargeInfo = cooldown_spellChargeInfo,
+                        cooldown_spellID = cooldown_spellID,
+                        auraSpellID = auraSpellID,
+                        auraSpellID_info = auraSpellID and C_Spell.GetSpellInfo(auraSpellID),
+                        baseSpellID = baseSpellID,
+                        baseSpellID_info = baseSpellID and C_Spell.GetSpellInfo(baseSpellID),
+                        spellChargeInfo = spellChargeInfo,
+                        spellChargeInfo_info = spellChargeInfo and C_Spell.GetSpellInfo(spellChargeInfo),
+                        spellID = spellID,
+                        spellID_info = spellID and C_Spell.GetSpellInfo(spellID),
+                        SpellStyler_frames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
+                        database = SpellStyler_CharDB.classSpecializations[SpellStyler.State:GetCurrentSpecID()]
+                    }, "frame - ")
+                end
+                -- DevTool:AddData({
+                --     BuffIconCooldownViewer = BuffIconCooldownViewer,
+                --     BuffIconCooldownViewer_2 = _G['BuffIconCooldownViewer']
+                -- }, "BuffIconCooldownViewer")
 			end
 		end)
 		texScanFrame:SetScript("OnKeyUp", function(self, key) end)

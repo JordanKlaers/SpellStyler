@@ -166,3 +166,8 @@ Version 1.0.0
 
 	- Buffs are still tracked by the cooldown manager
 	- Spells are completely detached from the cooldown manager and you can track any personal spell
+
+Version 1.0.1
+
+	- Updates the way CDM frames are linked to the custom frames to solve an issue with improper updates (buffs appearing to swap positions)
+	- Adds an additional event to respond to cooldown updates
