@@ -419,10 +419,10 @@ pcall(function()
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
 			if key == "S" and IsShiftKeyDown() and IsControlKeyDown() then
-                local classSpecialization = SpellStyler.State:GetCurrentSpecID()
-                DevTool:AddData({
-                    state = SpellStyler_CharDB.classSpecializations[classSpecialization]
-                }, "BuffIconCooldownViewer")
+                -- local classSpecialization = SpellStyler.State:GetCurrentSpecID()
+                -- DevTool:AddData({
+                --     state = SpellStyler_CharDB.classSpecializations[classSpecialization]
+                -- }, "BuffIconCooldownViewer")
                 -- Hook every callable on the viewer frame (once, outside the pool loop).
                 -- if not BuffIconCooldownViewer._spellStyler_debugHooked then
                 --     BuffIconCooldownViewer._spellStyler_debugHooked = true

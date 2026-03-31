@@ -2072,7 +2072,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         local config = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, tType)
                         if config.iconSettings.insufficientPower then
                             local _, insufficientPower = C_Spell.IsSpellUsable(customFrame.meta.activeSpellID)
-                            if tType == "buffs" then DevTool:AddData({insufficientPower = insufficientPower}, "spell - " .. customFrame.meta.activeSpellID) end
                             local color = (insufficientPower and config.iconSettings.insufficientPower and config.iconSettings.insufficientPowerIconColor)
                                 or config.iconColor or {}
                             customFrame.icon:SetVertexColor(
