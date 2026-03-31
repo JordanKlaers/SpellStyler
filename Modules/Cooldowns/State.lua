@@ -92,10 +92,19 @@ local function AddNewTrackerValueConfig(data)
             iconTexturePath = "",
             desaturated = false,
             enabled = true,
-            size = 48,
+            size = nil, -- deprecated; use width/height
+            width = 48,
+            height = 48,
             opacity = 1,
             hideDefaultSweep = false,
             isSpellOffGCD = false,
+            insufficientPower = false,
+            insufficientPowerIconColor = {
+                r = 1,
+                g = 0,
+                b = 0,
+                a = 1,
+            },
             frameStrataLevel = "MEDIUM", -- BACKGROUND LOW MEDIUM HIGH DIALOG FULLSCREEN FULLSCREEN_DIALOG TOOLTIP
             frameStrataValue = 100
         },
@@ -402,7 +411,8 @@ function State:AddTrackerValue(trackerValueConstructorData)
     local db = State:GetDataBase_V2()
     local trackerType = trackerValueConstructorData.trackerType
 	if not trackerType then return end
-    db[trackerType][trackerValueConstructorData.baseSpellID] = AddNewTrackerValueConfig(trackerValueConstructorData)
+    local entry = AddNewTrackerValueConfig(trackerValueConstructorData)
+    db[trackerType][trackerValueConstructorData.baseSpellID] = entry
     return db[trackerType][trackerValueConstructorData.baseSpellID]
 end
 
@@ -569,7 +579,6 @@ function State:CopySettings(copyInfo)
     -- Deep-copy so the target gets its own independent table, not a shared
     -- reference that would cause writes on one spell to silently affect the other.
     local valueCopy = DeepCopy(sourceConfig[key])
-
     State:SetTrackerValueConfigProperty(copyInfo.targetBaseSpellID, copyInfo.targetTrackerType, key, valueCopy)
 end
 

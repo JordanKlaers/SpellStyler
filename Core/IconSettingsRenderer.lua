@@ -398,7 +398,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
         -- Icon settings
         {
             type = "header",
-            text = "|cffffcc00Icon Settings|r",
+            text = "Icon Settings",
             state = 'expanded',
             sectionContent = {
                 {
@@ -428,10 +428,17 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
                 {
                     type = "textinput",
-                    label = "Size:",
+                    label = "Width:",
                     numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.size") or 48 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.size", value) end,
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.width") or 48 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.width", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Height:",
+                    numeric = true,
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.height") or 48 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.height", value) end,
                 },
                 {
                     type = "textinput",
@@ -483,6 +490,18 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     tooltip = "Enable for spells that are inherently off the global cooldown. This should help ensure consistent reliable display.",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
+                },
+                {
+                    type = "checkbox",
+                    label = "Set Icon color when unable to cast due to insufficient power",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.insufficientPower") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.insufficientPower", value) end,
+                },
+                {
+                    type = "colorpicker",
+                    label = "Insufficient Power Icon Color:",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.insufficientPowerIconColor") or {r=1, g=1, b=1, a=1} end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.insufficientPowerIconColor", value) end,
                 },
             }
         },
@@ -1204,6 +1223,295 @@ function IconSettingsRenderer:getTrackerTypeForID(uniqueID)
 end
 
 
+-- ============================================================================
+-- MULTI-ICON SETTINGS RENDERER
+-- Renders a settings panel that applies config changes to multiple icons.
+-- ============================================================================
+
+-- Persisted across section-toggle re-renders
+local _multiSectionStates   = {}
+local _multiSelectedIconIDs = {}   -- key = "uid_trackerType" -> { uniqueID, trackerType }
+local _multiValues          = {}   -- key = dot-path -> value, acts as the "current" state for the multi panel
+
+function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
+    if not parentFrame then return end
+
+    -- Disable arrow-key shifting (not applicable in multi mode)
+    if IconSettingsRenderer.keyboardFrame then
+        IconSettingsRenderer.keyboardFrame:EnableKeyboard(false)
+    end
+    _lastSelectedIcon = nil
+
+    -- Destroy old controls container
+    if parentFrame.currentControlsContainer then
+        parentFrame.currentControlsContainer:Hide()
+        parentFrame.currentControlsContainer:SetParent(nil)
+        parentFrame.currentControlsContainer = nil
+    end
+
+    local container = CreateFrame("Frame", nil, parentFrame)
+    container:SetAllPoints()
+    parentFrame.currentControlsContainer = container
+
+    -- ── Header ──────────────────────────────────────────────────────────────
+    local header = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    header:SetPoint("TOPLEFT", 10, -12)
+    header:SetText("Multi Icon Settings")
+    header:SetTextColor(1, 0.82, 0)
+
+    local subtitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    subtitle:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
+    subtitle:SetText("Changes apply to all selected icons below")
+    subtitle:SetTextColor(0.6, 0.6, 0.6)
+
+    -- ── Multi-select icon picker ─────────────────────────────────────────────
+    local dropLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    dropLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -12)
+    dropLabel:SetText("Apply to Icons:")
+    dropLabel:SetTextColor(0.8, 0.8, 0.8)
+
+    local dropBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+    dropBtn:SetPoint("TOPLEFT", dropLabel, "BOTTOMLEFT", 0, -4)
+    dropBtn:SetSize(220, 22)
+
+    local function UpdateDropBtnText()
+        local count = 0
+        for _ in pairs(_multiSelectedIconIDs) do count = count + 1 end
+        dropBtn:SetText(count .. " icon" .. (count == 1 and "" or "s") .. " selected")
+    end
+    UpdateDropBtnText()
+
+    -- Floating dropdown panel parented to UIParent so it is never clipped
+    -- No global name: avoids "already exists" errors on section-toggle re-renders
+    local dropPanel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    dropPanel:SetSize(260, 220)  -- height adjusted dynamically in RebuildDropList
+    dropPanel:SetFrameStrata("TOOLTIP")
+    dropPanel:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    dropPanel:SetBackdropColor(0.08, 0.08, 0.08, 0.97)
+    dropPanel:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+    dropPanel:Hide()
+
+    -- Scroll area inside the dropdown panel (fixed; only the child is rebuilt)
+    local dpScroll = CreateFrame("ScrollFrame", nil, dropPanel, "UIPanelScrollFrameTemplate")
+    dpScroll:SetPoint("TOPLEFT", 4, -4)
+    dpScroll:SetPoint("BOTTOMRIGHT", -24, 4)
+
+    -- currentScrollChild tracks the live child so we can hide it on rebuild
+    local currentScrollChild = nil
+
+    -- Rebuilds the checkbox list from the current tracker state.
+    -- Called every time the panel is opened so additions/removals are reflected.
+    local function RebuildDropList()
+        -- Fetch fresh icon list
+        local freshIcons = {}
+        if SpellStyler.State and SpellStyler.State.getTrackerValuesListForSettings then
+            local trackerList = SpellStyler.State:getTrackerValuesListForSettings()
+            for _, entry in ipairs(trackerList) do
+                if not entry.isHeader then
+                    table.insert(freshIcons, entry)
+                end
+            end
+        end
+
+        -- Hide the previous scroll child (WoW has no frame:Destroy)
+        if currentScrollChild then
+            currentScrollChild:Hide()
+            currentScrollChild:SetParent(nil)
+            currentScrollChild = nil
+        end
+
+        -- Resize panel to fit content (capped at 220px)
+        local panelHeight = math.min(#freshIcons * 26 + 28 + 12, 220)
+        dropPanel:SetHeight(panelHeight)
+
+        local dpScrollChild = CreateFrame("Frame", nil, dpScroll)
+        dpScrollChild:SetSize(230, math.max(#freshIcons * 26 + 28 + 10, 10))
+        dpScroll:SetScrollChild(dpScrollChild)
+        currentScrollChild = dpScrollChild
+
+        -- "Select All" / "Clear All" buttons
+        local checkboxRefs = {}
+
+        local selectAllBtn = CreateFrame("Button", nil, dpScrollChild, "UIPanelButtonTemplate")
+        selectAllBtn:SetSize(90, 18)
+        selectAllBtn:SetPoint("TOPLEFT", 4, -4)
+        selectAllBtn:SetText("Select All")
+
+        local clearAllBtn = CreateFrame("Button", nil, dpScrollChild, "UIPanelButtonTemplate")
+        clearAllBtn:SetSize(80, 18)
+        clearAllBtn:SetPoint("LEFT", selectAllBtn, "RIGHT", 6, 0)
+        clearAllBtn:SetText("Clear All")
+
+        -- One checkbox per icon
+        for i, entry in ipairs(freshIcons) do
+            local key = tostring(entry.uniqueID) .. "_" .. (entry.trackerType or "")
+            local cb = CreateFrame("CheckButton", nil, dpScrollChild, "UICheckButtonTemplate")
+            cb:SetSize(20, 20)
+            cb:SetPoint("TOPLEFT", 4, -(i - 1) * 26 - 28)  -- 28 = height of the two header buttons
+            cb:SetChecked(_multiSelectedIconIDs[key] ~= nil)
+            local lbl = dpScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            lbl:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+            lbl:SetText((entry.name or tostring(entry.uniqueID)) .. " |cff888888(" .. (entry.trackerType or "?") .. ")|r")
+            lbl:SetTextColor(0.9, 0.9, 0.9)
+            cb:SetScript("OnClick", function(self)
+                if self:GetChecked() then
+                    _multiSelectedIconIDs[key] = { uniqueID = entry.uniqueID, trackerType = entry.trackerType }
+                else
+                    _multiSelectedIconIDs[key] = nil
+                end
+                UpdateDropBtnText()
+            end)
+            checkboxRefs[key] = { cb = cb, entry = entry }
+        end
+
+        selectAllBtn:SetScript("OnClick", function()
+            for key, ref in pairs(checkboxRefs) do
+                ref.cb:SetChecked(true)
+                _multiSelectedIconIDs[key] = { uniqueID = ref.entry.uniqueID, trackerType = ref.entry.trackerType }
+            end
+            UpdateDropBtnText()
+        end)
+        clearAllBtn:SetScript("OnClick", function()
+            for key, ref in pairs(checkboxRefs) do
+                ref.cb:SetChecked(false)
+                _multiSelectedIconIDs[key] = nil
+            end
+            UpdateDropBtnText()
+        end)
+    end
+
+    dropBtn:SetScript("OnClick", function(self)
+        if dropPanel:IsShown() then
+            dropPanel:Hide()
+        else
+            RebuildDropList()  -- refresh list before showing
+            dropPanel:ClearAllPoints()
+            dropPanel:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -2)
+            dropPanel:Show()
+        end
+    end)
+
+    -- Hide the dropdown panel when the container is hidden
+    container:SetScript("OnHide", function() dropPanel:Hide() end)
+
+    -- ── Config for multi-icon control rendering ─────────────────────────────
+    -- getValue reads from the shared _multiValues scratch table so controls
+    -- always show the last value the user committed (instead of always showing
+    -- each control's hard-coded default).
+    -- setValue writes to _multiValues and fans out to every selected icon.
+    local config = {
+        trackerType = "spells",
+        getValue = function(uid, path)
+            return _multiValues[path]  -- nil on first open → controls show their own defaults
+        end,
+        setValue = function(uid, path, value)
+            -- Store in scratch table so getValue reflects the new value immediately
+            _multiValues[path] = value
+            -- Apply to every selected icon
+            for _, iconEntry in pairs(_multiSelectedIconIDs) do
+                SpellStyler.State:SetTrackerValueConfigProperty(
+                    iconEntry.uniqueID, iconEntry.trackerType, path, value)
+            end
+        end,
+    }
+    config.configInputs = IconSettingsRenderer:GetIconConfigInputs(config)
+
+    -- ── Section rendering ────────────────────────────────────────────────────
+    local lastControl = dropBtn
+    local sectionIndex = 0
+
+    for _, inputDef in ipairs(config.configInputs) do
+        if inputDef.type == "header" then
+            sectionIndex = sectionIndex + 1
+            if _multiSectionStates[sectionIndex] == nil then
+                _multiSectionStates[sectionIndex] = inputDef.state or "collapsed"
+            end
+            local isExpanded = (_multiSectionStates[sectionIndex] == "expanded")
+            local sectionContent = inputDef.section or inputDef.sectionContent or {}
+
+            local headerFrameBg = CreateFrame("Frame", nil, container, "BackdropTemplate")
+            headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -20)
+            headerFrameBg:SetSize(290, 25)
+            local headerTexture = headerFrameBg:CreateTexture(nil, "BACKGROUND")
+            headerTexture:SetAllPoints(headerFrameBg)
+            headerTexture:SetTexture(isExpanded
+                and "Interface\\AddOns\\SpellStyler\\Media\\Textures\\bar_full_minus_cropped"
+                or  "Interface\\AddOns\\SpellStyler\\Media\\Textures\\bar_full_plus_cropped")
+
+            local headerBtn = CreateFrame("Button", nil, headerFrameBg)
+            headerBtn:SetAllPoints(headerFrameBg)
+            local headerText = headerBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            headerText:SetPoint("LEFT", headerFrameBg, "LEFT", 15, 0)
+            headerText:SetText(inputDef.text or "")
+            headerText:SetTextColor(1, 0.82, 0)
+
+            local capturedIdx = sectionIndex
+            headerBtn:SetScript("OnClick", function()
+                _multiSectionStates[capturedIdx] = (_multiSectionStates[capturedIdx] == "expanded") and "collapsed" or "expanded"
+                IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
+            end)
+            headerBtn:SetScript("OnEnter", function() headerText:SetTextColor(1, 1, 0.5) end)
+            headerBtn:SetScript("OnLeave", function() headerText:SetTextColor(1, 0.82, 0) end)
+
+            lastControl = headerFrameBg
+
+            if isExpanded then
+                for _, controlDef in ipairs(sectionContent) do
+                    -- Skip "Mock Cooldown" button — not meaningful in multi mode
+                    if controlDef.type == "button" then
+                        -- intentionally skipped
+                    else
+                        controlDef.uniqueID = nil  -- no single uniqueID in multi mode
+
+                        local controlFrame = nil
+                        if controlDef.type == "dropdown" then
+                            local row = IconSettingsRenderer:CreateDropdown(container, controlDef, lastControl)
+                            controlFrame = row
+                        elseif controlDef.type == "textinput" then
+                            local row = CreateTextInput(container, controlDef, lastControl)
+                            controlFrame = row
+                        elseif controlDef.type == "colorpicker" then
+                            local row = CreateColorPicker(container, controlDef, lastControl)
+                            controlFrame = row
+                        elseif controlDef.type == "checkbox" then
+                            local checkbox = CreateCheckbox(container, controlDef, lastControl)
+                            controlFrame = checkbox
+                        elseif controlDef.type == "positionbuttons" then
+                            local row = CreatePositionHint(container, controlDef, lastControl, controlDef.hintText)
+                            controlFrame = row
+                        elseif controlDef.type == "label" then
+                            local label = CreateLabel(container, controlDef, lastControl)
+                            controlFrame = label
+                        end
+
+                        if controlFrame then
+                            lastControl = controlFrame
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- Dynamic panel height
+    if lastControl and lastControl.GetBottom then
+        local panelTop  = parentFrame:GetTop()
+        local lastBottom = lastControl:GetBottom()
+        if panelTop and lastBottom then
+            parentFrame:SetHeight(math.max(panelTop - lastBottom + 40, 400))
+        else
+            parentFrame:SetHeight(900)
+        end
+    else
+        parentFrame:SetHeight(900)
+    end
+end
+
+
 
 
 function IconSettingsRenderer:RenderIconControlView(containerFrame)
@@ -1270,8 +1578,8 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
         local headerPaddingBottom = 4
         local separatorGap = 6  -- space above and below the separator line
 
-        -- Calculate total scroll child height: plus button + separator + entries
-        local totalHeight = iconPadding + iconSize + separatorGap + 1 + separatorGap
+        -- Calculate total scroll child height: plus button + multi button + separator + entries
+        local totalHeight = iconPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap
         for _, entry in ipairs(trackerList) do
             if entry.isHeader then
                 totalHeight = totalHeight + headerHeight + headerPaddingBottom
@@ -1291,15 +1599,34 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
             end)
         end
 
-        -- Separator line between plus button and spell list
+        -- Multi-icon settings button (below the plus button)
+        local multiBtn = CreateFrame("Button", nil, iconScrollChild)
+        multiBtn:SetSize(iconSize, iconSize)
+        multiBtn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, -(iconPadding + iconSize + minPadding))
+        local multiTex = multiBtn:CreateTexture(nil, "ARTWORK")
+        multiTex:SetAllPoints(multiBtn)
+        multiTex:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\multi")
+        multiBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Multi-Icon Settings", 1, 1, 1)
+            GameTooltip:AddLine("Apply settings to multiple icons at once", 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end)
+        multiBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        multiBtn:SetScript("OnClick", function()
+            _lastSelectedIcon = nil
+            IconSettingsRenderer:RenderMultiIconSettingsView(controlsPanel)
+        end)
+
+        -- Separator line between toolbar buttons and spell list
         local sep = iconScrollChild:CreateTexture(nil, "ARTWORK")
         sep:SetColorTexture(0.4, 0.4, 0.4, 0.5)
         sep:SetHeight(1)
-        local sepY = -(iconPadding + iconSize + separatorGap)
+        local sepY = -(iconPadding + iconSize + minPadding + iconSize + separatorGap)
         sep:SetPoint("TOPLEFT",  iconScrollChild, "TOPLEFT",  2, sepY)
         sep:SetPoint("TOPRIGHT", iconScrollChild, "TOPRIGHT", -2, sepY)
 
-        local yOffset = -(iconPadding + iconSize + separatorGap + 1 + separatorGap)
+        local yOffset = -(iconPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap)
         for _, entry in ipairs(trackerList) do
             if entry.isHeader then
                 local lbl = iconScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")

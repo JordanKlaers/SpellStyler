@@ -418,69 +418,72 @@ pcall(function()
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
-			if key == "Saa" and IsShiftKeyDown() and IsControlKeyDown() then
-
+			if key == "S" and IsShiftKeyDown() and IsControlKeyDown() then
+                local classSpecialization = SpellStyler.State:GetCurrentSpecID()
+                DevTool:AddData({
+                    state = SpellStyler_CharDB.classSpecializations[classSpecialization]
+                }, "BuffIconCooldownViewer")
                 -- Hook every callable on the viewer frame (once, outside the pool loop).
-                if not BuffIconCooldownViewer._spellStyler_debugHooked then
-                    BuffIconCooldownViewer._spellStyler_debugHooked = true
-                    BuffIconCooldownViewer._spellStyler_scanCalled = BuffIconCooldownViewer._spellStyler_scanCalled or {}
-                    local viewerHooked = {}
-                    local function hookViewerFunc(funcName)
-                        if viewerHooked[funcName] then return end
-                        viewerHooked[funcName] = true
-                        pcall(function()
-                            hooksecurefunc(BuffIconCooldownViewer, funcName, function(...)
-                                local args = {}
-                                local matched = false
-                                for i = 1, select("#", ...) do
-                                    local v = tostring(select(i, ...))
-                                    args[i] = v
-                                    if v == "31884" or v == "53576" or v == "54149" then
-                                        matched = true
-                                    end
-                                end
-                                if matched then
-                                    -- DevTool:AddData(args, "viewer." .. funcName)
-                                end
-                            end)
-                        end)
-                        -- Call the function immediately and log whatever it returns (once per function)
-                        -- Skip event handlers (names starting with "On") to avoid side-effects
-                        if not BuffIconCooldownViewer._spellStyler_scanCalled[funcName] and not funcName:match("^[Oo]n") then
-                            BuffIconCooldownViewer._spellStyler_scanCalled[funcName] = true
-                            pcall(function()
-                                local results = {BuffIconCooldownViewer[funcName](BuffIconCooldownViewer)}
-                                local out = {}
-                                for i, v in ipairs(results) do out[i] = tostring(v) end
-                                if #out > 0 then
-                                    -- DevTool:AddData(results, "BuffIconCooldownViewer." .. funcName .. " [scan]")
-                                end
-                            end)
-                        end
-                    end
-                    for funcName, value in pairs(BuffIconCooldownViewer) do
-                        if type(value) == "function" then hookViewerFunc(funcName) end
-                    end
-                    local mt = getmetatable(BuffIconCooldownViewer)
-                    if mt and type(mt.__index) == "table" then
-                        for funcName, value in pairs(mt.__index) do
-                            if type(value) == "function" then hookViewerFunc(funcName) end
-                        end
-                    end
-                end
+                -- if not BuffIconCooldownViewer._spellStyler_debugHooked then
+                --     BuffIconCooldownViewer._spellStyler_debugHooked = true
+                --     BuffIconCooldownViewer._spellStyler_scanCalled = BuffIconCooldownViewer._spellStyler_scanCalled or {}
+                --     local viewerHooked = {}
+                --     local function hookViewerFunc(funcName)
+                --         if viewerHooked[funcName] then return end
+                --         viewerHooked[funcName] = true
+                --         pcall(function()
+                --             hooksecurefunc(BuffIconCooldownViewer, funcName, function(...)
+                --                 local args = {}
+                --                 local matched = false
+                --                 for i = 1, select("#", ...) do
+                --                     local v = tostring(select(i, ...))
+                --                     args[i] = v
+                --                     if v == "31884" or v == "53576" or v == "54149" then
+                --                         matched = true
+                --                     end
+                --                 end
+                --                 if matched then
+                --                     -- DevTool:AddData(args, "viewer." .. funcName)
+                --                 end
+                --             end)
+                --         end)
+                --         -- Call the function immediately and log whatever it returns (once per function)
+                --         -- Skip event handlers (names starting with "On") to avoid side-effects
+                --         if not BuffIconCooldownViewer._spellStyler_scanCalled[funcName] and not funcName:match("^[Oo]n") then
+                --             BuffIconCooldownViewer._spellStyler_scanCalled[funcName] = true
+                --             pcall(function()
+                --                 local results = {BuffIconCooldownViewer[funcName](BuffIconCooldownViewer)}
+                --                 local out = {}
+                --                 for i, v in ipairs(results) do out[i] = tostring(v) end
+                --                 if #out > 0 then
+                --                     -- DevTool:AddData(results, "BuffIconCooldownViewer." .. funcName .. " [scan]")
+                --                 end
+                --             end)
+                --         end
+                --     end
+                --     for funcName, value in pairs(BuffIconCooldownViewer) do
+                --         if type(value) == "function" then hookViewerFunc(funcName) end
+                --     end
+                --     local mt = getmetatable(BuffIconCooldownViewer)
+                --     if mt and type(mt.__index) == "table" then
+                --         for funcName, value in pairs(mt.__index) do
+                --             if type(value) == "function" then hookViewerFunc(funcName) end
+                --         end
+                --     end
+                -- end
 
 
-                SpellStyler.FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames("buffs")
-                for frame in BuffIconCooldownViewer.itemFramePool:EnumerateActive() do
-                    local auraSpellID = frame:GetAuraSpellID()
-                    local baseSpellID = frame:GetBaseSpellID()
-                    local spellChargeInfo = frame:GetSpellChargeInfo()
-                    local spellID = frame:GetSpellID()
+                -- SpellStyler.FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames("buffs")
+                -- for frame in BuffIconCooldownViewer.itemFramePool:EnumerateActive() do
+                --     local auraSpellID = frame:GetAuraSpellID()
+                --     local baseSpellID = frame:GetBaseSpellID()
+                --     local spellChargeInfo = frame:GetSpellChargeInfo()
+                --     local spellID = frame:GetSpellID()
 
-                    local cooldown_auraSpellID = frame.Cooldown.GetAuraSpellID and frame.Cooldown:GetAuraSpellID()
-                    local cooldown_baseSpellID = frame.Cooldown.GetBaseSpellID and frame.Cooldown:GetBaseSpellID()
-                    local cooldown_spellChargeInfo = frame.Cooldown.GetSpellChargeInfo and frame.Cooldown:GetSpellChargeInfo()
-                    local cooldown_spellID = frame.Cooldown.GetSpellID and frame.Cooldown:GetSpellID()
+                --     local cooldown_auraSpellID = frame.Cooldown.GetAuraSpellID and frame.Cooldown:GetAuraSpellID()
+                --     local cooldown_baseSpellID = frame.Cooldown.GetBaseSpellID and frame.Cooldown:GetBaseSpellID()
+                --     local cooldown_spellChargeInfo = frame.Cooldown.GetSpellChargeInfo and frame.Cooldown:GetSpellChargeInfo()
+                --     local cooldown_spellID = frame.Cooldown.GetSpellID and frame.Cooldown:GetSpellID()
                     -- DevTool:AddData({
                     --     BuffIconCooldownViewer = BuffIconCooldownViewer,
                     --     cooldownIDs = BuffIconCooldownViewer:GetCooldownIDs(),
@@ -500,7 +503,7 @@ pcall(function()
                     --     SpellStyler_frames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
                     --     database = SpellStyler_CharDB.classSpecializations[SpellStyler.State:GetCurrentSpecID()]
                     -- }, "frame - ")
-                end
+                -- end
                 -- DevTool:AddData({
                 --     BuffIconCooldownViewer = BuffIconCooldownViewer,
                 --     BuffIconCooldownViewer_2 = _G['BuffIconCooldownViewer']

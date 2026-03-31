@@ -212,8 +212,12 @@ function AddSpells:RenderAddSpellsView(parent)
         })
         if not trackerConfig then return end
 
-        -- 2. Create the live tracker frame
-        FTM:CreateTrackerFrame(selectedSpell.spellID, trackerConfig, "spells")
+        -- 2. Create the live tracker frame.
+        -- Use the same key that AddTrackerValue used (GetBaseSpell), NOT selectedSpell.spellID.
+        -- The spellbook may return a talent-override spell ID; using GetBaseSpell here ensures
+        -- SpellStyler_frames["spells"] is keyed identically to the DB entry so that
+        -- OnDragStop position saves land on the correct record.
+        FTM:CreateTrackerFrame(C_Spell.GetBaseSpell(selectedSpell.spellID), trackerConfig, "spells")
 
         -- 3. Remove from the grid so it can't be added twice
         local addedID = selectedSpell.spellID
@@ -276,11 +280,14 @@ function AddSpells:RenderAddSpellsView(parent)
 
     local State = SpellStyler.State
     for _, spell in ipairs(spells) do
-        -- Skip spells that are already tracked in any tracker type
-        local alreadyTracked = State:CheckIsAlreadyTracker(spell.spellID, "buffs")
-            or State:CheckIsAlreadyTracker(spell.spellID, "essential")
-            or State:CheckIsAlreadyTracker(spell.spellID, "utility")
-            or State:CheckIsAlreadyTracker(spell.spellID, "spells")
+        -- Skip spells that are already tracked in any tracker type.
+        -- DB entries are keyed by GetBaseSpell(), so the duplicate check must use
+        -- the same key; using the raw spellbook ID would miss override spells.
+        local baseID = C_Spell.GetBaseSpell(spell.spellID)
+        local alreadyTracked = State:CheckIsAlreadyTracker(baseID, "buffs")
+            or State:CheckIsAlreadyTracker(baseID, "essential")
+            or State:CheckIsAlreadyTracker(baseID, "utility")
+            or State:CheckIsAlreadyTracker(baseID, "spells")
         if not alreadyTracked then
         local capturedSpell = spell
         local btn = CreateFrame("Button", nil, gridChild)

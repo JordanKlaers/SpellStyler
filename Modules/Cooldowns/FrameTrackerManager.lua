@@ -244,7 +244,9 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     -- Only set the icon's own size when it is not managed by a container.
     -- LayoutContainer resizes and positions frames that are _inContainer.
     if not frame._inContainer then
-        frame:SetSize(trackerConfig.iconSettings.size, trackerConfig.iconSettings.size)
+        local iconW = trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48
+        local iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
+        frame:SetSize(iconW, iconH)
     end
     frame:SetFrameStrata(trackerConfig.iconSettings.frameStrataLevel or "MEDIUM")
     frame:SetFrameLevel(trackerConfig.iconSettings.frameStrataValue or 100)
@@ -298,7 +300,9 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     frame.icon:SetTexCoord(0, 1, 0, 1)  -- Crop off edges for cleaner look
     local iconTexture = frame.meta.customTexture or trackerConfig.defaultIconTexturePath
     frame.icon:SetTexture(iconTexture)
-    local color = trackerConfig.iconColor or {}
+    local _, insufficientPower = C_Spell.IsSpellUsable(frame.meta.activeSpellID)
+    local color = (insufficientPower and trackerConfig.iconSettings.insufficientPower and trackerConfig.iconSettings.insufficientPowerIconColor)
+        or trackerConfig.iconColor or {}
     frame.icon:SetVertexColor(
         color.r or 1,
         color.g or 1,
@@ -369,8 +373,10 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     -- This uses the new Midnight API that accepts DurationObjects with secrets
     frame.statusBar = CreateFrame("StatusBar", frameName .. "_StatusBar", frame)
     frame.statusBar:SetPoint(trackerConfig.statusBar.anchorSelf or "LEFT", frame, trackerConfig.statusBar.anchorParent or "RIGHT", trackerConfig.statusBar.x or 0, trackerConfig.statusBar.y or 0)
-    local statusBarWidth = trackerConfig.statusBar and trackerConfig.statusBar.width or (trackerConfig.iconSettings.size * 4)
-    local statusBarHeight = trackerConfig.statusBar and trackerConfig.statusBar.height or trackerConfig.iconSettings.size / 2
+    local _iconW = trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48
+    local _iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
+    local statusBarWidth = trackerConfig.statusBar and trackerConfig.statusBar.width or (_iconW * 4)
+    local statusBarHeight = trackerConfig.statusBar and trackerConfig.statusBar.height or (_iconH / 2)
     frame.statusBar:SetSize(statusBarWidth, statusBarHeight)
     frame.statusBar:SetScale(trackerConfig.statusBar.scale or 1)
     frame.statusBar:SetMinMaxValues(0, 1)
@@ -959,7 +965,9 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
     frame.icon:SetTexture(texture)
     
     -- Update icon color
-    local color = trackerConfig.iconColor or {}
+    local _, insufficientPower = C_Spell.IsSpellUsable(frame.meta.activeSpellID)
+    local color = (insufficientPower and trackerConfig.iconSettings.insufficientPower and trackerConfig.iconSettings.insufficientPowerIconColor)
+        or trackerConfig.iconColor or {}
     frame.icon:SetVertexColor(
         color.r or 1,
         color.g or 1,
@@ -973,7 +981,9 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
 
     -- Update size (skip when the frame is managed by a container; LayoutContainer controls its size)
     if not frame._inContainer then
-        frame:SetSize(trackerConfig.iconSettings.size, trackerConfig.iconSettings.size)
+        local iconW = trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48
+        local iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
+        frame:SetSize(iconW, iconH)
     end
 
     -- Re-attach the glow animation child with the latest glowNotification config.
@@ -1171,8 +1181,10 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
             end
             
             -- Apply width and height
-            local statusBarWidth = trackerConfig.statusBar.width or (trackerConfig.iconSettings.size * 4)
-            local statusBarHeight = trackerConfig.statusBar.height or trackerConfig.iconSettings.size
+            local _iconW = trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48
+            local _iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
+            local statusBarWidth = trackerConfig.statusBar.width or (_iconW * 4)
+            local statusBarHeight = trackerConfig.statusBar.height or _iconH
             frame.statusBar:SetSize(statusBarWidth, statusBarHeight)
 
             -- Fill direction is driven by TimerDirection in SetTimerDuration; no fill-anchor reversal needed
@@ -1355,7 +1367,6 @@ function FrameTrackerManager:SetupCooldownManagerHooks()
             FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = true
         end
     end
-    FrameTrackerManager:MoveOverlappingIcons()
 
     -- Apply saved container layouts now that all tracker frames exist
     if SpellStyler.Containers then
@@ -1366,39 +1377,6 @@ function FrameTrackerManager:SetupCooldownManagerHooks()
     end
 end
 
-function FrameTrackerManager:MoveOverlappingIcons()
-    local allFrameConfigs = {}
-    for _, trackerType in ipairs({"buffs", "essential", "utility", "spells"}) do
-        local specificTrackerConfigs = State:GetAllTrackerValues(trackerType)
-        if specificTrackerConfigs then
-            for _, value in pairs(specificTrackerConfigs) do
-                table.insert(allFrameConfigs, value)
-            end
-        end
-    end
-    
-    local spacing = 46
-    local i = 1
-    for _, frameData in ipairs(allFrameConfigs) do
-        
-        if (frameData.position.x == 0 and frameData.position.y == 0) then
-            local j = i - 1
-            local col = j % 5
-            local row = math.floor(j / 5)
-            local x = col * spacing
-            local y = -row * spacing
-            State:SetTrackerValueConfigProperty(frameData.baseSpellID, frameData.trackerType, 'position.x', x)
-            State:SetTrackerValueConfigProperty(frameData.baseSpellID, frameData.trackerType, 'position.y', y)
-            local trackerConfig = State:GetSpecificTrackerValue(frameData.baseSpellID, frameData.trackerType)
-            local frame = FrameTrackerManager.SpellStyler_frames and FrameTrackerManager.SpellStyler_frames[trackerConfig.trackerType] and FrameTrackerManager.SpellStyler_frames[trackerConfig.trackerType][trackerConfig.baseSpellID]
-            if frame then
-                frame:ClearAllPoints()
-                frame:SetPoint("CENTER", UIParent, "CENTER", trackerConfig.position.x, trackerConfig.position.y)
-                i = i + 1
-            end
-        end
-    end
-end
 
 
 -- ============================================================================
@@ -1621,13 +1599,10 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
     for _, trackerType in ipairs({ "spells" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
         if trackerValues then
-            local easyLogging = {}
-            for baseSpellID, config in pairs(trackerValues) do
-                local overrideName = C_Spell.GetSpellInfo(config.overrideSpellID)
-                easyLogging[overrideName.name .. " - " .. baseSpellID] = config
-            end
             for baseSpellID, trackerConfig in pairs(trackerValues) do
+                -- Skip orphan entries: real entries always have trackerType set by AddTrackerValue.
                 if not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                    and trackerConfig.trackerType ~= nil
                     and trackerConfig.isEnabled ~= false
                     and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerConfig.overrideSpellID))
                 then
@@ -1770,16 +1745,22 @@ function FrameTrackerManager:SetIconVisibility(frame, iconDisplayState, activeSp
             -- If the buff is inactive, the icon will be visible
             frame.icon:SetAlpha(buffAlpha)
         else
-            local charges = C_Spell.GetSpellCharges(activeSpellID) or {}
-            if charges.currentCharges ~= nil then
-                -- 1 or more charges means the spells is available to cast and will be visible - for iconDisplayState == 'available'
-                frame.icon:SetAlpha(charges.currentCharges)
+            local spellCooldownInfo = C_Spell.GetSpellCooldown(activeSpellID)
+            if not spellCooldownInfo.isActive then
+                frame.icon:SetAlpha(1)
             else
-                -- if the duration is active, check if its the GCD to attempt to "ignore" it by displaying the icon
-                local durationEqualToGCD    = SpellStyler.Util:IsValidCooldownCurve()
-                local alpha =  C_Spell.GetSpellCooldownDuration(activeSpellID):EvaluateRemainingDuration(durationEqualToGCD)
-                -- If the remaining duration IS the same as the GCD, that basically means the spell is avilable to cast, so it will be visible, otherwise alpha would be zero, thus hiding the icon
-                frame.icon:SetAlpha(alpha)
+                local charges = C_Spell.GetSpellCharges(activeSpellID) or {}
+                if charges.currentCharges ~= nil then
+                    -- 1 or more charges means the spells is available to cast and will be visible - for iconDisplayState == 'available'
+                    frame.icon:SetAlpha(charges.currentCharges)
+                else
+                    -- if the duration is active, check if its the GCD to attempt to "ignore" it by displaying the icon
+                    local durationEqualToGCD    = SpellStyler.Util:IsValidCooldownCurve()
+                    local alpha =  C_Spell.GetSpellCooldownDuration(activeSpellID):EvaluateRemainingDuration(durationEqualToGCD)
+                    -- If the remaining duration IS the same as the GCD, that basically means the spell is avilable to cast, so it will be visible, otherwise alpha would be zero, thus hiding the icon
+                    frame.icon:SetAlpha(alpha)
+                end
+                -- frame.icon:SetAlpha(0)
             end
         end
     elseif iconDisplayState == 'active' or iconDisplayState == 'cooldown' then
@@ -1788,24 +1769,32 @@ function FrameTrackerManager:SetIconVisibility(frame, iconDisplayState, activeSp
             -- If the buff is inactive, the icon will be visible
             frame.icon:SetAlpha(buffAlpha)
         else
-            -- cant use charges for this setting because they are secret and can not be inversed (having no charges means the spells MUST be on cooldown, but that value of 0 would make it hidden)
-            local durationNOTEqualToGCD    = SpellStyler.Util:IsValidCooldownCurve(true)
-            local durationObj = nil
-            pcall(function()
-                local maxSpellCharges = 1
-                local spellChargeInfo = C_Spell.GetSpellCharges(activeSpellID)
-                if spellChargeInfo and spellChargeInfo.maxCharges then
-                    maxSpellCharges = spellChargeInfo.maxCharges
-                end
-                if maxSpellCharges > 1 then
-                    durationObj = C_Spell.GetSpellChargeDuration(activeSpellID)
-                else
-                    durationObj = C_Spell.GetSpellCooldownDuration(activeSpellID)
-                end
-            end)
-            local alpha = durationObj and durationObj:EvaluateRemainingDuration(durationNOTEqualToGCD) or 0
-            -- If the remaining duration IS the same as the GCD, that basically means the spell is avilable to cast, so it will be visible, otherwise alpha would be zero, thus hiding the icon
-            frame.icon:SetAlpha(alpha)
+            local spellCooldownInfo = C_Spell.GetSpellCooldown(activeSpellID)
+            if not spellCooldownInfo.isActive then
+                frame.icon:SetAlpha(0)
+            else
+                -- frame.icon:SetAlpha(1)
+                local durationNOTEqualToGCD    = SpellStyler.Util:IsValidCooldownCurve(true)
+                local durationObj = nil
+                pcall(function()
+                    local maxSpellCharges = 1
+                    local spellChargeInfo = C_Spell.GetSpellCharges(activeSpellID)
+                    if spellChargeInfo and spellChargeInfo.maxCharges then
+                        maxSpellCharges = spellChargeInfo.maxCharges
+                    end
+                    if maxSpellCharges > 1 then
+                        durationObj = C_Spell.GetSpellChargeDuration(activeSpellID)
+                    else
+                        durationObj = C_Spell.GetSpellCooldownDuration(activeSpellID)
+                    end
+                end)
+                local alpha = durationObj and durationObj:EvaluateRemainingDuration(durationNOTEqualToGCD) or 0
+                -- If the remaining duration IS the same as the GCD, that basically means the spell is avilable to cast, so it will be visible, otherwise alpha would be zero, thus hiding the icon
+                frame.icon:SetAlpha(alpha)
+            end
+
+
+            --cant use charges for this setting because they are secret and can not be inversed (having no charges means the spells MUST be on cooldown, but that value of 0 would make it hidden)
         end
     end
 end
@@ -2011,6 +2000,7 @@ eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
 eventFrame:RegisterEvent("SPELL_DATA_LOAD_RESULT")
 eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
+eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -2068,6 +2058,31 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         if match.customFrame and match.customFrame.statusBar then match.customFrame.statusBar:SetValue(0) end
                         FrameTrackerManager:ApplyCooldownDuration(match)
                         FrameTrackerManager:UpdateFrame_copyCharges(match)
+                    end
+                end
+            end
+        end
+    end
+    if event == "UNIT_POWER_UPDATE" then
+        local unitTarget, powerType = ...
+        if unitTarget == "player" then
+            for _, tType in ipairs({"spells", "buffs"}) do
+                if FrameTrackerManager.SpellStyler_frames[tType] then
+                    for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                        local config = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, tType)
+                        if config.iconSettings.insufficientPower then
+                            local _, insufficientPower = C_Spell.IsSpellUsable(customFrame.meta.activeSpellID)
+                            if tType == "buffs" then DevTool:AddData({insufficientPower = insufficientPower}, "spell - " .. customFrame.meta.activeSpellID) end
+                            local color = (insufficientPower and config.iconSettings.insufficientPower and config.iconSettings.insufficientPowerIconColor)
+                                or config.iconColor or {}
+                            customFrame.icon:SetVertexColor(
+                                color.r or 1,
+                                color.g or 1,
+                                color.b or 1,
+                                color.a or 1
+                            )
+                            FrameTrackerManager:SetIconVisibility(customFrame, config.iconSettings.iconDisplayState, customFrame.meta.activeSpellID)
+                        end
                     end
                 end
             end

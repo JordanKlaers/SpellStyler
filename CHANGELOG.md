@@ -171,3 +171,8 @@ Version 1.0.1
 
 	- Updates the way CDM frames are linked to the custom frames to solve an issue with improper updates (buffs appearing to swap positions)
 	- Adds an additional event to respond to cooldown updates
+
+Version 1.0.2
+	- Update to solve icons swapping positions with eachother on fresh setup
+	- Adds color to be applied if a spell cant be cast due to insufficient power - like mana or rage
+	- adds a menu for applying settings to multiple icons at once
