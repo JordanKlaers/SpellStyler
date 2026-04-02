@@ -297,7 +297,8 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
 
     frame.icon:SetPoint("TOPLEFT", 0, 0)
     frame.icon:SetPoint("BOTTOMRIGHT", 0, 0)
-    frame.icon:SetTexCoord(0, 1, 0, 1)  -- Crop off edges for cleaner look
+    local zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom / 100) or 0
+    frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
     local iconTexture = frame.meta.customTexture or trackerConfig.defaultIconTexturePath
     frame.icon:SetTexture(iconTexture)
     local _, insufficientPower = C_Spell.IsSpellUsable(frame.meta.activeSpellID)
@@ -963,7 +964,8 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
     local customTexture = (trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath)
     local texture = customTexture or frame.updatedIconID or trackerConfig.defaultIconTexturePath
     frame.icon:SetTexture(texture)
-    
+    local zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom / 100) or 0
+    frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
     -- Update icon color
     local _, insufficientPower = C_Spell.IsSpellUsable(frame.meta.activeSpellID)
     local color = (insufficientPower and trackerConfig.iconSettings.insufficientPower and trackerConfig.iconSettings.insufficientPowerIconColor)

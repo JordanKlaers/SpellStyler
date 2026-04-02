@@ -442,6 +442,14 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
                 {
                     type = "textinput",
+                    label = "Texture Zoom:",
+                    tooltip = "Use values between 0 and 100",
+                    numeric = true,
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.zoom") or 0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.zoom", value) end,
+                },
+                {
+                    type = "textinput",
                     label = "Opacity:",
                     numeric = true,
                     max = 1,

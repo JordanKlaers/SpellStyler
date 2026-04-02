@@ -176,3 +176,6 @@ Version 1.0.2
 	- Update to solve icons swapping positions with eachother on fresh setup
 	- Adds color to be applied if a spell cant be cast due to insufficient power - like mana or rage
 	- adds a menu for applying settings to multiple icons at once
+
+Version 1.0.3
+	- Adds ability to set zoom on texture - helpful for removing borders on bilzzard icons
