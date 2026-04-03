@@ -553,7 +553,11 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
         x = ICON_PAD
         if config and config.associatedIcons then
             local entryByID = {}
-            for _, e in ipairs(trackerList) do entryByID[e.uniqueID] = e end
+            for _, e in ipairs(trackerList) do
+                if e and e.uniqueID then
+                    entryByID[e.uniqueID] = e
+                end
+            end
 
             for idx, uid in ipairs(config.associatedIcons) do
                 local entry = entryByID[uid]

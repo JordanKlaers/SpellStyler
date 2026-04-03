@@ -35,7 +35,15 @@
 		"CloseDropDownMenus",
 		"SlashCmdList",
 		"HideUIPanel",
-		"ShowUIPanel"
+		"ShowUIPanel",
+		"DEFAULT_CHAT_FRAME",
+		"AddonCompartmentFrame",
+		"TargetFrame",
+		"FocusFrame",
+		"SettingsPanel",
+		"Settings",
+		"ReloadUI",
+		"GameMenuFrame"
 	],
 	"Lua.type.weakUnionCheck": true
 }

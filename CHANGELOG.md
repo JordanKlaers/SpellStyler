@@ -179,3 +179,6 @@ Version 1.0.2
 
 Version 1.0.3
 	- Adds ability to set zoom on texture - helpful for removing borders on bilzzard icons
+
+Version 1.0.4
+	- Container working again. Settings accidentally caused an error when headers were added.
