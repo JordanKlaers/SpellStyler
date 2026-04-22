@@ -235,8 +235,9 @@ function AddSpells:RenderAddSpellsView(parent)
         -- 5. Refresh the icon list in the settings panel so the new spell appears
         if SpellStyler.settingsContentFrame then
             SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-            if FTM.EnableDraggingForAllFrames then
-                FTM:EnableDraggingForAllFrames()
+            local ISR = SpellStyler.IconSettingsRenderer
+            if ISR and ISR.EnableDraggingForAllFrames then
+                ISR:EnableDraggingForAllFrames()
             end
         end
     end)

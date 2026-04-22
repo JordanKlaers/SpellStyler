@@ -76,8 +76,8 @@ local function ShowBorderDemo()
         
         -- Disable dragging when menu is hidden
         settingsMenu:SetScript("OnHide", function()
-            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.DisableDraggingForAllFrames then
-                SpellStyler.FrameTrackerManager:DisableDraggingForAllFrames()
+            if SpellStyler.IconSettingsRenderer and SpellStyler.IconSettingsRenderer.DisableDraggingForAllFrames then
+                SpellStyler.IconSettingsRenderer:DisableDraggingForAllFrames()
             end
         end)
         
@@ -198,6 +198,11 @@ local function ShowBorderDemo()
         containerContentFrame:SetAllPoints(insetSettingsContainer)
         containerContentFrame:SetFrameLevel(insetSettingsContainer:GetFrameLevel() + 1)
 
+        -- ---- Conditions view ----
+        local conditionsContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
+        conditionsContentFrame:SetAllPoints(insetSettingsContainer)
+        conditionsContentFrame:SetFrameLevel(insetSettingsContainer:GetFrameLevel() + 1)
+
         -- ---- Utility view ----
         local utilityContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
         utilityContentFrame:SetAllPoints(insetSettingsContainer)
@@ -219,8 +224,9 @@ local function ShowBorderDemo()
             end
 
             local function RefreshLabel()
-                if FrameTrackerManager.GetViewerHidden then
-                    if FrameTrackerManager:GetViewerHidden(trackerType) then
+                local Containers = SpellStyler.Containers
+                if Containers and Containers.GetViewerHidden then
+                    if Containers:GetViewerHidden(trackerType) then
                         btn:SetText("|cFF888888" .. label .. "|r")
                     else
                         btn:SetText("|cFFFFD700" .. label .. "|r")
@@ -231,9 +237,10 @@ local function ShowBorderDemo()
             end
 
             btn:SetScript("OnClick", function()
-                if FrameTrackerManager.SetViewerHidden and FrameTrackerManager.ApplyViewerVisibility then
-                    FrameTrackerManager:SetViewerHidden(trackerType, not FrameTrackerManager:GetViewerHidden(trackerType))
-                    FrameTrackerManager:ApplyViewerVisibility(trackerType)
+                local Containers = SpellStyler.Containers
+                if Containers and Containers.SetViewerHidden and Containers.ApplyViewerVisibility then
+                    Containers:SetViewerHidden(trackerType, not Containers:GetViewerHidden(trackerType))
+                    Containers:ApplyViewerVisibility(trackerType)
                 end
                 RefreshLabel()
             end)
@@ -348,11 +355,13 @@ local function ShowBorderDemo()
         SpellStyler.HelpContentRenderer:RenderHelpView(helpContentFrame)
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
         SpellStyler.ContainerSettingsRenderer:RenderContainerView(containerContentFrame)
+        SpellStyler.ConditionsRenderer:RenderConditionsView(conditionsContentFrame)
 
         RegisterView("icons",      settingsContentFrame)
         RegisterView("help",       helpContentFrame)
         RegisterView("containers", containerContentFrame)
         RegisterView("utility",    utilityContentFrame)
+        RegisterView("conditions", conditionsContentFrame)
         SwitchToView("icons")
 
         -- Store references globally so other modules can update the settings menu
@@ -366,12 +375,14 @@ local function ShowBorderDemo()
             -- "utility" were legacy types migrated into "spells" and must not be
             -- passed here (doing so caused phantom frames to be created).
             SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
-            SpellStyler.FrameTrackerManager:ApplyViewerVisibility("buffs")
+            if SpellStyler.Containers then
+                SpellStyler.Containers:ApplyViewerVisibility("buffs")
+            end
             -- Re-render the icon list so new/removed trackers appear
             SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
             -- Enable dragging for any newly created frames
-            if SpellStyler.FrameTrackerManager.EnableDraggingForAllFrames then
-                SpellStyler.FrameTrackerManager:EnableDraggingForAllFrames()
+            if SpellStyler.IconSettingsRenderer.EnableDraggingForAllFrames then
+                SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
             end
         end)
 
@@ -406,20 +417,23 @@ local function ShowBorderDemo()
         local tabHelp       = SpellStyler.CreateTab(tabBar, "Help",       tabFaceW, tabH)
         local tabContainers = SpellStyler.CreateTab(tabBar, "Containers", tabFaceW, tabH)
         local tabUtility    = SpellStyler.CreateTab(tabBar, "Utility",    tabFaceW, tabH)
+        local tabConditions = SpellStyler.CreateTab(tabBar, "Conditions", tabFaceW, tabH)
 
-        tabBar:SetHeight(4 * tabH + 3 * tabGap)
+        tabBar:SetHeight(5 * tabH + 4 * tabGap)
 
         tabSpells:SetPoint("TOPLEFT",     tabBar,        "TOPLEFT", 0, 0)
         tabHelp:SetPoint("TOPLEFT",       tabSpells,     "BOTTOMLEFT", 0, -tabGap)
         tabContainers:SetPoint("TOPLEFT", tabHelp,       "BOTTOMLEFT", 0, -tabGap)
         tabUtility:SetPoint("TOPLEFT",    tabContainers, "BOTTOMLEFT", 0, -tabGap)
+        tabConditions:SetPoint("TOPLEFT", tabUtility,    "BOTTOMLEFT", 0, -tabGap)
 
         tabSpells.onTabClick     = function() SwitchToView("icons") end
         tabHelp.onTabClick       = function() SwitchToView("help") end
         tabContainers.onTabClick = function() SwitchToView("containers") end
         tabUtility.onTabClick    = function() SwitchToView("utility") end
+        tabConditions.onTabClick = function() SwitchToView("conditions") end
 
-        SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabContainers, tabUtility })
+        SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabContainers, tabUtility, tabConditions })
         tabSpells:SetSelected(true)
     end
 	-- When the settings menu is open and the user clicks a tracker frame in the
@@ -430,14 +444,14 @@ local function ShowBorderDemo()
 		SpellStyler.IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
 	end
 
-	if SpellStyler.FrameTrackerManager then
-		if SpellStyler.FrameTrackerManager.SetFrameClickCallback then
-			SpellStyler.FrameTrackerManager:SetFrameClickCallback(function(uniqueID, trackerType)
+	if SpellStyler.IconSettingsRenderer then
+		if SpellStyler.IconSettingsRenderer.SetFrameClickCallback then
+			SpellStyler.IconSettingsRenderer:SetFrameClickCallback(function(uniqueID, trackerType)
 				SpellStyler._selectIconInSettings(uniqueID, trackerType)
 			end)
 		end
-		if SpellStyler.FrameTrackerManager.EnableDraggingForAllFrames then
-			SpellStyler.FrameTrackerManager:EnableDraggingForAllFrames()
+		if SpellStyler.IconSettingsRenderer.EnableDraggingForAllFrames then
+			SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
 		end
 	end
     settingsMenu:Show()

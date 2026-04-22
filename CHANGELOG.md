@@ -182,3 +182,7 @@ Version 1.0.3
 
 Version 1.0.4
 	- Container working again. Settings accidentally caused an error when headers were added.
+
+Version 1.1.0
+	- Addons conditional system
+	- reasonable refactor for spell data processing to be more performance in accomodating the conditional system

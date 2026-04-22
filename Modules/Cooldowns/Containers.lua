@@ -150,7 +150,10 @@ function Containers:DetachIconsFromContainer(uniqueIDs)
             end
         end
     end
-    FTM:EnableDraggingForAllFrames()
+    local ISR = SpellStyler.IconSettingsRenderer
+    if ISR and ISR.EnableDraggingForAllFrames then
+        ISR:EnableDraggingForAllFrames()
+    end
 end
 
 -- ============================================================
@@ -582,4 +585,43 @@ function Containers:CreateContainer(parent, config)
     frame:SetAlpha(0)
 
     return frame
+end
+
+-- ============================================================================
+-- VIEWER VISIBILITY MANAGEMENT
+-- Moved from FrameTrackerManager.lua as they are viewer/container-level concerns
+-- ============================================================================
+
+function Containers:GetCooldownManagerViewer(trackerType)
+    local viewers = {
+        buffs = _G["BuffIconCooldownViewer"],
+        essential = _G["EssentialCooldownViewer"],
+        utility = _G["UtilityCooldownViewer"]
+    }
+    return viewers[trackerType]
+end
+
+-- Stored in SpellStyler_DB.hideViewers = { buffs=bool, essential=bool, utility=bool }
+function Containers:GetViewerHidden(trackerType)
+    if not SpellStyler_DB then return false end
+    SpellStyler_DB.hideViewers = SpellStyler_DB.hideViewers or {}
+    return SpellStyler_DB.hideViewers[trackerType] or false
+end
+
+function Containers:SetViewerHidden(trackerType, hidden)
+    if not SpellStyler_DB then return end
+    SpellStyler_DB.hideViewers = SpellStyler_DB.hideViewers or {}
+    SpellStyler_DB.hideViewers[trackerType] = hidden
+end
+
+function Containers:ApplyViewerVisibility(trackerType)
+    local viewer = Containers:GetCooldownManagerViewer(trackerType)
+    if not viewer then return end
+    -- Use alpha instead of Hide/Show so the viewer still exists and fires
+    -- cooldown events; hiding it would break cooldown data collection.
+    if Containers:GetViewerHidden(trackerType) then
+        viewer:SetAlpha(0)
+    else
+        viewer:SetAlpha(1)
+    end
 end

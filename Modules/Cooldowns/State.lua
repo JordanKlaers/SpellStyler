@@ -155,6 +155,7 @@ local function AddNewTrackerValueConfig(data)
             },
             x = 0,
             y = 0,
+            useSpellDisplayCount = false,
         },
         statusBar = {
             displayState = "never",  -- "always", "active", "inactive", "never"
@@ -200,7 +201,7 @@ local function AddNewTrackerValueConfig(data)
             anchorSelf = "LEFT"
         },
         showProcGlow = true,  -- Show spell activation glow
-		persistentData = {} -- This will be populated with data to be used when secret values would otherwise throw an error (The purpose is to help with reloading while in combat)
+		specialVisibilityConditions = {}
     }
 end
 
@@ -289,7 +290,9 @@ function State:HandleTalentChange()
     -- Re-hook all buff cooldown frames
     for _, tType in ipairs({"buffs"}) do
         FrameTrackerManager:HookAllBuffCooldownFrames(tType)
-        FrameTrackerManager:ApplyViewerVisibility(tType)
+        if SpellStyler.Containers then
+            SpellStyler.Containers:ApplyViewerVisibility(tType)
+        end
     end
 	FrameTrackerManager:CreateNonBuffTrackerFrames()
     -- Re-layout containers for the newly active spec
@@ -303,8 +306,8 @@ function State:HandleTalentChange()
     -- Update settings menu if it's open
     if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() and SpellStyler.settingsContentFrame then
         SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-        if FrameTrackerManager.EnableDraggingForAllFrames then
-            FrameTrackerManager:EnableDraggingForAllFrames()
+        if SpellStyler.IconSettingsRenderer and SpellStyler.IconSettingsRenderer.EnableDraggingForAllFrames then
+            SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
         end
     end
 end
@@ -483,12 +486,12 @@ function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, val
     local trackerValue = db[trackerType][baseSpellID]
     if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
         FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_copyCharges({
-            config = trackerValue,
-            customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID],
-            baseSpellID = baseSpellID,
-            trackerType = trackerType
-        })
+        -- FrameTrackerManager:UpdateFrame_copyCharges({
+        --     config = trackerValue,
+        --     customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID],
+        --     baseSpellID = baseSpellID,
+        --     trackerType = trackerType
+        -- })
     end
 end
 
@@ -583,6 +586,126 @@ function State:CopySettings(copyInfo)
 end
 
 
+
+-- ============================================================================
+-- SPECIAL VISIBILITY CONDITIONS
+-- Per-entry CRUD helpers for the specialVisibilityConditions array stored on
+-- each tracker value config.
+-- ============================================================================
+
+local function NewSpecialVisibilityCondition(customName)
+    return {
+        customName        = customName or "",
+        -- Array of { property = "dot.path", value = <string|number|color table> }
+        propertyOverrides = {},
+        -- Name key from SpellStyler_DB.conditionals that triggers this override
+        conditionalName   = "",
+    }
+end
+
+function State:AddSpecialVisibilityCondition(baseSpellID, trackerType, customName)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry then return end
+    if not entry.specialVisibilityConditions then
+        entry.specialVisibilityConditions = {}
+    end
+    table.insert(entry.specialVisibilityConditions, NewSpecialVisibilityCondition(customName))
+    return #entry.specialVisibilityConditions
+end
+
+function State:RemoveSpecialVisibilityCondition(baseSpellID, trackerType, index)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions then return end
+    table.remove(entry.specialVisibilityConditions, index)
+end
+
+function State:GetSpecialVisibilityConditions(baseSpellID, trackerType)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry then return {} end
+    return entry.specialVisibilityConditions or {}
+end
+
+function State:SetSpecialVisibilityConditionProperty(baseSpellID, trackerType, index, path, value)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[index] then return end
+    accessNestedValue(entry.specialVisibilityConditions[index], path, value, "set")
+end
+
+function State:GetSpecialVisibilityConditionProperty(baseSpellID, trackerType, index, path)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[index] then return nil end
+    return accessNestedValue(entry.specialVisibilityConditions[index], path, nil, "get")
+end
+
+-- ─── Property-override helpers ───────────────────────────────────────────────
+
+function State:GetPropertyOverrides(baseSpellID, trackerType, condIndex)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return {} end
+    return entry.specialVisibilityConditions[condIndex].propertyOverrides or {}
+end
+
+function State:AddPropertyOverride(baseSpellID, trackerType, condIndex)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
+    local cond = entry.specialVisibilityConditions[condIndex]
+    cond.propertyOverrides = cond.propertyOverrides or {}
+    table.insert(cond.propertyOverrides, { property = "", value = "" })
+    
+    -- Trigger live evaluation update
+    if SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:EvaluateAll()
+    end
+    
+    return #cond.propertyOverrides
+end
+
+function State:RemovePropertyOverride(baseSpellID, trackerType, condIndex, overrideIndex)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
+    local cond = entry.specialVisibilityConditions[condIndex]
+    if not cond.propertyOverrides or not cond.propertyOverrides[overrideIndex] then return end
+    table.remove(cond.propertyOverrides, overrideIndex)
+    
+    -- Trigger live evaluation update
+    if SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:EvaluateAll()
+    end
+end
+
+function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, overrideIndex, field, value)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
+    local cond = entry.specialVisibilityConditions[condIndex]
+    if not cond.propertyOverrides or not cond.propertyOverrides[overrideIndex] then return end
+    cond.propertyOverrides[overrideIndex][field] = value
+    
+    -- Trigger live evaluation update
+    if SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:EvaluateAll()
+    end
+end
+
+function State:SetSpecialVisibilityConditionConditionalName(baseSpellID, trackerType, condIndex, conditionalName)
+    local db = State:GetDataBase_V2()
+    local entry = db[trackerType] and db[trackerType][baseSpellID]
+    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
+    entry.specialVisibilityConditions[condIndex].conditionalName = conditionalName
+    
+    -- Trigger live evaluation update
+    if SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:EvaluateAll()
+    end
+end
 
 function State:GetGlobalSettings()
     local db = State:GetDataBase_V2()

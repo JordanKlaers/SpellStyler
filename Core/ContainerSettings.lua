@@ -538,8 +538,9 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
                     RefreshIconLists()
                     SpellStyler.Containers:LayoutContainer(SpellStyler.Containers:GetActiveName())
                     -- LayoutContainer marks the frame _inContainer; re-sync drag state
-                    if FTM and FTM.EnableDraggingForAllFrames then
-                        FTM:EnableDraggingForAllFrames()
+                    local ISR = SpellStyler.IconSettingsRenderer
+                    if ISR and ISR.EnableDraggingForAllFrames then
+                        ISR:EnableDraggingForAllFrames()
                     end
                 end)
             end

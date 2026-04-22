@@ -43,7 +43,11 @@
 		"SettingsPanel",
 		"Settings",
 		"ReloadUI",
-		"GameMenuFrame"
+		"GameMenuFrame",
+		"PixelUtil",
+		"StaticPopupDialogs",
+		"StaticPopup_Show",
+		"MAX_TOTEMS"
 	],
 	"Lua.type.weakUnionCheck": true
 }

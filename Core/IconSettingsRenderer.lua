@@ -6,11 +6,21 @@ local State = SpellStyler.State
 local controlsPanel
 local settingsMenuIconList = {}
 local _lastSelectedIcon = nil  -- { uniqueID, trackerType } persists across menu open/close
+-- Persisted expand/collapse state for individual Special Visibility Condition entries
+-- keyed by tostring(uniqueID), value is a table { [conditionIndex] = "collapsed"/nil }
+local _conditionEntryStates = {}
 
 -- Direct position-shifter functions, set each render pass from RenderConfigControlsForSpecificIcon
 local _shiftIconPosition = nil  -- function(axis, delta)
 local _shiftBarPosition  = nil  -- function(axis, delta)
 IconSettingsRenderer.keyboardFrame = nil
+
+-- References to position input fields so arrow keys can update them
+local _iconPositionInputs = { x = nil, y = nil }
+local _barPositionInputs = { x = nil, y = nil }
+
+-- Callback for when frames are clicked in layout mode
+local onFrameClickCallback = nil
 
 function IconSettingsRenderer:SetConsistentScrollingBehavior(scrollFrame)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
@@ -65,9 +75,7 @@ function IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
     self:RenderConfigControlsForSpecificIcon({ uniqueID = uniqueID, trackerType = trackerType })
 
     -- Briefly highlight the frame in the game world so the user can locate it
-    if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.BrieflyHighlightFrame then
-        SpellStyler.FrameTrackerManager:BrieflyHighlightFrame(uniqueID, trackerType)
-    end
+    self:BrieflyHighlightFrame(uniqueID, trackerType)
 end
 
 -- ============================================================================
@@ -294,23 +302,107 @@ local function CreateCheckbox(parent, config, anchor)
     return checkbox, label
 end
 
--- Creates: Position hint row (arrow-key driven; no buttons)
--- Returns: row frame (for anchoring next control)
-local function CreatePositionHint(parent, config, anchor, hintText)
+-- Creates: Position input fields (X and Y) with arrow-key support
+-- Returns: container frame (for anchoring next control) and input references
+local function CreatePositionInputs(parent, config, anchor, isBarPosition)
     config = config or {}
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetSize(290, 20)
-    row:SetPoint(config.anchorPoint or "TOPLEFT", anchor, config.relativePoint or "BOTTOMLEFT", config.offsetX or 0, config.offsetY or -10)
-    local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetText(config.label or "")
+    
+    -- Container frame
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetSize(290, 50)
+    container:SetPoint(config.anchorPoint or "TOPLEFT", anchor, config.relativePoint or "BOTTOMLEFT", config.offsetX or 0, config.offsetY or 0)
+    
+    -- Main label - vertically centered, left-aligned
+    local label = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetText(config.label or "Position:")
     label:SetTextColor(0.8, 0.8, 0.8)
-    label:SetPoint("LEFT", row, "LEFT", 0, 0)
+    label:SetPoint("LEFT", container, "LEFT", 0, 0)
     label:SetJustifyH("LEFT")
-    local hint = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    hint:SetText(hintText or "|cff888888← ↑ ↓ →|r")
-    hint:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    
+    -- Input row - positioned on the right side
+    local inputRow = CreateFrame("Frame", nil, container)
+    inputRow:SetSize(290, 20)
+    inputRow:SetPoint("RIGHT", container, "RIGHT", 0, 0)
+    
+    -- Y input (rightmost)
+    local yInput = CreateFrame("EditBox", nil, inputRow, "InputBoxTemplate")
+    yInput:SetPoint("RIGHT", inputRow, "RIGHT", 0, 0)
+    yInput:SetSize(50, 18)
+    yInput:SetAutoFocus(false)
+    yInput:SetNumeric(false)
+    yInput:SetMaxLetters(6)
+    
+    -- Y label
+    local yLabel = inputRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    yLabel:SetText("Y:")
+    yLabel:SetTextColor(0.7, 0.7, 0.7)
+    yLabel:SetPoint("RIGHT", yInput, "LEFT", -3, 0)
+    
+    -- X input (to the left of Y label)
+    local xInput = CreateFrame("EditBox", nil, inputRow, "InputBoxTemplate")
+    xInput:SetPoint("RIGHT", yLabel, "LEFT", -8, 0)
+    xInput:SetSize(50, 18)
+    xInput:SetAutoFocus(false)
+    xInput:SetNumeric(false)
+    xInput:SetMaxLetters(6)
+    
+    -- X label
+    local xLabel = inputRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    xLabel:SetText("X:")
+    xLabel:SetTextColor(0.7, 0.7, 0.7)
+    xLabel:SetPoint("RIGHT", xInput, "LEFT", -3, 0)
+    
+    -- Hint text (positioned below the inputs)
+    local hint = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    hint:SetText(config.hintText)
+    hint:SetTextColor(0.8, 0.8, 0.8)
+    hint:SetPoint("TOPRIGHT", inputRow, "BOTTOMRIGHT", 0, -2)
     hint:SetJustifyH("RIGHT")
-    return row
+    
+    -- Set initial values from config
+    xInput:SetText(tostring(config.getX and config:getX() or 0))
+    yInput:SetText(tostring(config.getY and config:getY() or 0))
+    
+    -- Handle X input changes
+    local function updateX()
+        local value = tonumber(xInput:GetText())
+        if not value then value = 0 end
+        value = math.max(-5000, math.min(5000, value))
+        xInput:SetText(tostring(value))
+        if config.setX then config:setX(value) end
+    end
+    
+    xInput:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+        updateX()
+    end)
+    xInput:SetScript("OnEditFocusLost", updateX)
+    
+    -- Handle Y input changes
+    local function updateY()
+        local value = tonumber(yInput:GetText())
+        if not value then value = 0 end
+        value = math.max(-5000, math.min(5000, value))
+        yInput:SetText(tostring(value))
+        if config.setY then config:setY(value) end
+    end
+    
+    yInput:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+        updateY()
+    end)
+    yInput:SetScript("OnEditFocusLost", updateY)
+    
+    -- Store references for arrow key updates
+    if isBarPosition then
+        _barPositionInputs.x = xInput
+        _barPositionInputs.y = yInput
+    else
+        _iconPositionInputs.x = xInput
+        _iconPositionInputs.y = yInput
+    end
+    
+    return container, { x = xInput, y = yInput }
 end
 
 -- Creates: Button with state (no label)
@@ -423,8 +515,9 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
                 {
                     type = "positionbuttons",
-                    label = "Shift Position:",
-                    hintText = "|cff888888Drag icon or use arrow keys to move|r",
+                    label = "Position:",
+                    hintText = "You can also use arrow keys or mouse drag",
+                    isBarPosition = false,
                 },
                 {
                     type = "textinput",
@@ -494,10 +587,10 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
                 {
                     type = "checkbox",
-                    label = "Is Spell Off the GCD",
-                    tooltip = "Enable for spells that are inherently off the global cooldown. This should help ensure consistent reliable display.",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isSpellOffGCD") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isSpellOffGCD", value) end,
+                    label = "Track duration through totem data",
+                    tooltip = "This only works for 1 buff frame at a time. This assums the totem is a summon, and that you only have 1 totem active at a time that you need to track this way.",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isTotem") == true end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isTotem", value) end,
                 },
                 {
                     type = "checkbox",
@@ -513,43 +606,6 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
             }
         },
-        -- Glow settings
-        -- Status bar
-        {
-            type = "header",
-            text = "Glow notification",
-            state = 'collapsed',
-            section = {
-                {
-                    type = "checkbox",
-                    label = "Display icon glow when spell\nbecomes available to cast",
-                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.shouldDisplay") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.shouldDisplay", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Glow Style",
-                    options = {
-                        { label = "Thin", value = "thin" },
-                        { label = "Thick", value = "thick" }
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowStyle") or "thin" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowStyle", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Duration",
-                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.duration") or 1.0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.duration", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Glow Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowColor") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowColor", value) end,
-                },
-            }
-        },
         -- Status bar
         {
             type = "header",
@@ -562,7 +618,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     width = 120,
                     offsetY = -15,
                     onClick = function(btn, btnFrame)
-                        SpellStyler.FrameTrackerManager:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
+                        SpellStyler.IconSettingsRenderer:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
                         -- Update button text based on new state
                         
                         local isNowActive = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType][btn.uniqueID].meta.mockCooldownActive
@@ -699,8 +755,9 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
                 {
                     type = "positionbuttons",
-                    label = "Shift Position:",
-                    hintText = "|cff888888Shift + arrow keys to move status bar|r",
+                    label = "Position:",
+                    hintText = "You can also use shift + arrow keys",
+                    isBarPosition = true,
                 },
                 {
                     type = "textinput",
@@ -718,7 +775,54 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
             }
         },
-        
+        {
+            type = "header",
+            text = "Special Visibility Conditions",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container, lastControl, uid, tType, rerender)
+                    end
+                }
+            }
+        },
+        {
+            type = "header",
+            text = "Glow notification",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "checkbox",
+                    label = "Display icon glow when spell\nbecomes available to cast",
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.shouldDisplay") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.shouldDisplay", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Glow Style",
+                    options = {
+                        { label = "Thin", value = "thin" },
+                        { label = "Thick", value = "thick" }
+                    },
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowStyle") or "thin" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowStyle", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Duration",
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.duration") or 1.0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.duration", value) end,
+                },
+                {
+                    type = "colorpicker",
+                    label = "Glow Color:",
+                    getValue = function(self) return config.getValue(self.uniqueID, "glowNotification.glowColor") or {r=1, g=1, b=1, a=1} end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowColor", value) end,
+                },
+            }
+        },
         -- Cooldown Text
         {
             type = "header",
@@ -774,6 +878,13 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     label = "Display Charge/Count Text",
                     getValue = function(self) return config.getValue(self.uniqueID, "countText.display") or false end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "countText.display", value) end,
+                },
+                {
+                    type = "checkbox",
+                    label = "Replace with Spell Display Count",
+                    tooltip = "This will render the display count for the spell. This is different than charges and stacks. An example is Expel Harm showing the count of healing Spheres. The value is pulled from the action bar and the spell must be on the bar for it to work.",
+                    getValue = function(self) return config.getValue(self.uniqueID, "countText.useSpellDisplayCount") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.useSpellDisplayCount", value) end,
                 },
                 {
                     type = "textinput",
@@ -860,6 +971,373 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
 end
 
 -- ============================================================================
+-- SPECIAL VISIBILITY CONDITIONS SECTION RENDERER
+-- Called from the customRender control inside the "Special Visibility Conditions"
+-- header section.  Returns the last frame created so the outer layout loop can
+-- chain subsequent controls from it.
+-- ============================================================================
+
+-- ============================================================================
+-- SPECIAL VISIBILITY CONDITIONS SECTION RENDERER
+-- Called from the customRender control inside the "Special Visibility Conditions"
+-- header section.  Returns the last frame created so the outer layout loop can
+-- chain subsequent controls from it.
+-- ============================================================================
+
+-- Maps each user-visible property label to its dot-path in the tracker config
+-- and the type of value input needed.
+local PROPERTY_DEFS = {
+    { label = "Offset X",              path = "position.x",                     inputType = "text"  },
+    { label = "Offset Y",              path = "position.y",                     inputType = "text"  },
+    { label = "Icon Color",            path = "iconColor",                      inputType = "color" },
+    { label = "Icon Custom Texture",   path = "iconSettings.iconTexturePath",   inputType = "text"  },
+    { label = "Icon Width",            path = "iconSettings.width",             inputType = "text"  },
+    { label = "Icon Height",           path = "iconSettings.height",            inputType = "text"  },
+    { label = "Opacity",               path = "iconSettings.opacity",           inputType = "text"  },
+    { label = "Trigger Glow",          path = "glowNotification.shouldDisplay", inputType = "text"  },
+    { label = "Custom Label",          path = "customLabel.text",               inputType = "text"  },
+    { label = "Custom Label Size",     path = "customLabel.size",               inputType = "text"  },
+    { label = "Custom Label X",        path = "customLabel.x",                  inputType = "text"  },
+    { label = "Custom Label Y",        path = "customLabel.y",                  inputType = "text"  },
+    { label = "Custom Label Color",    path = "customLabel.color",              inputType = "color" },
+    { label = "Cooldown Text Size",    path = "cooldownText.size",              inputType = "text"  },
+    { label = "Cooldown Text Color",   path = "cooldownText.color",             inputType = "color" },
+    { label = "Cooldown Text X",       path = "cooldownText.x",                 inputType = "text"  },
+    { label = "Cooldown Text Y",       path = "cooldownText.y",                 inputType = "text"  },
+    { label = "Count Text Size",       path = "countText.size",                 inputType = "text"  },
+    { label = "Count Text X",          path = "countText.x",                    inputType = "text"  },
+    { label = "Count Text Y",          path = "countText.y",                    inputType = "text"  },
+    { label = "Count Text Color",      path = "countText.color",                inputType = "color" },
+    -- { label = "CD Bar Texture",        path = "statusBar.customBarTexture",     inputType = "text"  },
+    { label = "CD Bar Color",          path = "statusBar.color",                inputType = "color" },
+    -- { label = "CD Bar BG Color",       path = "statusBar.backgroundColor",      inputType = "color" },
+    -- { label = "CD Bar Border Color",   path = "statusBar.borderColor",          inputType = "color" },
+    -- { label = "CD Bar Border Scale",   path = "statusBar.borderScale",          inputType = "text"  },
+    { label = "CD Bar Scale",          path = "statusBar.scale",                inputType = "text"  },
+    { label = "CD Bar X",              path = "statusBar.x",                    inputType = "text"  },
+    { label = "CD Bar Y",              path = "statusBar.y",                    inputType = "text"  },
+    { label = "CD Bar Width",          path = "statusBar.width",                inputType = "text"  },
+    { label = "CD Bar Height",         path = "statusBar.height",               inputType = "text"  },
+}
+
+local _PROP_DEF_BY_PATH = {}
+for _, def in ipairs(PROPERTY_DEFS) do _PROP_DEF_BY_PATH[def.path] = def end
+
+local PLUS_ICON_PATH_SVC = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\PlusIcon.tga"
+
+function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container, lastControl, uniqueID, trackerType, rerender)
+    local conditions = SpellStyler.State:GetSpecialVisibilityConditions(uniqueID, trackerType)
+
+    -- ── "Add" row ──────────────────────────────────────────────────────────
+    local addRow = CreateFrame("Frame", nil, container)
+    addRow:SetSize(290, 28)
+    addRow:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -10)
+
+    local nameInput = CreateFrame("EditBox", nil, addRow, "InputBoxTemplate")
+    nameInput:SetSize(150, 18)
+    nameInput:SetPoint("LEFT", addRow, "LEFT", 14, 0)
+    nameInput:SetAutoFocus(false)
+    nameInput:SetMaxLetters(64)
+    nameInput:SetText("New Condition")
+
+    local addBtn = CreateFrame("Button", nil, addRow, "UIPanelButtonTemplate")
+    addBtn:SetSize(76, 22)
+    addBtn:SetPoint("LEFT", nameInput, "RIGHT", 6, 0)
+    addBtn:SetText("Add")
+    addBtn:SetScript("OnClick", function()
+        local name = nameInput:GetText()
+        if name and name ~= "" then
+            SpellStyler.State:AddSpecialVisibilityCondition(uniqueID, trackerType, name)
+            rerender()
+        end
+    end)
+
+    -- Thin divider beneath the Add row
+    local divider = container:CreateTexture(nil, "ARTWORK")
+    divider:SetColorTexture(0.4, 0.4, 0.4, 0.4)
+    divider:SetHeight(1)
+    divider:SetPoint("TOPLEFT",  addRow, "BOTTOMLEFT",  0, -6)
+    divider:SetPoint("TOPRIGHT", addRow, "BOTTOMRIGHT", 0, -6)
+
+    local dividerAnchor = CreateFrame("Frame", nil, container)
+    dividerAnchor:SetSize(290, 1)
+    dividerAnchor:SetPoint("TOPLEFT", addRow, "BOTTOMLEFT", 0, -6)
+
+    local currentAnchor = dividerAnchor
+
+    -- ── Per-condition entries ──────────────────────────────────────────────
+    local uidKey = tostring(uniqueID)
+    _conditionEntryStates[uidKey] = _conditionEntryStates[uidKey] or {}
+
+    for i, cond in ipairs(conditions) do
+        local isExpanded = (_conditionEntryStates[uidKey][i] ~= "collapsed")
+        local capturedI  = i
+
+        -- Sub-header bar
+        local subHeaderBg = CreateFrame("Frame", nil, container)
+        subHeaderBg:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -8)
+        subHeaderBg:SetSize(258, 22)
+        local subHeaderTexture = subHeaderBg:CreateTexture(nil, "BACKGROUND")
+        subHeaderTexture:SetAllPoints(subHeaderBg)
+        subHeaderTexture:SetTexture(isExpanded
+            and "Interface\\AddOns\\SpellStyler\\Media\\Textures\\bar_full_minus_green"
+            or  "Interface\\AddOns\\SpellStyler\\Media\\Textures\\bar_full_plus_green")
+
+        local subHeaderBtn = CreateFrame("Button", nil, subHeaderBg)
+        subHeaderBtn:SetAllPoints(subHeaderBg)
+
+        local condLabel = (cond.customName and cond.customName ~= "") and cond.customName or ("Condition " .. i)
+        local subHeaderText = subHeaderBg:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        subHeaderText:SetPoint("LEFT", subHeaderBg, "LEFT", 8, 0)
+        subHeaderText:SetText(condLabel)
+
+        subHeaderText:SetTextColor(86/255, 160/255, 130/255)
+
+        local delBtn = CreateFrame("Button", nil, container, "UIPanelCloseButton")
+        delBtn:SetSize(22, 22)
+        delBtn:SetPoint("LEFT", subHeaderBg, "RIGHT", 4, 0)
+        delBtn:SetScript("OnClick", function()
+            SpellStyler.State:RemoveSpecialVisibilityCondition(uniqueID, trackerType, capturedI)
+            _conditionEntryStates[uidKey][capturedI] = nil
+            rerender()
+        end)
+
+        subHeaderBtn:SetScript("OnClick", function()
+            if _conditionEntryStates[uidKey][capturedI] == "collapsed" then
+                _conditionEntryStates[uidKey][capturedI] = nil
+            else
+                _conditionEntryStates[uidKey][capturedI] = "collapsed"
+            end
+            rerender()
+        end)
+
+        currentAnchor = subHeaderBg
+
+        if isExpanded then
+            -- ── Property overrides ─────────────────────────────────────────────
+            local overrides = cond.propertyOverrides or {}
+
+            local BOX_W    = 252  -- bordered box width; delete btn floats to the right
+            local BOX_PAD  = 6   -- inner horizontal/vertical padding
+            local ROW_H    = 24  -- height of each inner row
+            local ROW_GAP  = 4   -- gap between the two rows
+            local BOX_H    = BOX_PAD + ROW_H + ROW_GAP + ROW_H + BOX_PAD  -- 64
+
+            for j, override in ipairs(overrides) do
+                local capturedJ = j
+                local propDef   = _PROP_DEF_BY_PATH[override.property]
+
+                -- ── Bordered container for this override ───────────────────────
+                local overrideBox = CreateFrame("Frame", nil, container, "BackdropTemplate")
+                overrideBox:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -6)
+                overrideBox:SetSize(290, BOX_H)
+                overrideBox:SetBackdrop({
+                    bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
+                    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                    tile = true, tileSize = 16, edgeSize = 10,
+                    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+                })
+                overrideBox:SetBackdropColor(0.07, 0.07, 0.14, 0.75)
+                overrideBox:SetBackdropBorderColor(0.32, 0.32, 0.52, 0.85)
+
+                -- Delete button – floats to the right of the box (matches sub-header pattern)
+                local delOverrideBtn = CreateFrame("Button", nil, container, "UIPanelCloseButton")
+                delOverrideBtn:SetSize(20, 20)
+                delOverrideBtn:SetPoint("TOPRIGHT", overrideBox, "TOPRIGHT", -4, -4)
+                delOverrideBtn:SetScript("OnClick", function()
+                    SpellStyler.State:RemovePropertyOverride(uniqueID, trackerType, capturedI, capturedJ)
+                    rerender()
+                end)
+
+                -- ── Row 1: "Set property:" ─────────────────────────────────────
+                local propLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                propLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -BOX_PAD)
+                propLabel:SetText("Set property:")
+                propLabel:SetTextColor(0.65, 0.65, 0.65)
+
+                -- Dropdown anchored to the right edge of the box
+                -- UIDropDownMenuTemplate has ~16px right dead-zone; +14 corrects for it
+                local propDropdown = CreateFrame("Frame", nil, overrideBox, "UIDropDownMenuTemplate")
+                propDropdown:SetPoint("TOPRIGHT", delOverrideBtn, "TOPLEFT", 10, 0)
+                UIDropDownMenu_SetWidth(propDropdown, 130)
+
+                local function RefreshPropDropdown()
+                    local def = _PROP_DEF_BY_PATH[override.property]
+                    UIDropDownMenu_SetText(propDropdown, def and def.label or "|cFF888888(pick one)|r")
+                end
+
+                UIDropDownMenu_Initialize(propDropdown, function(self, level)
+                    for _, def in ipairs(PROPERTY_DEFS) do
+                        local info   = UIDropDownMenu_CreateInfo()
+                        info.text    = def.label
+                        info.value   = def.path
+                        info.checked = (override.property == def.path)
+                        info.func    = function(btn)
+                            SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "property", btn.value)
+                            local newDef = _PROP_DEF_BY_PATH[btn.value]
+                            if newDef and newDef.inputType == "color" then
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=1, g=1, b=1, a=1 })
+                            else
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", "")
+                            end
+                            rerender()
+                        end
+                        UIDropDownMenu_AddButton(info, level)
+                    end
+                end)
+                RefreshPropDropdown()
+
+                -- ── Row 2: "Set value:" ────────────────────────────────────────
+                local valLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                valLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -(BOX_PAD + ROW_H + ROW_GAP))
+                valLabel:SetText("Set value:")
+                valLabel:SetTextColor(0.65, 0.65, 0.65)
+
+                if propDef and propDef.inputType == "color" then
+                    local colorVal = type(override.value) == "table" and override.value or { r=1, g=1, b=1, a=1 }
+                    local colorBtn = CreateFrame("Button", nil, overrideBox, "BackdropTemplate")
+                    colorBtn:SetSize(46, 16)
+                    colorBtn:SetPoint("TOPRIGHT", propDropdown, "BOTTOMRIGHT", -16, -4)
+                    colorBtn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+                    colorBtn:SetBackdropColor(colorVal.r, colorVal.g, colorVal.b, colorVal.a or 1)
+                    colorBtn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                    colorBtn:SetScript("OnClick", function()
+                        local cur = type(override.value) == "table" and override.value or { r=1, g=1, b=1, a=1 }
+                        local info = {
+                            swatchFunc = function()
+                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                                local na = ColorPickerFrame:GetColorAlpha() or 1
+                                colorBtn:SetBackdropColor(nr, ng, nb, na)
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
+                            end,
+                            opacityFunc = function()
+                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                                local na = ColorPickerFrame:GetColorAlpha() or 1
+                                colorBtn:SetBackdropColor(nr, ng, nb, na)
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
+                            end,
+                            cancelFunc = function(prev)
+                                colorBtn:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 })
+                            end,
+                            hasOpacity = 1,
+                            opacity    = cur.a or 1,
+                            r = cur.r or 1,
+                            g = cur.g or 1,
+                            b = cur.b or 1,
+                        }
+                        ColorPickerFrame:SetupColorPickerAndShow(info)
+                    end)
+                else
+                    local textInput = CreateFrame("EditBox", nil, overrideBox, "InputBoxTemplate")
+                    textInput:SetSize(130, 18)
+                    textInput:SetPoint("TOPRIGHT", propDropdown, "BOTTOMRIGHT", -16, -4)
+                    textInput:SetAutoFocus(false)
+                    textInput:SetMaxLetters(256)
+                    textInput:SetText(tostring(override.value or ""))
+                    textInput:SetScript("OnTextChanged", function(self)
+                        SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", self:GetText())
+                    end)
+                end
+
+                currentAnchor = overrideBox
+            end
+
+            -- ── Plus button to add a new property override ─────────────────────
+            local plusRow = CreateFrame("Frame", nil, container)
+            plusRow:SetSize(290, 26)
+            plusRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -4)
+
+            local plusBtn = CreateFrame("Button", nil, plusRow)
+            plusBtn:SetSize(18, 18)
+            plusBtn:SetPoint("LEFT", plusRow, "LEFT", 0, 0)
+            local plusTex = plusBtn:CreateTexture(nil, "ARTWORK")
+            plusTex:SetAllPoints()
+            plusTex:SetTexture(PLUS_ICON_PATH_SVC)
+            local plusHl = plusBtn:CreateTexture(nil, "HIGHLIGHT")
+            plusHl:SetAllPoints()
+            plusHl:SetTexture(PLUS_ICON_PATH_SVC)
+            plusHl:SetAlpha(0.6)
+            plusBtn:SetScript("OnClick", function()
+                SpellStyler.State:AddPropertyOverride(uniqueID, trackerType, capturedI)
+                rerender()
+            end)
+
+            local plusLabel = plusRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            plusLabel:SetPoint("LEFT", plusBtn, "RIGHT", 4, 0)
+            plusLabel:SetText("Add property override")
+            plusLabel:SetTextColor(0.5, 0.5, 0.5)
+
+            currentAnchor = plusRow
+
+            -- ── "When condition is true:" conditional selector ─────────────────
+            local condTriggerRow = CreateFrame("Frame", nil, container)
+            condTriggerRow:SetSize(290, 30)
+            condTriggerRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -8)
+
+            local condTriggerLabel = condTriggerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            condTriggerLabel:SetPoint("LEFT", condTriggerRow, "LEFT", 0, 2)
+            condTriggerLabel:SetText("When condition is true:")
+            condTriggerLabel:SetTextColor(0.65, 0.65, 0.65)
+
+            local condTriggerDropdown = CreateFrame("Frame", nil, condTriggerRow, "UIDropDownMenuTemplate")
+            condTriggerDropdown:SetPoint("RIGHT", condTriggerRow, "RIGHT", 18, 0)
+            UIDropDownMenu_SetWidth(condTriggerDropdown, 110)
+
+            local function RefreshCondTrigger()
+                local name = cond.conditionalName
+                UIDropDownMenu_SetText(condTriggerDropdown, (name and name ~= "") and name or "|cFF888888(none)|r")
+            end
+
+            UIDropDownMenu_Initialize(condTriggerDropdown, function(self, level)
+                -- "(none)" option
+                local noneInfo    = UIDropDownMenu_CreateInfo()
+                noneInfo.text     = "|cFF888888(none)|r"
+                noneInfo.value    = ""
+                noneInfo.checked  = (cond.conditionalName == "" or cond.conditionalName == nil)
+                noneInfo.func     = function()
+                    SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, capturedI, "")
+                    RefreshCondTrigger()
+                end
+                UIDropDownMenu_AddButton(noneInfo, level)
+
+                -- Saved conditionals from the DB
+                local names = {}
+                if SpellStyler_DB and SpellStyler_DB.conditionals then
+                    for name in pairs(SpellStyler_DB.conditionals) do
+                        table.insert(names, name)
+                    end
+                    table.sort(names)
+                end
+                for _, name in ipairs(names) do
+                    local info   = UIDropDownMenu_CreateInfo()
+                    info.text    = name
+                    info.value   = name
+                    info.checked = (cond.conditionalName == name)
+                    info.func    = function(btn)
+                        SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, capturedI, btn.value)
+                        RefreshCondTrigger()
+                    end
+                    UIDropDownMenu_AddButton(info, level)
+                end
+                if #names == 0 then
+                    local info    = UIDropDownMenu_CreateInfo()
+                    info.text     = "|cFF888888(no conditionals saved)|r"
+                    info.disabled = true
+                    UIDropDownMenu_AddButton(info, level)
+                end
+            end)
+            RefreshCondTrigger()
+
+            currentAnchor = condTriggerRow
+        end
+    end
+
+    -- Return the last frame so the outer renderer can anchor the next section to it
+    return currentAnchor
+end
+
+-- ============================================================================
 -- GENERIC CONFIG CONTROL RENDERER
 -- ============================================================================
 --[[
@@ -881,12 +1359,22 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     _shiftIconPosition = function(axis, delta)
         local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "position.x") or 0
         local y = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "position.y") or 0
-        SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "position." .. axis, (axis == "x" and x or y) + delta)
+        local newValue = (axis == "x" and x or y) + delta
+        SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "position." .. axis, newValue)
+        -- Update input field if it exists
+        if _iconPositionInputs[axis] then
+            _iconPositionInputs[axis]:SetText(tostring(newValue))
+        end
     end
     _shiftBarPosition = function(axis, delta)
         local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.x") or 0
         local y = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.y") or 0
-        SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar." .. axis, (axis == "x" and x or y) + delta)
+        local newValue = (axis == "x" and x or y) + delta
+        SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar." .. axis, newValue)
+        -- Update input field if it exists
+        if _barPositionInputs[axis] then
+            _barPositionInputs[axis]:SetText(tostring(newValue))
+        end
     end
     if IconSettingsRenderer.keyboardFrame then IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
     
@@ -1158,7 +1646,25 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         local checkbox, label = CreateCheckbox(container, controlDef, lastControl)
                         controlFrame = checkbox
                     elseif controlDef.type == "positionbuttons" then
-                        local row = CreatePositionHint(container, controlDef, lastControl, controlDef.hintText)
+                        -- Determine if this is for bar position or icon position based on context
+                        local isBarPosition = controlDef.isBarPosition or false
+                        controlDef.getX = function(self)
+                            local path = isBarPosition and "statusBar.x" or "position.x"
+                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, path) or 0
+                        end
+                        controlDef.getY = function(self)
+                            local path = isBarPosition and "statusBar.y" or "position.y"
+                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, path) or 0
+                        end
+                        controlDef.setX = function(self, value)
+                            local path = isBarPosition and "statusBar.x" or "position.x"
+                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value)
+                        end
+                        controlDef.setY = function(self, value)
+                            local path = isBarPosition and "statusBar.y" or "position.y"
+                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value)
+                        end
+                        local row, inputs = CreatePositionInputs(container, controlDef, lastControl, isBarPosition)
                         controlFrame = row
                     elseif controlDef.type == "button" then
                         local btn = CreateButton(container, controlDef, lastControl)
@@ -1178,6 +1684,13 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                     elseif controlDef.type == "label" then
                         local label, valueLabel = CreateLabel(container, controlDef, lastControl)
                         controlFrame = label
+                    elseif controlDef.type == "customRender" then
+                        if controlDef.render then
+                            local result = controlDef.render(container, lastControl, uniqueID, trackerType, function()
+                                IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
+                            end)
+                            if result then controlFrame = result end
+                        end
                     end
                     
                     if controlFrame then
@@ -1658,7 +2171,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                     -- When clicking an icon in the settings list, briefly show the
                     -- glow on the actual tracker frame for 2 seconds so the user
                     -- can visually locate it in the UI.
-                    SpellStyler.FrameTrackerManager:BrieflyHighlightFrame(entry.uniqueID, entry.trackerType)
+                    SpellStyler.IconSettingsRenderer:BrieflyHighlightFrame(entry.uniqueID, entry.trackerType)
                 end)
                 btn:EnableMouse(true)
                 btn:RegisterForClicks("LeftButtonUp")
@@ -1712,4 +2225,222 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 			trackerType = _lastSelectedIcon.trackerType,
 		})
 	end
+end
+
+-- ============================================================================
+-- LAYOUT MODE FUNCTIONS
+-- Moved from FrameTrackerManager.lua as they are UI/settings-specific
+-- ============================================================================
+
+function IconSettingsRenderer:SetFrameClickCallback(callback)
+    onFrameClickCallback = callback
+end
+
+function IconSettingsRenderer:EnableDraggingForAllFrames()
+    local FrameTrackerManager = SpellStyler.FrameTrackerManager
+    if not FrameTrackerManager then return end
+    
+    for trackerType, frames in pairs(FrameTrackerManager.SpellStyler_frames) do
+        for baseSpellID, frame in pairs(frames) do
+            if frame and not frame._inContainer then
+                frame:EnableMouse(true)
+                frame:RegisterForDrag("LeftButton")
+                
+                frame:SetScript("OnDragStart", function(self)
+                    self:StartMoving()
+                    -- Notify settings panel that this icon was selected
+                    if onFrameClickCallback then
+                        onFrameClickCallback(baseSpellID, trackerType)
+                    end
+                end)
+                
+                frame:SetScript("OnDragStop", function(self)
+                    self:StopMovingOrSizing()
+                    -- Save the new full position to the database (anchor, relative point, offsets)
+                    local point, relativeTo, relativePoint, xOff, yOff = self:GetPoint()
+                    -- Prefer saving a sanitized reference for relativeTo (use UIParent name when applicable)
+                    local relRef = nil
+                    if relativeTo == UIParent then
+                        relRef = "UIParent"
+                    end
+                    
+                    local positionData = {
+                        anchorPoint = point or "CENTER",
+                        relativeToFrame = relRef or nil,
+                        relativeAnchorPoint = relativePoint or point or "CENTER",
+                        x = xOff or 0,
+                        y = yOff or 0
+                    }
+                    
+                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position", positionData)
+                    
+                    -- Verify it was saved
+                    local saved = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "position")
+                end)
+                
+                -- Add click handler to select icon in settings
+                frame:SetScript("OnMouseDown", function(self, button)
+                    if button == "LeftButton" and onFrameClickCallback then
+                        onFrameClickCallback(baseSpellID, trackerType)
+                    end
+                end)
+            end
+        end
+    end
+end
+
+function IconSettingsRenderer:DisableDraggingForAllFrames()
+    local FrameTrackerManager = SpellStyler.FrameTrackerManager
+    if not FrameTrackerManager then return end
+    
+    onFrameClickCallback = nil
+    
+    for trackerType, frames in pairs(FrameTrackerManager.SpellStyler_frames) do
+        for baseSpellID, frame in pairs(frames) do
+            if frame then
+                frame:EnableMouse(false)
+                frame:RegisterForDrag()
+                frame:SetScript("OnDragStart", nil)
+                frame:SetScript("OnDragStop",  nil)
+                frame:SetScript("OnMouseDown", nil)
+                
+                -- Hide the drag border indicator
+                if frame._SpellStyler_dragBorder then
+                    frame._SpellStyler_dragBorder:Hide()
+                end
+            end
+        end
+    end
+end
+
+function IconSettingsRenderer:ToggleMockCooldown(baseSpellID, trackerType)
+    local FrameTrackerManager = SpellStyler.FrameTrackerManager
+    if not FrameTrackerManager then return end
+    
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    if not frame then
+        return
+    end
+    
+    -- Check if mock cooldown is currently active
+    local isMockActive = frame.meta.mockCooldownActive or false
+    if isMockActive then
+        -- Disable mock cooldown
+        frame.meta.mockCooldownActive = false
+        if frame.cooldown then
+            frame.cooldown:Clear()
+        end
+        if frame.statusBar then
+            local mockDurationObj = C_DurationUtil.CreateDuration()
+            mockDurationObj:SetTimeFromEnd(GetTime(), 0.001)
+            frame.statusBar:SetTimerDuration(
+                mockDurationObj,
+                Enum.StatusBarInterpolation.Immediate,
+                Enum.StatusBarTimerDirection.RemainingTime
+            )
+        end
+        frame.meta.buffStatus = 'absent'
+
+        FrameTrackerManager:DriveFrameUpdate(
+            frame,
+            {
+                resolveDuration = false,
+                syncChargeText = true
+            },
+            nil,
+            "mockCooldown_remove"
+        )
+    else
+        -- Enable mock cooldown (15 second duration)
+        frame.meta.mockCooldownActive = true
+        frame.meta.buffStatus = 'active'
+        local mockDuration = 15
+        local now = GetTime()
+        
+        -- Create a proper DurationObject for Apply Cooldown Duration()
+        local mockDurationObj = C_DurationUtil.CreateDuration()
+        mockDurationObj:SetTimeFromStart(now, mockDuration)
+        local config = State:GetSpecificTrackerValue(baseSpellID, trackerType)
+
+        FrameTrackerManager:DriveFrameUpdate(
+            frame,
+            {
+                resolveDuration = true,
+                syncChargeText = true
+            }, {
+                durationObject = mockDurationObj
+            },
+            "mockCooldown_set"
+        )
+    end
+end
+
+function IconSettingsRenderer:BrieflyHighlightFrame(baseSpellID, trackerType)
+    local FrameTrackerManager = SpellStyler.FrameTrackerManager
+    if not FrameTrackerManager then return end
+    
+    local f = FrameTrackerManager.SpellStyler_frames and FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    if f then
+        local duration = 2
+        local fadeIn = 0.5
+        local fadeOut = 0.5
+        pcall(function()
+            -- Ensure glowFrame covers the frame
+            if f.glowFrame and f.glowFrame.SetAllPoints then
+                f.glowFrame:SetAllPoints(f)
+            end
+
+            -- Size the glow elements to be proportional to the icon size (use icon width when available)
+            local width = 48
+            if f.icon and f.icon.GetWidth then
+                width = f.icon:GetWidth() or width
+            elseif f.GetWidth then
+                width = f:GetWidth() or width
+            end
+            local offset = math.max(8, math.floor(width * 0.22))
+
+            -- Anchor glow textures to the glowFrame so they can extend outward
+            if f.glowTexture then
+                f.glowTexture:ClearAllPoints()
+                f.glowTexture:SetPoint("TOPLEFT", f.glowFrame, "TOPLEFT", -offset, offset)
+                f.glowTexture:SetPoint("BOTTOMRIGHT", f.glowFrame, "BOTTOMRIGHT", offset, -offset)
+            end
+            if f.glowAnts then
+                local antsOffset = math.max(4, math.floor(offset * 0.5))
+                f.glowAnts:ClearAllPoints()
+                f.glowAnts:SetPoint("TOPLEFT", f.glowFrame, "TOPLEFT", -antsOffset, antsOffset)
+                f.glowAnts:SetPoint("BOTTOMRIGHT", f.glowFrame, "BOTTOMRIGHT", antsOffset, -antsOffset)
+            end
+
+            if f.glowFrame then
+                f.glowFrame:SetAlpha(0)
+                f.glowFrame:Show()
+                if UIFrameFadeIn then
+                    UIFrameFadeIn(f.glowFrame, fadeIn, 0, 1)
+                else
+                    f.glowFrame:SetAlpha(1)
+                end
+            end
+
+            if f.glowAnim and f.glowAnim.Play then
+                pcall(function() f.glowAnim:Play() end)
+            end
+        end)
+
+        C_Timer.After(duration - fadeOut, function()
+            pcall(function()
+                if f.glowAnim and f.glowAnim.Stop then pcall(function() f.glowAnim:Stop() end) end
+                if f.glowFrame then
+                    if UIFrameFadeOut then
+                        UIFrameFadeOut(f.glowFrame, fadeOut, f.glowFrame:GetAlpha() or 1, 0)
+                        C_Timer.After(fadeOut, function()
+                            pcall(function() if f.glowFrame then f.glowFrame:Hide() end end)
+                        end)
+                    else
+                        f.glowFrame:Hide()
+                    end
+                end
+            end)
+        end)
+    end
 end
