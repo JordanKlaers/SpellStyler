@@ -217,7 +217,11 @@ function AddSpells:RenderAddSpellsView(parent)
         -- The spellbook may return a talent-override spell ID; using GetBaseSpell here ensures
         -- SpellStyler_frames["spells"] is keyed identically to the DB entry so that
         -- OnDragStop position saves land on the correct record.
-        FTM:CreateTrackerFrame(C_Spell.GetBaseSpell(selectedSpell.spellID), trackerConfig, "spells")
+        
+        -- Wipe devNotes before creating frame (fresh start for error tracking)
+        local baseSpellID = C_Spell.GetBaseSpell(selectedSpell.spellID)
+        SpellStyler.State:SetTrackerValueConfigProperty(baseSpellID, "spells", "devNotes", {})
+        FTM:CreateTrackerFrame(baseSpellID, trackerConfig, "spells")
 
         -- 3. Remove from the grid so it can't be added twice
         local addedID = selectedSpell.spellID

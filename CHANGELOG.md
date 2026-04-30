@@ -186,3 +186,9 @@ Version 1.0.4
 Version 1.1.0
 	- Addons conditional system
 	- reasonable refactor for spell data processing to be more performance in accomodating the conditional system
+
+Version 1.2.0
+	- Adds visibility settings based on spell charges
+	- Adds override setting to show icons when the settings menu is open despite their original display values
+	- Adds an error logging system for a specific obsecure error to collect more data if it continues to happen
+	- further updates to the conditional system to ensure values are properly updated

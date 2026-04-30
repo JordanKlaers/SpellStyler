@@ -82,7 +82,7 @@ end
 -- INPUT FACTORY METHODS
 -- ============================================================================
 
-local function CreateIconButton(parent, iconPath, spellName, uniqueID, trackerType, size)
+local function CreateIconButton(parent, iconPath, spellName, uniqueID, trackerType, size, devNotes)
 	local btn = CreateFrame("Button", nil, parent)
 	btn:SetSize(size or 40, size or 40)
 	local tex = btn:CreateTexture(nil, "ARTWORK")
@@ -103,6 +103,16 @@ local function CreateIconButton(parent, iconPath, spellName, uniqueID, trackerTy
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:SetText((spellName or ("ID: "..tostring(uniqueID))) .. " - " .. (trackerType or "?"), 1, 1, 1)
 		GameTooltip:AddLine("ID: "..tostring(uniqueID), 0.7, 0.7, 0.7)
+		
+		-- Add devNotes if they exist
+		if devNotes and type(devNotes) == "table" and #devNotes > 0 then
+			GameTooltip:AddLine(" ", 1, 1, 1)
+			GameTooltip:AddLine("Errors:", 1, 0.2, 0.2)
+			for _, note in ipairs(devNotes) do
+				GameTooltip:AddLine(note, 1, 0.5, 0.5, true)
+			end
+		end
+		
 		GameTooltip:Show()
 	end)
 	btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -485,7 +495,12 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
 		{ label = "BOTTOMLEFT", value = "BOTTOMLEFT" },
 		{ label = "BOTTOMRIGHT", value = "BOTTOMRIGHT" },
 	}
-    
+    local COMPARISON_OPTIONS = {
+        { label = "less than",             value = "<"  },
+        { label = "less than or equal to", value = "<=" },
+        { label = "greater than",          value = ">"  },
+        { label = "greater than or equal", value = ">=" },
+    }
     return {
         -- Icon settings
         {
@@ -584,26 +599,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     label = "Hide default swipe animation",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
-                },
-                {
-                    type = "checkbox",
-                    label = "Track duration through totem data",
-                    tooltip = "This only works for 1 buff frame at a time. This assums the totem is a summon, and that you only have 1 totem active at a time that you need to track this way.",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.isTotem") == true end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.isTotem", value) end,
-                },
-                {
-                    type = "checkbox",
-                    label = "Set Icon color when unable to cast due to insufficient power",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.insufficientPower") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.insufficientPower", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Insufficient Power Icon Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.insufficientPowerIconColor") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.insufficientPowerIconColor", value) end,
-                },
+                }
             }
         },
         -- Status bar
@@ -777,7 +773,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
         },
         {
             type = "header",
-            text = "Special Visibility Conditions",
+            text = "Conditional Property Overrides",
             state = 'collapsed',
             section = {
                 {
@@ -786,6 +782,43 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                         return IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container, lastControl, uid, tType, rerender)
                     end
                 }
+            }
+        },
+        {
+            type = "header",
+            text = "Charge/Count based display",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "checkbox",
+                    label = "Enabled charge based display",
+                    getValue = function(self) return config.getValue(self.uniqueID, "chargeBasedDisplay.enabled") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "chargeBasedDisplay.enabled", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Display State",
+                    options = {
+                        { label = "Show", value = true },
+                        { label = "Hide",  value = false },
+                    },
+                    getValue = function(self) return config.getValue(self.uniqueID, "chargeBasedDisplay.displayState") or true end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "chargeBasedDisplay.displayState", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "comparison operator",
+                    options = COMPARISON_OPTIONS,
+                    getValue = function(self) return config.getValue(self.uniqueID, "chargeBasedDisplay.displayOperator") or true end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "chargeBasedDisplay.displayOperator", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Value",
+                    numeric = true,
+                    getValue = function(self) return config.getValue(self.uniqueID, "chargeBasedDisplay.chargeValue") or 0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "chargeBasedDisplay.chargeValue", value) end,
+                },
             }
         },
         {
@@ -1430,7 +1463,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         header:SetPoint("TOPLEFT", 0, -10)
         header:SetText(displayName .. " - (" .. trackerType .. ")")
         header:SetTextColor(1, 0.82, 0)
-		local icon = CreateIconButton(container, trackedValue.defaultIconTexturePath, displayName, uniqueID, trackedValue.trackerType, 30)
+		local icon = CreateIconButton(container, trackedValue.defaultIconTexturePath, displayName, uniqueID, trackedValue.trackerType, 30, trackedValue.devNotes)
 		icon:SetPoint("LEFT", header, "RIGHT", 10, 0)
 
 		-- Reset to Defaults button
@@ -2157,7 +2190,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                 lbl:SetJustifyH("CENTER")
                 yOffset = yOffset - headerHeight - headerPaddingBottom
             else
-                local btn = CreateIconButton(iconScrollChild, entry.defaultIconTexturePath, entry.name, entry.uniqueID, entry.trackerType)
+                local btn = CreateIconButton(iconScrollChild, entry.defaultIconTexturePath, entry.name, entry.uniqueID, entry.trackerType, nil, entry.devNotes)
                 table.insert(settingsMenuIconList, btn)
                 btn:ClearAllPoints()
                 btn:SetParent(iconScrollChild)

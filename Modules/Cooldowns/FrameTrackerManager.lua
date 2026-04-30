@@ -181,6 +181,8 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             -- ── Step 4: Create the custom SpellStyler frame ──
             local trackerConfig = State:GetSpecificTrackerValue(spellID, trackerType)
             if trackerConfig then
+                -- Wipe devNotes before creating frame (fresh start for error tracking)
+                State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
                 FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType)
             end
         end
@@ -208,6 +210,8 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                     and trackerConfig.isEnabled ~= false
                     and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerConfig.overrideSpellID))
                 then
+                    -- Wipe devNotes before creating frame (fresh start for error tracking)
+                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
                     FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType)
                 end
             end
@@ -229,21 +233,30 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     local _iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
     local statusBarWidth = trackerConfig.statusBar and trackerConfig.statusBar.width or (_iconW * 4)
     local statusBarHeight = trackerConfig.statusBar and trackerConfig.statusBar.height or (_iconH / 2)
+
+    local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.onlyRenderBar")
+    local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (trackerConfig.statusBar.onlyRenderBar or false)
+    local forceHideViaAlpha = onlyBar or trackerConfig.statusBar.displayState == 'never'
     frame[key]:SetSize(statusBarWidth, statusBarHeight)
     frame[key]:SetScale(trackerConfig.statusBar.scale or 1)
     frame[key]:SetMinMaxValues(0, 1)
     frame[key]:SetValue(0)
-    frame[key]:SetFrameLevel(frame:GetFrameLevel() + 1)  -- Base level for status bar
+    frame[key]:SetFrameLevel(frame:GetFrameLevel() + 3)  -- Base level for status bar
     frame[key]:SetStatusBarColor(
         trackerConfig.statusBar.color.r or 0.2,
         trackerConfig.statusBar.color.g or 0.8,
         trackerConfig.statusBar.color.b or 1,
         0 -- start with an alpha of zero so that GCD doesnt trigger accidentally.
     )
-
-    -- Layer 1: Background (darkened fill texture) - BACKGROUND layer
-    frame[key].bgTexture = frame[key]:CreateTexture(nil, "BACKGROUND")
+    local statusBarTexture = frame[key]:GetStatusBarTexture()
+    if statusBarTexture then
+        statusBarTexture:SetDrawLayer("ARTWORK", 0)
+    end
+    -- Layer 1: Background (darkened fill texture) - BACKGROUND layer, sublayer 0
+    -- Parented to main frame (not statusBar) so it renders behind the statusBar frame itself
+    frame[key].bgTexture = frame:CreateTexture(nil, "BACKGROUND", nil, 0)
     frame[key].bgTexture:SetAllPoints(frame[key])
+    frame[key].bgTexture:Show()  -- Start visible; ApplyVisibility.StatusBar controls actual visibility
     local texture = ""
     if trackerConfig.statusBar.customBarTexture ~= '' and not useBaseTexture then
         texture = trackerConfig.statusBar.customBarTexture
@@ -255,14 +268,16 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.backgroundColor.r,
         trackerConfig.statusBar.backgroundColor.g,
         trackerConfig.statusBar.backgroundColor.b,
-        trackerConfig.statusBar.backgroundColor.a
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.backgroundColor.a
     )  -- Darkened background
 
-    -- Layer 2: Main Fill (active progress) - ARTWORK layer
+    -- Layer 2: Main Fill (active progress) - ARTWORK layer (sublayer 0, above BACKGROUND)
     local barTexture = (trackerConfig.statusBar.customBarTexture and trackerConfig.statusBar.customBarTexture ~= "")
         and trackerConfig.statusBar.customBarTexture
         or trackerConfig.statusBar.defaultBarTexture
     frame[key]:SetStatusBarTexture(barTexture)
+    
+    
     -- Fill direction is controlled via TimerDirection in SetTimerDuration (ElapsedTime = fills up, RemainingTime = depletes)
     frame[key]:SetReverseFill(false)
     frame[key]:SetOrientation(
@@ -279,9 +294,9 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.color.r or 0.2,
         trackerConfig.statusBar.color.g or 0.8,
         trackerConfig.statusBar.color.b or 1,
-        trackerConfig.statusBar.color.a or 0.9
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.color.a or 0.9
     )
-    frame[key].fullCoverTexture:Hide()
+    frame[key].fullCoverTexture:Show()  -- Start visible; alpha controls actual visibility
 
     -- Layer 3: Glow overlay - OVERLAY layer
     frame[key].glowTexture = frame[key]:CreateTexture(nil, "OVERLAY")
@@ -293,7 +308,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.glowColor.r or 1,
         trackerConfig.statusBar.glowColor.g or 1,
         trackerConfig.statusBar.glowColor.b or 1,
-        trackerConfig.statusBar.glowColor.a or 0.25
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.glowColor.a or 0.25
     )  -- Semi-transparent glow
     frame[key].glowTexture:SetDrawLayer("OVERLAY", 7)
 
@@ -315,7 +330,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderCornerTL:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -329,7 +344,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderCornerTR:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -343,7 +358,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderCornerBR:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -357,7 +372,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderCornerBL:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -372,7 +387,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderEdgeTop:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -387,7 +402,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderEdgeRight:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -402,7 +417,7 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderEdgeBottom:SetScale(trackerConfig.statusBar.borderScale or 1)
 
@@ -417,18 +432,88 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
         trackerConfig.statusBar.borderColor.r or 0,
         trackerConfig.statusBar.borderColor.g or 0,
         trackerConfig.statusBar.borderColor.b or 0,
-        trackerConfig.statusBar.borderColor.a or 1
+        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
     )
     frame[key].borderEdgeLeft:SetScale(trackerConfig.statusBar.borderScale or 1)
 
-    FrameTrackerManager:SetStatusBarContainerVisibility({
-        customFrame = frame,
-        config = trackerConfig,
-        baseSpellID = baseSpellID,
-        activeSpellID = trackerConfig.activeSpellID,
-        trackerType = trackerType
-    })
-    frame[key]:Hide()  -- Hidden by default, shown when cooldown is active
+    -- Show statusBar frame once at creation; visibility controlled by alpha thereafter
+    frame[key]:Show()
+    -- Initial visibility is controlled by ApplyVisibility.StatusBar during the first DriveFrameUpdate
+end
+
+--- Creates a charge-based display bar that positions the icon on/off screen based on spell charges.
+--- The bar is sized from the icon position to off-screen, and by setting its value to the current
+--- charge count, the icon (anchored to the bar) moves to visible or hidden positions.
+--- @param frame table The tracker frame to attach the bar to
+--- @param trackerConfig table Tracker configuration block
+--- @param baseSpellID number Base spell ID
+function FrameTrackerManager:CreateChargeBasedDisplayBar(frame, trackerConfig, baseSpellID)
+    local cbdConfig = trackerConfig.chargeBasedDisplay
+    if not cbdConfig or not cbdConfig.enabled then return end
+    
+    -- Calculate threshold values based on mode and operator
+    -- Normalize all combinations to "show when >= threshold" form
+    local mode = cbdConfig.displayState and "show" or "hide"  -- "show" or "hide"
+    local operator = cbdConfig.displayOperator or ">="  -- ">=", ">", "<", "<="
+    local value = cbdConfig.chargeValue or 1
+    
+    local low
+    local high
+    if operator == "<" or operator == ">=" then
+        high = value
+        low = value - 1
+    elseif operator == "<=" or operator == ">" then
+        high = value + 1
+        low = value
+    end
+
+    
+    
+    -- Create the invisible status bar
+    frame.chargeAnchorBar = CreateFrame("StatusBar", "ChargeAnchorBar_" .. baseSpellID, frame, "BackdropTemplate")
+    
+    local barTexture = (trackerConfig.statusBar.customBarTexture and trackerConfig.statusBar.customBarTexture ~= "")
+        and trackerConfig.statusBar.customBarTexture
+        or trackerConfig.statusBar.defaultBarTexture
+    frame.chargeAnchorBar:SetStatusBarTexture(barTexture)
+
+    local anchorHeight = UIParent:GetHeight() * 2
+    
+    frame.chargeAnchorBar:SetMinMaxValues(low, high)
+    frame.chargeAnchorBar:SetValue(low)  -- Start at max (visible)
+    frame.chargeAnchorBar:SetSize(10, anchorHeight)
+    frame.chargeAnchorBar:SetOrientation("VERTICAL")  -- Fill vertically, not horizontally
+    
+    -- Make the bar invisible but functional
+    frame.chargeAnchorBar:SetStatusBarColor(1, 1, 1, 0)
+    frame.chargeAnchorBar:SetAlpha(0)
+    
+    frame.chargeAnchorBar:Show()
+    frame.chargeAnchorBar:ClearAllPoints()
+    
+    -- Use BOTTOM anchor point when flipped, TOP when normal
+    local barAnchorPoint = "TOP"
+    local greater = (operator ~= '<' and operator ~= '<=')
+    local lesser = (operator ~= '>' and operator ~= '>=')
+    if (mode == 'show' and greater) or (mode == 'hide' and lesser) then
+        barAnchorPoint = "TOP"
+    elseif (mode == 'show' and lesser) or (mode == 'hide' and greater) then
+        barAnchorPoint = "BOTTOM"
+    end
+    frame.chargeAnchorBar:SetPoint(
+        barAnchorPoint,
+        UIParent,
+        trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+        trackerConfig.position.x or 0,
+        trackerConfig.position.y or 0
+    )
+    
+    -- Store the config for later reference
+    frame.chargeAnchorBar._config = {
+        mode = mode,
+        operator = operator,
+        anchorPoint = barAnchorPoint
+    }
 end
 
 function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType)
@@ -571,16 +656,8 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     
     FrameTrackerManager:CreateStatusBar(frame, "statusBar", trackerConfig, baseSpellID, trackerType)
 
-    -- Special test for spell 115151: create an anchor status bar
-    -- if baseSpellID == 115151 then
-    --     FrameTrackerManager:CreateStatusBar(frame, "anchorStatusBar", trackerConfig, baseSpellID, trackerType, 0, -100, true)
-    --     frame.anchorStatusBar:SetMinMaxValues(0, 3)
-    --     frame.anchorStatusBar:SetValue(0)
-    --     frame.anchorStatusBar:Show()
-    --     frame.anchorStatusBar:SetSize(20, 2000)
-    --     frame.anchorStatusBar:ClearAllPoints()
-    --     frame.anchorStatusBar:SetPoint("TOP", UIParent, "CENTER", 0, 0)
-    -- end
+    -- Create charge-based display bar if enabled
+    FrameTrackerManager:CreateChargeBasedDisplayBar(frame, trackerConfig, baseSpellID)
 
     -- Stack count text (bottom right, larger font)
     frame.count = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
@@ -676,7 +753,15 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     
     -- Apply saved position or default
     local pos = trackerConfig.position
-    if pos and pos.anchorPoint and pos.x and pos.y then
+    if frame.chargeAnchorBar then
+        -- Anchor to charge-based display bar's moving edge
+        -- Use the bar's anchor point (TOP for normal, BOTTOM for flipped)
+        local barConfig = frame.chargeAnchorBar._config
+        -- local textureAnchor = barConfig and barConfig.anchorPoint or "TOP"
+        local barAnchorPoint = barConfig and barConfig.needsFlip and "BOTTOM" or "TOP"
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", frame.chargeAnchorBar:GetStatusBarTexture(), barAnchorPoint, 0, 0)
+    elseif pos and pos.anchorPoint and pos.x and pos.y then
         frame:ClearAllPoints()
         frame:SetPoint(
             pos.anchorPoint, 
@@ -870,53 +955,31 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
     -- Update status bar styling
     if frame.statusBar and trackerConfig.statusBar then
         pcall(function()
-            -- NOTE: Main fill color moved to ApplyVisibility.StatusBar to handle alpha properly
+            -- Apply size: check override first, then state
+            local widthOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.width")
+            local heightOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.height")
+            local width = widthOverride or trackerConfig.statusBar.width or 200
+            local height = heightOverride or trackerConfig.statusBar.height or 20
+            frame.statusBar:SetSize(width, height)
             
-            -- Apply background color: check override first, then state
-            local bgColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.backgroundColor")
-            local bgColor = bgColorOverride or trackerConfig.statusBar.backgroundColor
-            if frame.statusBar.bgTexture and bgColor then
-                frame.statusBar.bgTexture:SetVertexColor(
-                    bgColor.r or 0.2,
-                    bgColor.g or 0.2,
-                    bgColor.b or 0.2,
-                    bgColor.a or 0.6
-                )
-            end
-            
-            -- Apply glow color: check override first, then state
-            local glowColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.glowColor")
-            local glowColor = glowColorOverride or trackerConfig.statusBar.glowColor
-            if frame.statusBar.glowTexture and glowColor then
-                frame.statusBar.glowTexture:SetVertexColor(
-                    glowColor.r or 0.5,
-                    glowColor.g or 0.8,
-                    glowColor.b or 1,
-                    glowColor.a or 0.4
-                )
-            end
-            
-            -- Apply border color to all 8 pieces (4 corners + 4 edges): check override first, then state
-            local borderColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.borderColor")
-            local bordeColor = borderColorOverride or trackerConfig.statusBar.borderColor
-            if bordeColor then
-                local borderR = bordeColor.r or 1
-                local borderG = bordeColor.g or 1
-                local borderB = bordeColor.b or 1
-                local borderA = bordeColor.a or 1
-                
-                -- Apply to all 4 corners
-                if frame.statusBar.borderCornerTL then frame.statusBar.borderCornerTL:SetVertexColor(borderR, borderG, borderB, borderA) end
-                if frame.statusBar.borderCornerTR then frame.statusBar.borderCornerTR:SetVertexColor(borderR, borderG, borderB, borderA) end
-                if frame.statusBar.borderCornerBR then frame.statusBar.borderCornerBR:SetVertexColor(borderR, borderG, borderB, borderA) end
-                if frame.statusBar.borderCornerBL then frame.statusBar.borderCornerBL:SetVertexColor(borderR, borderG, borderB, borderA) end
-                
-                -- Apply to all 4 edges
-                if frame.statusBar.borderEdgeTop then frame.statusBar.borderEdgeTop:SetVertexColor(borderR, borderG, borderB, borderA) end
-                if frame.statusBar.borderEdgeRight then frame.statusBar.borderEdgeRight:SetVertexColor(borderR, borderG, borderB, borderA) end
-                if frame.statusBar.borderEdgeBottom then frame.statusBar.borderEdgeBottom:SetVertexColor(borderR, borderG, borderB, borderA) end
-                if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:SetVertexColor(borderR, borderG, borderB, borderA) end
-            end
+            -- Apply scale: check override first, then state
+            local scaleOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.scale")
+            frame.statusBar:SetScale(scaleOverride or trackerConfig.statusBar.scale or 1)
+            frame.statusBar.bgTexture:SetScale(scaleOverride or trackerConfig.statusBar.scale or 1)
+
+            -- Apply position/anchoring: check override first, then state
+            local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.x")
+            local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.y")
+            local anchorSelfOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.anchorSelf")
+            local anchorParentOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.anchorParent")
+            frame.statusBar:ClearAllPoints()
+            frame.statusBar:SetPoint(
+                anchorSelfOverride or trackerConfig.statusBar.anchorSelf or "LEFT",
+                frame,
+                anchorParentOverride or trackerConfig.statusBar.anchorParent or "RIGHT",
+                xOverride or trackerConfig.statusBar.x or 0,
+                yOverride or trackerConfig.statusBar.y or 0
+            )
 
             -- Apply bar texture: check override first, then state (custom overrides default)
             local textureOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.customBarTexture")
@@ -925,31 +988,42 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
                 or trackerConfig.statusBar.defaultBarTexture
             if barTexture then
                 frame.statusBar:SetStatusBarTexture(barTexture)
+                -- Explicitly set draw layer to ensure proper layering (above background)
+                local statusBarTexture = frame.statusBar:GetStatusBarTexture()
+                if statusBarTexture then
+                    statusBarTexture:SetDrawLayer("ARTWORK", 0)
+                end
                 -- Keep the full-cover texture in sync with the bar texture
                 if frame.statusBar.fullCoverTexture then
                     frame.statusBar.fullCoverTexture:SetTexture(barTexture)
                 end
+                -- Update background texture too
+                if frame.statusBar.bgTexture then
+                    frame.statusBar.bgTexture:SetTexture(barTexture)
+                end
             end
             
-            
+            -- Apply fill color: check override first, then state
+            -- Note: Alpha is handled separately by ApplyVisibility.StatusBar
+            -- local colorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.color")
+            -- local c = colorOverride or trackerConfig.statusBar.color
+            -- local r, g, b = c.r or 0.2, c.g or 0.8, c.b or 1
+            -- local currentR, currentG, currentB, currentA = frame.statusBar:GetStatusBarColor()
+            -- frame.statusBar:SetStatusBarColor(r, g, b, currentA or 0)
 
-            -- Fill direction is driven by TimerDirection in SetTimerDuration; no fill-anchor reversal needed
-            frame.statusBar:SetReverseFill(false)
+            -- Apply orientation
             frame.statusBar:SetOrientation(
                 (trackerConfig.statusBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
             )
 
+            -- Apply fillOrEmpty: 'regular' = normal fill, 'inverse' = SetReverseFill
+            local shouldReverse = trackerConfig.statusBar.fillOrEmpty == 'inverse'
+            frame.statusBar:SetReverseFill(shouldReverse)
+
             -- Apply fill style (progressDirection) immediately so a settings change is reflected live
             local fillStyle = (trackerConfig and trackerConfig.statusBar and trackerConfig.statusBar.progressDirection == 'reverse')
-            local textureRotation = (trackerConfig and trackerConfig.statusBar and trackerConfig.statusBar.textureRotation or 0)
-            if textureRotation then
-                frame.statusBar:RotateTextures(textureRotation)
-            end
             frame.statusBar:SetFillStyle(fillStyle and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
 
-
-            
-            
             -- Apply rotation: check override first, then state
             local rotationOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.rotation")
             local rotation = rotationOverride or trackerConfig.statusBar.rotation
@@ -958,18 +1032,80 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
             end
         end)
         -- Called outside pcall so a pcall error can't prevent it from running
-        FrameTrackerManager:SetStatusBarContainerVisibility({
-            baseSpellID = baseSpellID,
-            trackerType = trackerType,
-            activeSpellID = trackerConfig.activeSpellID,
-            config = trackerConfig,
-            customFrame = frame
-        })
+        
+        local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.onlyRenderBar")
+        local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (trackerConfig.statusBar.onlyRenderBar or false)
+        if onlyBar or trackerConfig.statusBar.displayState == 'never' then
+            frame.statusBar.borderCornerTL:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderCornerTR:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderCornerBR:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderCornerBL:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderEdgeTop:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderEdgeRight:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderEdgeBottom:SetVertexColor(0,0,0,0)
+            frame.statusBar.borderEdgeLeft:SetVertexColor(0,0,0,0)
+            frame.statusBar.bgTexture:SetVertexColor(0,0,0,0)
+            frame.statusBar.glowTexture:SetVertexColor(0,0,0,0)
+        elseif trackerConfig.statusBar.displayState == 'always' then
+            local borderColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.borderColor")
+            local borderColor = borderColorOverride or trackerConfig.statusBar.borderColor
+            local backgroundColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.backgroundColor")
+            local backgroundColor = backgroundColorOverride or trackerConfig.statusBar.backgroundColor
+            local glowColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.glowColor")
+            local glowColor = glowColorOverride or trackerConfig.statusBar.glowColor
+
+            frame.statusBar.borderCornerTL:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderCornerTR:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderCornerBR:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderCornerBL:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderEdgeTop:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderEdgeRight:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderEdgeBottom:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.borderEdgeLeft:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.statusBar.bgTexture:SetVertexColor(backgroundColor.r, backgroundColor.g, backgroundColor.b, backgroundColor.a)
+            frame.statusBar.glowTexture:SetVertexColor(glowColor.r, glowColor.g, glowColor.b, glowColor.a)
+        end
+        -- to ensure it's not suppressed by errors or overridden
+        local borderScaleOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.borderScale")
+        local borderScale = borderScaleOverride or trackerConfig.statusBar.borderScale or 0.5
+        if frame.statusBar.borderCornerTL then frame.statusBar.borderCornerTL:SetScale(borderScale) end
+        if frame.statusBar.borderCornerTR then frame.statusBar.borderCornerTR:SetScale(borderScale) end
+        if frame.statusBar.borderCornerBR then frame.statusBar.borderCornerBR:SetScale(borderScale) end
+        if frame.statusBar.borderCornerBL then frame.statusBar.borderCornerBL:SetScale(borderScale) end
+        if frame.statusBar.borderEdgeTop then frame.statusBar.borderEdgeTop:SetScale(borderScale) end
+        if frame.statusBar.borderEdgeRight then frame.statusBar.borderEdgeRight:SetScale(borderScale) end
+        if frame.statusBar.borderEdgeBottom then frame.statusBar.borderEdgeBottom:SetScale(borderScale) end
+        if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:SetScale(borderScale) end
+    end
+    
+    -- Update or create charge-based display bar if enabled
+    -- Destroy existing bar if disabled
+    if trackerConfig.chargeBasedDisplay and trackerConfig.chargeBasedDisplay.enabled then
+        -- Destroy and recreate to apply new settings
+        if frame.chargeAnchorBar then
+            frame.chargeAnchorBar:Hide()
+            frame.chargeAnchorBar:SetParent(nil)
+            frame.chargeAnchorBar = nil
+        end
+        FrameTrackerManager:CreateChargeBasedDisplayBar(frame, trackerConfig, baseSpellID)
+    elseif frame.chargeAnchorBar then
+        -- Disabled: remove the bar
+        frame.chargeAnchorBar:Hide()
+        frame.chargeAnchorBar:SetParent(nil)
+        frame.chargeAnchorBar = nil
     end
     
     -- Update position: check override first, then state
     local pos = trackerConfig.position
-    if pos and pos.anchorPoint and not frame._inContainer then
+    if frame.chargeAnchorBar then
+        -- Anchor to charge-based display bar's moving edge
+        -- Use the bar's anchor point (TOP for normal, BOTTOM for flipped)
+        local barConfig = frame.chargeAnchorBar._config
+        -- local textureAnchor = barConfig and barConfig.anchorPoint or "TOP"
+        local barAnchorPoint = barConfig and barConfig.needsFlip and "BOTTOM" or "TOP"
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", frame.chargeAnchorBar:GetStatusBarTexture(), barAnchorPoint, 0, 0)
+    elseif pos and pos.anchorPoint and not frame._inContainer then
         local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.x")
         local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.y")
         frame:ClearAllPoints()
@@ -1275,8 +1411,32 @@ end
 --- @param sources string[]  All source labels collected during the window (for debugging)
 function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
     opts = opts or {}
-    local config = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
-    if not config then return end
+    local config, foundConfig = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
+    if not config or not foundConfig then
+        local spellName = C_Spell.GetSpellName(frame.meta.activeSpellID) or "Unknown"
+        local stateKey = frame.meta.baseSpellID
+        local errorMsg = spellName .. " was not found in state. The key used to pull from state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(frame.meta.activeSpellID) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
+        
+        -- Try to save error to devNotes if config exists
+        pcall(function()
+            if config and config.devNotes then
+                local devNotes = config.devNotes or {}
+                -- Check if error message already exists
+                local alreadyExists = false
+                for _, note in ipairs(devNotes) do
+                    if note == errorMsg then
+                        alreadyExists = true
+                        break
+                    end
+                end
+                if not alreadyExists then
+                    table.insert(devNotes, errorMsg)
+                end
+                State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
+            end
+        end)
+        return
+    end
 
     if flags.resolveDuration then
         FrameTrackerManager:ApplyCooldownDuration({
@@ -1309,6 +1469,31 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         })
     end
     
+    -- Guard: If iconSettings doesn't exist, the config is malformed/incomplete
+    -- This can happen during spec transitions, database corruption, or legacy data
+    if not config.iconSettings or not config.statusBar or not config.cooldownText then
+        local spellName = C_Spell.GetSpellName(frame.meta.activeSpellID) or "Unknown"
+        local stateKey = frame.meta.baseSpellID
+        local errorMsg = spellName .. " has a malformed configuration entry in state. The key in state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(frame.meta.activeSpellID) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
+        
+        -- Save error to devNotes using State method
+        pcall(function()
+            local devNotes = config.devNotes or {}
+            -- Check if error message already exists
+            local alreadyExists = false
+            for _, note in ipairs(devNotes) do
+                if note == errorMsg then
+                    alreadyExists = true
+                    break
+                end
+            end
+            if not alreadyExists then
+                table.insert(devNotes, errorMsg)
+            end
+            State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
+        end)
+        return
+    end
     
     FrameTrackerManager.ApplyVisibility.Icon({
         displayState = config.iconSettings.iconDisplayState,
@@ -1409,8 +1594,8 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     
     -- Determine which duration object to use
     local durationObj = (chargeInfo and chargeInfo.maxCharges > 1)
-        and C_Spell.GetSpellChargeDuration(activeSpellID)
-        or C_Spell.GetSpellCooldownDuration(activeSpellID)
+        and C_Spell.GetSpellChargeDuration(activeSpellID, true)
+        or C_Spell.GetSpellCooldownDuration(activeSpellID, true)
     
     local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
     
@@ -1478,10 +1663,20 @@ function FrameTrackerManager:renderUpdateChargesText(data)
             
             -- Apply visibility alpha based on display setting and charge count
             if data.customFrame.meta.trackerType == "buffs" then
-                if data.config.countText.display and data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
-                    local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
-                    local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
-                    data.customFrame.count:SetText(playerCount or targetCount)
+                if data.config.countText.display then
+                    if data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
+                        local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
+                        local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
+                        data.customFrame.count:SetText(playerCount or targetCount)
+                        if data.config.chargeBasedDisplay.enabled and data.customFrame.chargeAnchorBar then
+                            data.customFrame.chargeAnchorBar:SetValue(playerCount or targetCount or 0)
+                        end
+                    else
+                        data.customFrame.count:SetText("")
+                        if data.config.chargeBasedDisplay.enabled and data.customFrame.chargeAnchorBar then
+                            data.customFrame.chargeAnchorBar:SetValue(0)
+                        end
+                    end
                 end
                 if countCfg.display then
                     data.customFrame.count:SetAlpha(1)
@@ -1502,26 +1697,13 @@ function FrameTrackerManager:renderUpdateChargesText(data)
                     end
                     data.customFrame.count:SetText(currentCharges)
                     data.customFrame.count:SetAlpha(currentCharges)
+                    if data.config.chargeBasedDisplay.enabled and data.customFrame.chargeAnchorBar then
+                        data.customFrame.chargeAnchorBar:SetValue(currentCharges)
+                    end
                 end
             end
         end
     end)
-    
-    -- Set the text content based on tracker type
-    if data.customFrame.meta.trackerType == 'buffs' then
-        if data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
-            data.customFrame.count:SetText(C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1))
-        else
-            data.customFrame.count:SetText("")
-        end
-    else
-        -- spells
-        local chargesData = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID) or {} 
-        local chargeCount = chargesData.currentCharges
-        if data.customFrame.meta.activeSpellID ~= 322101 then --TODO: Make this a feature - its expel harm using the action count from the action bar instead of "charges" of which it has none
-            data.customFrame.count:SetText(chargeCount)
-        end
-    end
 end
 
 FrameTrackerManager.ApplyVisibility = {
@@ -1532,9 +1714,24 @@ FrameTrackerManager.ApplyVisibility = {
     Icon = function(context)
         context.customFrame.icon:Show()
         
+        -- Check if global override is active (settings menu open with override enabled)
+        local shouldOverrideVisibility = false
+        if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
+            local State = SpellStyler.State
+            if State and State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                if gs and gs.visibilitySettings and gs.visibilitySettings.showAllWhenSettingsOpen then
+                    shouldOverrideVisibility = true
+                end
+            end
+        end
+        
         -- Determine alpha based on display state
         local alpha
-        if context.displayState == "always" then
+        if shouldOverrideVisibility then
+            -- Force visible when settings are open with override enabled
+            alpha = 1
+        elseif context.displayState == "always" then
             alpha = 1
         elseif context.displayState == "cooldown" or context.displayState == "active" then
             alpha = context.whenOnCooldownAlpha
@@ -1560,18 +1757,23 @@ FrameTrackerManager.ApplyVisibility = {
     
     ]]
     StatusBar = function(context)
-        -- Status bar alphas: pick based on statusBarDisplayState setting
-        local statusBarAlpha = 0
+        -- Status bar frame alpha: controls visibility of the entire bar container
+        -- When "always", the container is always visible; fill/border/bg alphas handle the details
+        local statusBarFrameAlpha = 1
+        local statusBarFillAlpha = 0
         local fullBarAlpha = 0
         
         if context.displayState == 'never' then
-            statusBarAlpha = 0
+            statusBarFrameAlpha = 0
+            statusBarFillAlpha = 0
             fullBarAlpha = 0
         elseif context.displayState == 'always' then
-            statusBarAlpha = context.progressBarAlpha
+            statusBarFrameAlpha = 1  -- Container always visible
+            statusBarFillAlpha = context.progressBarAlpha
             fullBarAlpha = (context.isFull) and context.fullBarAlpha or 0
         elseif context.displayState == 'active' or context.displayState == 'cooldown' then
-            statusBarAlpha = context.progressBarAlpha
+            statusBarFrameAlpha = context.progressBarAlpha  -- Only show during active cooldown
+            statusBarFillAlpha = context.progressBarAlpha
             fullBarAlpha = 0
         end
         
@@ -1585,41 +1787,16 @@ FrameTrackerManager.ApplyVisibility = {
                 end
             end
             
-            context.customFrame.statusBar.fullCoverTexture:Show()
-            context.customFrame.statusBar:Show()
+            -- NOTE: Size, scale, and position are handled by UpdateFrame_ConfigurationChanges
+            -- NOTE: Show() is called once at creation (CreateStatusBar); visibility controlled by alpha only
 
-            -- Apply scale: check override first, then state
-            local scaleOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.scale")
-            local barScale = scaleOverride or context.config.statusBar.scale
-            if barScale then
-                context.customFrame.statusBar:SetScale(barScale)
-            end
-            -- Apply width and height: check override first, then state
-            local _iconW = context.config.iconSettings.width or context.config.iconSettings.size or 48
-            local _iconH = context.config.iconSettings.height or context.config.iconSettings.size or 48
-            local widthOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.width")
-            local heightOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.height")
-            local statusBarWidth = widthOverride or context.config.statusBar.width or (_iconW * 4)
-            local statusBarHeight = heightOverride or context.config.statusBar.height or _iconH
-            context.customFrame.statusBar:SetSize(statusBarWidth, statusBarHeight)
-            -- Apply anchors and positioning: check override first, then state
-            local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.x")
-            local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.y")
-            context.customFrame.statusBar:ClearAllPoints()
-            context.customFrame.statusBar:SetPoint(
-                context.config.statusBar.anchorSelf or "LEFT",
-                context.customFrame,
-                context.config.statusBar.anchorParent or "RIGHT",
-                xOverride or (context.config.statusBar.x or 0),
-                yOverride or (context.config.statusBar.y or 0)
-            )
-
-            context.customFrame.statusBar:SetAlpha(statusBarAlpha)
+            context.customFrame.statusBar:SetAlpha(statusBarFrameAlpha)
+            
             context.customFrame.statusBar:SetStatusBarColor(
                 barColor.r or 0.2,
                 barColor.g or 0.8,
                 barColor.b or 1,
-                statusBarAlpha
+                statusBarFillAlpha
             )
             context.customFrame.statusBar.fullCoverTexture:SetVertexColor(
                 barColor.r or 0.2,
@@ -1628,6 +1805,23 @@ FrameTrackerManager.ApplyVisibility = {
                 fullBarAlpha
             )
         end)
+        local s, e = pcall(function()
+            local don = context.config.statusBar.onlyRenderBar
+        end)
+        local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.onlyRenderBar")
+        local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (context.config.statusBar.onlyRenderBar or false)
+        if not onlyBar and context.config.statusBar.displayState ~= 'never' and context.config.statusBar.displayState ~= 'always' then
+            -- Apply onlyRenderBar setting and visibility state to bg/glow/border
+            local spellInfo = C_Spell.GetSpellInfo(context.customFrame.meta.activeSpellID)
+            FrameTrackerManager:SetStatusBarContainerVisibility({
+                customFrame = context.customFrame,
+                config = context.config,
+                baseSpellID = context.customFrame.meta.baseSpellID,
+                activeSpellID = context.customFrame.meta.activeSpellID,
+                trackerType = context.customFrame.meta.trackerType,
+                statusBarFillAlpha = statusBarFillAlpha  -- Pass visibility alpha for bg/glow/border
+            })
+        end
     end,
     --[[
         shouldDisplay
@@ -1656,9 +1850,9 @@ FrameTrackerManager.ApplyVisibility = {
                 end
                 local durationObject
                 if maxSpellCharges > 1 then
-                    durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID)
+                    durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID, true)
                 else
-                    durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID)
+                    durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
                 end
                 local alpha =  durationObject:EvaluateRemainingDuration(durationEqualToGCD)            
                 context.customFrame.cooldown:SetAlpha(alpha)
@@ -1751,9 +1945,9 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
                     maxSpellCharges = spellChargeInfo.maxCharges
                 end
                 if maxSpellCharges > 1 then
-                    durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID or data.activeSpellID)
+                    durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
                 else
-                    durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID or data.activeSpellID)
+                    durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
                 end
             end)
         end
@@ -1804,24 +1998,38 @@ end
 --- @param data ApplyCooldownDurationData
 function FrameTrackerManager:SetStatusBarContainerVisibility(data)
     if not data.customFrame.statusBar then return end
-    local onlyBar = data.config.statusBar.onlyRenderBar
+    
+    -- Safety check for config structure
+    if not data.config or not data.config.statusBar then
+        return
+    end
+    
+    -- Use statusBarFrameAlpha if provided (from ApplyVisibility.StatusBar), otherwise default to 1
+    -- This ensures bg/glow/border visibility matches the status bar's visibility state
+    local visibilityAlpha = data.statusBarFillAlpha
 
-    -- Background texture uses backgroundColor
+    -- Background texture uses backgroundColor (check override first)
+    -- Alpha is: 0 if onlyBar=true, otherwise visibilityAlpha * config alpha
     if data.customFrame.statusBar.bgTexture then
-        local c = data.config.statusBar.backgroundColor
-        data.customFrame.statusBar.bgTexture:SetVertexColor(c.r or 0, c.g or 0, c.b or 0, onlyBar and 0 or (c.a or 0.65))
+        local bgColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "statusBar.backgroundColor")
+        local c = bgColorOverride or data.config.statusBar.backgroundColor
+        local alpha = visibilityAlpha
+        data.customFrame.statusBar.bgTexture:SetVertexColor(c.r or 0, c.g or 0, c.b or 0, alpha)
     end
 
-    -- Glow overlay uses glowColor
+    -- Glow overlay uses glowColor (check override first)
     if data.customFrame.statusBar.glowTexture then
-        local c = data.config.statusBar.glowColor
-        data.customFrame.statusBar.glowTexture:SetVertexColor(c.r or 1, c.g or 1, c.b or 1, onlyBar and 0 or (c.a or 0.25))
+        local glowColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "statusBar.glowColor")
+        local c = glowColorOverride or data.config.statusBar.glowColor
+        local alpha = visibilityAlpha
+        data.customFrame.statusBar.glowTexture:SetVertexColor(c.r or 1, c.g or 1, c.b or 1, alpha)
     end
 
-    -- All 8 border pieces use borderColor
-    local bc = data.config.statusBar.borderColor
+    -- All 8 border pieces use borderColor (check override first)
+    local borderColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "statusBar.borderColor")
+    local bc = borderColorOverride or data.config.statusBar.borderColor
     local br, bg, bb = bc.r or 0, bc.g or 0, bc.b or 0
-    local ba = onlyBar and 0 or (bc.a or 1)
+    local ba = visibilityAlpha
     if data.customFrame.statusBar.borderCornerTL then data.customFrame.statusBar.borderCornerTL:SetVertexColor(br, bg, bb, ba) end
     if data.customFrame.statusBar.borderCornerTR then data.customFrame.statusBar.borderCornerTR:SetVertexColor(br, bg, bb, ba) end
     if data.customFrame.statusBar.borderCornerBR then data.customFrame.statusBar.borderCornerBR:SetVertexColor(br, bg, bb, ba) end
@@ -1903,10 +2111,23 @@ function FrameTrackerManager:Initalize()
 
     FrameTrackerManager:SetupCooldownManagerHooks()
     FrameTrackerManager:CreateNonBuffTrackerFrames()
+    
+    -- Evaluate all conditionals after frames are created
+    if SpellStyler.ConditionalEngine then
+        C_Timer.After(0.1, function()
+            SpellStyler.ConditionalEngine:EvaluateAll()
+        end)
+    end
+    
     C_Timer.After(3, function()
         -- Re-setup hooks in case viewer was recreated
         FrameTrackerManager:SetupCooldownManagerHooks()
         FrameTrackerManager:CreateNonBuffTrackerFrames()
+        
+        -- Re-evaluate conditionals after delayed setup
+        if SpellStyler.ConditionalEngine then
+            SpellStyler.ConditionalEngine:EvaluateAll()
+        end
     end)
 end
 

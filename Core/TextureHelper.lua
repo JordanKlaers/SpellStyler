@@ -364,7 +364,28 @@ pcall(function()
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                
+                -- local buffContainer = SpellStyler.Containers:GetCooldownManagerViewer('buffs')
+                -- DevTool:AddData({
+                --     buffContainer = buffContainer,
+                --     itemFramePool = buffContainer.itemFramePool:GetTemplate()
+                -- }, "buffContainer")
+                -- for cdmFrame in buffContainer.itemFramePool:EnumerateActive() do
+                --     DevTool:AddData(cdmFrame, "cdmFrame")
+                --     -- Add red border for debugging
+                --     pcall(function()
+                --         if not cdmFrame._debugBorder then
+                --             cdmFrame._debugBorder = CreateFrame("Frame", nil, cdmFrame, "BackdropTemplate")
+                --             cdmFrame._debugBorder:SetAllPoints(cdmFrame)
+                --             cdmFrame._debugBorder:SetBackdrop({
+                --                 edgeFile = "Interface\\Buttons\\WHITE8x8",
+                --                 edgeSize = 2
+                --             })
+                --             cdmFrame._debugBorder:SetBackdropBorderColor(1, 0, 0, 1)
+                --             cdmFrame._debugBorder:SetFrameLevel(cdmFrame:GetFrameLevel() + 10)
+                --         end
+                --         cdmFrame._debugBorder:Show()
+                --     end)
+                -- end
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool

@@ -108,6 +108,12 @@ local function AddNewTrackerValueConfig(data)
             frameStrataLevel = "MEDIUM", -- BACKGROUND LOW MEDIUM HIGH DIALOG FULLSCREEN FULLSCREEN_DIALOG TOOLTIP
             frameStrataValue = 100
         },
+        chargeBasedDisplay = {
+            enabled = false,
+            displayState = true, -- true == show, false == hdie
+            displayOperator = ">",
+            chargeValue = 0
+        },
         glowNotification = {
             shouldDisplay = false,
             glowStyle = 'thin', -- 'thick'
@@ -201,7 +207,10 @@ local function AddNewTrackerValueConfig(data)
             anchorSelf = "LEFT"
         },
         showProcGlow = true,  -- Show spell activation glow
-		specialVisibilityConditions = {}
+		specialVisibilityConditions = {},
+        devNotes = {
+
+        }
     }
 end
 
@@ -454,7 +463,8 @@ end
 function State:GetSpecificTrackerValue(baseSpellID, trackerType)
     local db = State:GetDataBase_V2()
     local iconConfig = db[trackerType][baseSpellID] or {}
-    return iconConfig
+    local foundConfig = db[trackerType][baseSpellID] and true or false
+    return iconConfig, foundConfig
 end
 
 function State:CheckIsAlreadyTracker(baseSpellID, trackerType)
@@ -518,7 +528,8 @@ function State:getTrackerValuesListForSettings()
                     activeSpellID = activeSpellID,
                     trackerType = trackerValue.trackerType,
                     name = displayName,
-                    defaultIconTexturePath = trackerValue.defaultIconTexturePath
+                    defaultIconTexturePath = trackerValue.defaultIconTexturePath,
+                    devNotes = trackerValue.devNotes
                 })
             end
         end
@@ -549,7 +560,8 @@ function State:getTrackerValuesListForSettings()
                 activeSpellID = activeSpellID,
                 trackerType = "spells",
                 name = displayName,
-                defaultIconTexturePath = trackerValue.defaultIconTexturePath
+                defaultIconTexturePath = trackerValue.defaultIconTexturePath,
+                devNotes = trackerValue.devNotes
             })
         end
     end
@@ -734,6 +746,20 @@ function State:ApplyGlobalVisibility()
             else
                 frame:Hide()
             end
+        end
+    end
+end
+
+--- Override all icon visibility when settings menu is open
+--- @param shouldOverride boolean When true, forces all icons visible; when false, restores normal visibility
+function State:OverrideAllIconsVisible(shouldOverride)
+    FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
+    if not FrameTrackerManager or not FrameTrackerManager.SpellStyler_frames then return end
+    -- Simply trigger a full update on all frames
+    -- The ApplyVisibility.Icon function already checks the global setting
+    for trackerType, _ in pairs(FrameTrackerManager.SpellStyler_frames) do
+        for baseSpellID, frame in pairs(FrameTrackerManager.SpellStyler_frames[trackerType]) do
+            FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
         end
     end
 end

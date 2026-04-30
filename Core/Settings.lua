@@ -310,10 +310,10 @@ local function ShowBorderDemo()
             end
         end)
 
-        -- ---- Global Visibility section ----
+        -- ---- Global Settings section ----
         local globalVisLabel = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         globalVisLabel:SetPoint("TOPLEFT", wipeDbBtn, "BOTTOMLEFT", 0, -28)
-        globalVisLabel:SetText("|cFFFFD700Global Visibility|r")
+        globalVisLabel:SetText("|cFFFFD700Global Settings|r")
 
         local globalVisSep = utilityContentFrame:CreateTexture(nil, "ARTWORK")
         globalVisSep:SetColorTexture(0.4, 0.4, 0.4, 0.5)
@@ -350,7 +350,44 @@ local function ShowBorderDemo()
             end
         end)
 
+        -- Show all icons when settings are open checkbox
+        local showAllInSettingsCB = CreateFrame("CheckButton", nil, utilityContentFrame, "UICheckButtonTemplate")
+        showAllInSettingsCB:SetSize(26, 26)
+        showAllInSettingsCB:SetPoint("TOPLEFT", hideOutOfCombatCB, "BOTTOMLEFT", 0, -6)
+        showAllInSettingsCB:SetFrameLevel(utilityContentFrame:GetFrameLevel() + 1)
+
+        local showAllInSettingsLbl = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        showAllInSettingsLbl:SetPoint("LEFT", showAllInSettingsCB, "RIGHT", 4, 0)
+        showAllInSettingsLbl:SetText("Override icon visibility to 'shown'\nwhen settings are open")
+        showAllInSettingsLbl:SetTextColor(0.9, 0.9, 0.9)
+        showAllInSettingsLbl:SetJustifyH("LEFT")
+        showAllInSettingsLbl:SetJustifyV("TOP")
+
+        local function RefreshShowAllInSettingsCheckbox()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                showAllInSettingsCB:SetChecked(
+                    gs and gs.visibilitySettings and gs.visibilitySettings.showAllWhenSettingsOpen or false
+                )
+            end
+        end
+
+        showAllInSettingsCB:SetScript("OnClick", function(self)
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                if gs and gs.visibilitySettings then
+                    local isChecked = self:GetChecked()
+                    gs.visibilitySettings.showAllWhenSettingsOpen = isChecked
+                    -- Immediately apply or remove the override
+                    -- if State.OverrideAllIconsVisible then
+                    State:OverrideAllIconsVisible(isChecked)
+                    -- end
+                end
+            end
+        end)
+
         utilityContentFrame:HookScript("OnShow", RefreshGlobalVisCheckbox)
+        utilityContentFrame:HookScript("OnShow", RefreshShowAllInSettingsCheckbox)
 
         SpellStyler.HelpContentRenderer:RenderHelpView(helpContentFrame)
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
@@ -407,10 +444,24 @@ local function ShowBorderDemo()
             if SpellStyler.Containers then
                 SpellStyler.Containers:SetEditMode(true)
             end
+            -- Override icon visibility if enabled
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                if gs and gs.visibilitySettings and gs.visibilitySettings.showAllWhenSettingsOpen then
+                    State:OverrideAllIconsVisible(true)
+                end
+            end
         end)
         settingsMenu:HookScript("OnHide", function()
             tabBar:Hide()
             if SpellStyler.Containers then SpellStyler.Containers:SetEditMode(false) end
+            -- Restore normal icon visibility
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                if gs and gs.visibilitySettings and gs.visibilitySettings.showAllWhenSettingsOpen then
+                    State:OverrideAllIconsVisible(false)
+                end
+            end
         end)
         
         local tabSpells     = SpellStyler.CreateTab(tabBar, "Spells",     tabFaceW, tabH)

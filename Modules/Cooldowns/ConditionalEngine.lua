@@ -502,6 +502,7 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
                 customFrame = frame,
                 displayState = trackerValue.statusBar.displayState,
                 statusBarConfig = trackerValue.statusBar,
+                config = SpellStyler.State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType),
                 isFull = trackerValue.statusBar and trackerValue.statusBar.defaultFillValue == 'full'
             })
         end
