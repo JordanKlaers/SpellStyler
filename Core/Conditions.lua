@@ -35,7 +35,7 @@ local PAREN_COLORS = {
 }
 
 -- ─── Misc constants ──────────────────────────────────────────────────────────
-local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable" }
+local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges" }
 local COMPARISON_OPTIONS = {
     { label = "less than",             value = "<"  },
     { label = "less than or equal to", value = "<=" },
@@ -43,6 +43,10 @@ local COMPARISON_OPTIONS = {
     { label = "greater than or equal", value = ">=" },
     { label = "equal to",              value = "==" },
     { label = "not equal to",          value = "~=" },
+}
+local CHARGE_COMPARISON_OPTIONS = {
+    { label = "less than",             value = "<"  },
+    { label = "greater than",          value = ">"  },
 }
 local OPERATOR_TYPE = { AND = "and", OR = "or" }
 
@@ -712,6 +716,59 @@ ConditionsRenderer.conditionalTypeRenderers = {
         end)
         
         return totalHeight
+    end,
+    Charges = function(container, condition, vertPadding, onHeightResolved)
+        condition.Charges = condition.Charges or {}
+        local data = condition.Charges
+        
+        local chargesLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        chargesLabel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, vertPadding)
+        chargesLabel:SetText("When charges are")
+        
+        local compDropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+        compDropdown:SetPoint("LEFT", chargesLabel, "RIGHT", -12, -2)
+        UIDropDownMenu_SetWidth(compDropdown, 100)
+        
+        local function RefreshComp()
+            local txt = "|cFF888888operator|r"
+            for _, opt in ipairs(CHARGE_COMPARISON_OPTIONS) do
+                if opt.value == data.comparison then txt = opt.label; break end
+            end
+            UIDropDownMenu_SetText(compDropdown, txt)
+        end
+        
+        UIDropDownMenu_Initialize(compDropdown, function(self, level)
+            for _, opt in ipairs(CHARGE_COMPARISON_OPTIONS) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = opt.label; info.value = opt.value
+                info.checked = (data.comparison == opt.value)
+                info.func = function(btn) data.comparison = btn.value; RefreshComp() end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        RefreshComp()
+        
+        local targetInput = CreateFrame("EditBox", nil, container, "InputBoxTemplate")
+        targetInput:SetSize(40, ROW_HEIGHT)
+        targetInput:SetPoint("LEFT", compDropdown, "RIGHT", -8, 2)
+        targetInput:SetAutoFocus(false); targetInput:SetMaxLetters(2); targetInput:SetNumeric(true)
+        if data.targetValue ~= nil then targetInput:SetText(tostring(data.targetValue)) end
+        targetInput:SetScript("OnTextChanged", function(self)
+            local v = tonumber(self:GetText())
+            if v then data.targetValue = math.max(0, math.min(10, v)) end
+        end)
+        
+        compDropdown:Hide()
+        C_Timer.After(0, function()
+            if not container:IsShown() then return end
+            local _, _, _, h = container:GetBoundsRect()
+            compDropdown:Show()
+            if h and h > 0 and onHeightResolved then
+                container:SetHeight(h); onHeightResolved(h)
+            end
+        end)
+        
+        return 0
     end
 }
 
@@ -799,12 +856,36 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
     end
 
     UIDropDownMenu_Initialize(typeDropdown, function(self, level)
+        -- Check if a Charges condition already exists
+        local hasChargesCondition = false
+        if state and state.selectedConditional then
+            local conditions = ConditionsRenderer:GetConditions(state.selectedConditional)
+            if conditions then
+                for _, cond in ipairs(conditions) do
+                    if cond ~= condition and cond.conditionType == "Charges" then
+                        hasChargesCondition = true
+                        break
+                    end
+                end
+            end
+        end
+        
         for _, ct in ipairs(CONDITION_TYPES) do
             local info   = UIDropDownMenu_CreateInfo()
             info.text    = ct; info.value = ct
             info.checked = (condition.conditionType == ct)
-            info.func    = function(btn)
-                condition.conditionType = btn.value; RefreshTypeDropdown(); RenderTypeContent(true)
+            
+            -- Disable Charges if one already exists (unless this IS the Charges condition)
+            if ct == "Charges" and hasChargesCondition and condition.conditionType ~= "Charges" then
+                info.text = ct .. " |cFF888888(limit 1)|r"
+                info.disabled = true
+                info.tooltipTitle = "Cannot add Charges"
+                info.tooltipText = "Only one Charges condition is allowed per conditional."
+                info.tooltipOnButton = true
+            else
+                info.func    = function(btn)
+                    condition.conditionType = btn.value; RefreshTypeDropdown(); RenderTypeContent(true)
+                end
             end
             UIDropDownMenu_AddButton(info, level)
         end

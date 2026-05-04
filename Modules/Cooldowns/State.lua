@@ -685,12 +685,9 @@ function State:RemovePropertyOverride(baseSpellID, trackerType, condIndex, overr
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
     local cond = entry.specialVisibilityConditions[condIndex]
     if not cond.propertyOverrides or not cond.propertyOverrides[overrideIndex] then return end
-    table.remove(cond.propertyOverrides, overrideIndex)
     
-    -- Trigger live evaluation update
-    if SpellStyler.ConditionalEngine then
-        SpellStyler.ConditionalEngine:EvaluateAll()
-    end
+    -- Remove the property override from state
+    table.remove(cond.propertyOverrides, overrideIndex)
 end
 
 function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, overrideIndex, field, value)

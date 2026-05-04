@@ -1,107 +1,10 @@
--- ConditionalEngine.lua
--- Central system for evaluating Special Visibility Conditions on tracked icons.
---
--- ┌─────────────────────────────────────────────────────────────────────────┐
--- │  ARCHITECTURE: ALPHA-AWARE PROPERTY APPLICATION                         │
--- │                                                                         │
--- │  Conditionals apply properties immediately after evaluation, using      │
--- │  cached alpha values from the visibility system to avoid conflicts.     │
--- │                                                                         │
--- │  Flow:                                                                  │
--- │    1. _ExecuteDrive calculates alpha values via GetFrameStateAlphas     │
--- │    2. Alpha values are cached in ConditionalEngine._frameAlphaCache     │
--- │    3. Visibility system applies alpha to frames                         │
--- │    4. When conditionals evaluate (via NotifySourceChanged), they:       │
--- │       a. Read cached alpha values                                       │
--- │       b. Apply property overrides using those alphas                    │
--- │       c. No fighting - conditional colors use visibility-calculated alpha│
--- │                                                                         │
--- │  EXAMPLE: No Charges + Insufficient Power                               │
--- │    Visibility: Calculates alpha=0 (no charges) → caches it              │
--- │    Visibility: Sets icon:SetAlpha(0)                                    │
--- │    Conditional: Evaluates "insufficient power" → TRUE                   │
--- │    Conditional: Sets icon:SetVertexColor(1,1,1, CACHED_ALPHA)           │
--- │    Result: Icon invisible (alpha=0) with white color (no flicker)       │
--- │                                                                         │
--- │  Previously, both systems would fight:                                  │
--- │    - Visibility: icon:SetAlpha(0) because no charges                    │
--- │    - Conditional: triggers UpdateFrame → resets alpha to 1 (config)     │
--- │    - Combat event fires again → alpha back to 0 → flicker               │
--- │                                                                         │
--- │  Now, conditionals USE the visibility system's alpha calculations:      │
--- │    - Visibility manages: when alpha should be 0 vs 1                    │
--- │    - Conditionals manage: color, scale, size                            │
--- │    - When conditionals set color.a, they use cached visibility alpha    │
--- │    - No overlap = no fighting                                           │
--- └─────────────────────────────────────────────────────────────────────────┘
---
--- ┌─────────────────────────────────────────────────────────────────────────┐
--- │  FLOW                                                                   │
--- │                                                                         │
--- │  1.  A WoW event listener observes a game-state change.                │
--- │                                                                         │
--- │  2.  It calls:                                                          │
--- │        ConditionalEngine:NotifySourceChanged("ComboPoints", 4)         │
--- │                                                                         │
--- │  3.  The value is written into liveValues and EvaluateAll() runs.      │
--- │                                                                         │
--- │  4.  EvaluateAll() iterates every tracked icon, evaluates conditionals,│
--- │      and applies property overrides IMMEDIATELY using cached alphas.   │
--- │                                                                         │
--- │  5.  Separately, when _ExecuteDrive runs for a frame update:           │
--- │        a.  GetFrameStateAlphas calculates visibility alphas.           │
--- │        b.  Alphas are cached via CacheFrameAlphas.                     │
--- │        c.  Visibility system applies alphas to frames.                 │
--- │                                                                         │
--- │  6.  When conditionals apply properties (from step 4), they read       │
--- │      the cached alphas and use them, avoiding conflicts.               │
--- └─────────────────────────────────────────────────────────────────────────┘
---
--- ┌─────────────────────────────────────────────────────────────────────────┐
--- │  liveValues — flat key/value table, always fully populated             │
--- │                                                                         │
--- │  liveValues.ComboPoints     = <number>          default 0              │
--- │  liveValues.Health          = <number> %        default 100            │
--- │  liveValues.Power           = <number>          default 0              │
--- │  liveValues.PowerMax        = <number>          default 0              │
--- │  liveValues.PowerType       = <number>          default 0              │
--- │  liveValues.Aura_<id>       = true | false      default false          │
--- │  liveValues.AuraStacks_<id> = <number>          default 0              │
--- │  liveValues.Cooldown_<id>   = <number> secs remaining, default 0      │
--- │                                                                         │
--- │  context — spell-specific evaluation context (passed to EvaluateConditional) │
--- │    context.spellID      = <number>  the spell being evaluated          │
--- │    context.trackerType  = <string>  "spells" or "buffs"                 │
--- └─────────────────────────────────────────────────────────────────────────┘
---
--- ┌─────────────────────────────────────────────────────────────────────────┐
--- │  HOW TO WIRE A NEW SOURCE                                               │
--- │                                                                         │
--- │  Combo points:                                                          │
--- │    local comboPointCount = UnitPower("player", Enum.PowerType.ComboPoints)│
--- │    ConditionalEngine:NotifySourceChanged("ComboPoints", comboPointCount)│
--- │                                                                         │
--- │  Aura active/inactive (spellID 12345):                                 │
--- │    local isAuraActive = C_UnitAuras.GetAuraDataBySpellName(…) ~= nil  │
--- │    ConditionalEngine:NotifySourceChanged("Aura_12345", isAuraActive)   │
--- │                                                                         │
--- │  Cooldown remaining (spellID 12345):                                   │
--- │    local cooldownStartTime, cooldownDuration = GetSpellCooldown(12345) │
--- │    local remainingCooldownSeconds =                                     │
--- │        math.max(0, (cooldownStartTime + cooldownDuration) - GetTime()) │
--- │    ConditionalEngine:NotifySourceChanged("Cooldown_12345",             │
--- │                                          remainingCooldownSeconds)     │
--- └─────────────────────────────────────────────────────────────────────────┘
+
 
 local ADDON_NAME, SpellStyler = ...
 SpellStyler.ConditionalEngine = SpellStyler.ConditionalEngine or {}
 local ConditionalEngine = SpellStyler.ConditionalEngine
 
--- ============================================================================
--- LIVE VALUES STORE
--- Always fully populated with safe defaults so EvaluateConditional can read
--- any key without a nil check.  NotifySourceChanged just overwrites entries.
--- ============================================================================
+
 ConditionalEngine.liveValues = {
     ComboPoints = 0,
     -- Aura_<spellID>       = true|false  (written on first NotifySourceChanged)
@@ -109,9 +12,6 @@ ConditionalEngine.liveValues = {
     -- Cooldown_<spellID>   = number secs (written on first NotifySourceChanged)
 }
 
--- ============================================================================
--- SOURCE NOTIFICATION (call this from event listeners)
--- ============================================================================
 
 --- Write a new value into liveValues and immediately re-evaluate all icons.
 ---
@@ -122,9 +22,6 @@ function ConditionalEngine:NotifySourceChanged(liveValueKey, updatedValue)
     self:EvaluateAll()
 end
 
--- ============================================================================
--- CONDITIONAL EVALUATION
--- ============================================================================
 
 local comparisonFunctions = {
     ["<"]  = function(leftValue, rightValue) return leftValue <  rightValue end,
@@ -135,9 +32,6 @@ local comparisonFunctions = {
     ["~="] = function(leftValue, rightValue) return leftValue ~= rightValue end,
 }
 
---- Recursively copy a table so the result shares no references with the original.
---- Non-table values are returned as-is (they are already value types in Lua).
----
 --- @param  original  any
 --- @return any
 local function deepCopy(original)
@@ -149,18 +43,7 @@ local function deepCopy(original)
     return setmetatable(copy, getmetatable(original))
 end
 
---- Expand the partiallyResolved list (booleans + operator/boundary tables) into
---- a flat token stream, then evaluate it via recursive descent — respecting
---- parentheses and AND/OR operators left-to-right.
----
---- Token stream rules:
----   boundary  openParens=N  → N × "("  tokens (before first condition)
----   operator  closeParens=N → N × ")"  tokens (after left operand)
----             operand       → "and" or "or"
----             openParens=N  → N × "("  tokens (before right operand)
----   boundary  closeParens=N → N × ")"  tokens (after last condition)
----   boolean                 → true | false
----
+
 --- @param  partiallyResolved  table   mixed list of booleans and entry tables
 local function FinalizeResolved(partiallyResolved)
     -- ── Step 1: build a flat token stream ────────────────────────────────────
@@ -232,9 +115,7 @@ local function FinalizeResolved(partiallyResolved)
     return parseExpr(), tokens
 end
 
---- Walk the entries of the named conditional, evaluate each CONDITION node
---- against liveValues (for global state) and context (for spell-specific data),
---- combine them with AND/OR operators, and return whether the overall conditional passes.
+-- If a value can be calculated in this function, then just directly call "EvaluateAll", if a value can only be accessed by some event/method in frameTrackerManager, then it must cache that value via SpellStyler.ConditionalEngine:NotifySourceChanged("key", value) which will eventually trigger this method
 ---
 --- @param  conditionalName  string
 --- @param  liveValues       table   (ConditionalEngine.liveValues)
@@ -253,11 +134,11 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
 	for index, conditionStructure in ipairs(conditionalData.entries) do
 		if conditionStructure.type == "condition" then
 			if conditionStructure.conditionType == "ComboPoints" then
-				local currentValue = ConditionalEngine.liveValues["ComboPoints"]
+                local power = GetComboPoints("player", "target")
 				local comparison = conditionStructure.ComboPoints and conditionStructure.ComboPoints.comparison
 				local targetValue = conditionStructure.ComboPoints and conditionStructure.ComboPoints.targetValue
 				if comparison and targetValue and comparisonFunctions[comparison] then
-					table.insert(partiallyResolved, comparisonFunctions[comparison](currentValue, targetValue))
+					table.insert(partiallyResolved, comparisonFunctions[comparison](power, targetValue))
 				else
 					table.insert(partiallyResolved, false)
 				end
@@ -267,17 +148,26 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
 				if context and context.spellID then
 					local isUsable, insufficientPower = C_Spell.IsSpellUsable(context.spellID)
 					-- Actual state: true if unable to cast due to insufficient power
+                    local spellCharges = C_Spell.GetSpellCharges(context.spellID)
+                    local canCast
+                    if spellCharges.maxCharges and spellCharges.maxCharges > 1 then
+                        canCast = isUsable and not C_Spell.GetSpellCharges(context.spellID).isActive
+                    else
+                        canCast = isUsable and not C_Spell.GetSpellCooldown(context.spellID).isActive
+                    end
 					local targetValue = conditionStructure.IsSpellUsable.state
 					if targetValue == 'able' then
-						table.insert(partiallyResolved, isUsable)
+						table.insert(partiallyResolved, canCast)
 					elseif targetValue == 'unable' then
-						table.insert(partiallyResolved, not isUsable)
+						table.insert(partiallyResolved, not canCast)
 					elseif targetValue == 'insufficientPower' then
-						table.insert(partiallyResolved, not isUsable and insufficientPower)
+						table.insert(partiallyResolved, not canCast and insufficientPower)
 					end
 				else
 					table.insert(partiallyResolved, false)
 				end
+            elseif conditionStructure.conditionType == "Charges" then
+                table.insert(partiallyResolved, true)
 			end
 		else
 			table.insert(partiallyResolved, deepCopy(conditionStructure))
@@ -286,6 +176,65 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
 
 	local finalizeResolvedValue, middleResolve = FinalizeResolved(partiallyResolved)
     return finalizeResolvedValue
+end
+
+-- ============================================================================
+-- CHARGE CONDITIONAL HELPERS
+-- ============================================================================
+
+--- Checks if a conditional definition contains a Charges condition.
+--- @param conditionalName string The name of the conditional to check
+--- @return boolean True if the conditional uses Charges, false otherwise
+function ConditionalEngine:ConditionalUsesCharges(conditionalName)
+    local conditionalData = SpellStyler_DB
+        and SpellStyler_DB.conditionals
+        and SpellStyler_DB.conditionals[conditionalName]
+    if not conditionalData or not conditionalData.entries then
+        return false
+    end
+    
+    for _, entry in ipairs(conditionalData.entries) do
+        if entry.type == "condition" and entry.conditionType == "Charges" then
+            return true
+        end
+    end
+    
+    return false
+end
+
+--- Extracts the Charges condition data from a conditional.
+--- Returns the comparison operator and target value for use in variant frame creation.
+--- @param conditionalName string The name of the conditional
+--- @return table|nil { comparison: string, targetValue: number } or nil if no Charges condition exists
+function ConditionalEngine:GetChargeConditionalData(conditionalName)
+    local conditionalData = SpellStyler_DB
+        and SpellStyler_DB.conditionals
+        and SpellStyler_DB.conditionals[conditionalName]
+    if not conditionalData or not conditionalData.entries then
+        return nil
+    end
+    
+    for _, entry in ipairs(conditionalData.entries) do
+        if entry.type == "condition" and entry.conditionType == "Charges" and entry.Charges then
+            return {
+                comparison = entry.Charges.comparison,
+                targetValue = entry.Charges.targetValue
+            }
+        end
+    end
+    
+    return nil
+end
+
+--- Checks if a specific specialVisibilityCondition (from a tracker config) uses charges.
+--- Used to determine if property overrides should target variant frame only or all frames.
+--- @param specialVisibilityCondition table The condition entry from tracker config
+--- @return boolean True if this condition uses Charges
+function ConditionalEngine:SpecialVisibilityUsesCharges(specialVisibilityCondition)
+    if not specialVisibilityCondition or not specialVisibilityCondition.conditionalName then
+        return false
+    end
+    return self:ConditionalUsesCharges(specialVisibilityCondition.conditionalName)
 end
 
 -- ============================================================================
@@ -462,18 +411,39 @@ function ConditionalEngine:GetPropertyOverride(propertyOverrides, propertyPath)
 end
 
 --- Applies property overrides from a special visibility condition to a tracker frame.
+--- Routes overrides to variant frame only if conditional uses Charges, otherwise to both frames.
 --- Caches overrides and triggers the unified update path via UpdateFrame_ConfigurationChanges.
---- @param frame table The tracker frame
+--- @param frame table The tracker frame (base frame)
 --- @param conditionalKey string The unique key for this conditional (name or index-based)
 --- @param propertyOverrides table Array of property override definitions
---- @param trackerValue table The tracker's full config from State
-function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, propertyOverrides, trackerValue)
+--- @param trackerValue table The tracker's full config from State  
+--- @param conditionalName string The name of the conditional being applied
+function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, propertyOverrides, trackerValue, conditionalName)
     if not frame or not conditionalKey or not propertyOverrides or #propertyOverrides == 0 then return end
     
-    -- Cache all property overrides so UpdateFrame_ConfigurationChanges can use them
-    ConditionalEngine:CacheFramePropertyOverrides(frame, conditionalKey, propertyOverrides)
+    local usesCharges = self:ConditionalUsesCharges(conditionalName or "")
+    local targetFrames = {}
+    
+    if usesCharges then
+        -- Charges conditional: apply to variant frame only
+        if frame.variantFrame then
+            table.insert(targetFrames, frame.variantFrame)
+        end
+    else
+        -- Non-charges conditional: apply to all frames (base + variant if exists)
+        table.insert(targetFrames, frame)
+        if frame.variantFrame then
+            table.insert(targetFrames, frame.variantFrame)
+        end
+    end
+    
+    -- Apply and cache overrides to all target frames
+    for _, targetFrame in ipairs(targetFrames) do
+        ConditionalEngine:CacheFramePropertyOverrides(targetFrame, conditionalKey, propertyOverrides)
+    end
     
     -- Trigger the unified update path via FrameTrackerManager
+    -- Note: Always use base frame for state lookups
     if SpellStyler.FrameTrackerManager then
         SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(
             frame.meta.baseSpellID,
@@ -485,93 +455,54 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
         local hasIconOverride = ConditionalEngine:GetPropertyOverride(propertyOverrides, "iconColor")
         local hasStatusBarOverride = ConditionalEngine:GetPropertyOverride(propertyOverrides, "statusBar.color")
         
-        if hasIconOverride and ConditionalEngine._frameAlphaCache[frame] then
-            SpellStyler.FrameTrackerManager.ApplyVisibility.Icon({
-                displayState = trackerValue.iconSettings.iconDisplayState,
-                whenAvailableToCastAlpha = ConditionalEngine._frameAlphaCache[frame].whenAvailable,
-                whenOnCooldownAlpha = ConditionalEngine._frameAlphaCache[frame].whenActive,
-                customFrame = frame,
-                config = trackerValue
-            })
+        if hasIconOverride then
+            for _, targetFrame in ipairs(targetFrames) do
+                if ConditionalEngine._frameAlphaCache[targetFrame] then
+                    SpellStyler.FrameTrackerManager.ApplyVisibility.Icon({
+                        displayState = trackerValue.iconSettings.iconDisplayState,
+                        whenAvailableToCastAlpha = ConditionalEngine._frameAlphaCache[targetFrame].whenAvailable,
+                        whenOnCooldownAlpha = ConditionalEngine._frameAlphaCache[targetFrame].whenActive,
+                        customFrame = targetFrame,
+                        config = trackerValue
+                    })
+                end
+            end
         end
         
-        if hasStatusBarOverride and ConditionalEngine._frameAlphaCache[frame] then
-            SpellStyler.FrameTrackerManager.ApplyVisibility.StatusBar({
-                progressBarAlpha = ConditionalEngine._frameAlphaCache[frame].progressBar,
-                fullBarAlpha = ConditionalEngine._frameAlphaCache[frame].fullBar,
-                customFrame = frame,
-                displayState = trackerValue.statusBar.displayState,
-                statusBarConfig = trackerValue.statusBar,
-                config = SpellStyler.State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType),
-                isFull = trackerValue.statusBar and trackerValue.statusBar.defaultFillValue == 'full'
-            })
-        end
-    end
-end
-
---- Apply (or revert) property overrides for one SVC entry on an icon.
---- 
---- NOTE: This function writes to the DB and triggers UpdateFrame_ConfigurationChanges.
---- It is kept for compatibility with settings UI changes where we want to persist
---- overrides to the database. For the render pipeline, use ApplyActiveOverridesToFrame
---- instead, which applies overrides directly to frames without DB updates.
----
---- `conditionalPassed` = true  → write each override value into the tracker
----                                config (snapshots the original first).
---- `conditionalPassed` = false → restore every previously-snapshotted original
----                                and discard the snapshot.
----
---- @param  baseSpellID          number
---- @param  trackerType          string
---- @param  propertyOverrides    table   array of { property=string, value=any }
---- @param  conditionalPassed    boolean
-local function ApplyPropertyOverrides(baseSpellID, trackerType, propertyOverrides, conditionalPassed)
-    local State = SpellStyler.State
-    if not State then return end
-    if not propertyOverrides or #propertyOverrides == 0 then return end
-
-    if conditionalPassed then
-        for _, override in ipairs(propertyOverrides) do
-            local path = override.property
-            if path and path ~= "" then
-                local snapshotKey = baseSpellID .. "/" .. trackerType .. "/" .. path
-                -- Capture the canonical original only on the first application.
-                if ConditionalEngine._originalValues[snapshotKey] == nil then
-                    ConditionalEngine._originalValues[snapshotKey] =
-                        State:GetTrackerValueConfigProperty(baseSpellID, trackerType, path)
-                end
-                State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, override.value)
-            end
-        end
-    else
-        for _, override in ipairs(propertyOverrides) do
-            local path = override.property
-            if path and path ~= "" then
-                local snapshotKey = baseSpellID .. "/" .. trackerType .. "/" .. path
-                local original = ConditionalEngine._originalValues[snapshotKey]
-                if original ~= nil then
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, original)
-                    ConditionalEngine._originalValues[snapshotKey] = nil
+        if hasStatusBarOverride then
+            for _, targetFrame in ipairs(targetFrames) do
+                if ConditionalEngine._frameAlphaCache[targetFrame] then
+                    SpellStyler.FrameTrackerManager.ApplyVisibility.StatusBar({
+                        progressBarAlpha = ConditionalEngine._frameAlphaCache[targetFrame].progressBar,
+                        fullBarAlpha = ConditionalEngine._frameAlphaCache[targetFrame].fullBar,
+                        customFrame = targetFrame,
+                        displayState = trackerValue.statusBar.displayState,
+                        statusBarConfig = trackerValue.statusBar,
+                        config = SpellStyler.State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType),
+                        isFull = trackerValue.statusBar and trackerValue.statusBar.defaultFillValue == 'full'
+                    })
                 end
             end
         end
     end
 end
 
--- ============================================================================
--- CENTRAL EVALUATION PASS
--- Called automatically by NotifySourceChanged after every data update.
--- Can also be called manually (e.g. after the player changes a conditional
--- in the settings UI) to force a fresh pass.
--- 
--- Evaluates conditionals and applies property overrides immediately.
--- Uses cached alpha values from GetFrameStateAlphas to avoid conflicts
--- with the visibility system.
--- ============================================================================
 
---- For every tracked icon in the current spec's database, check each Special
---- Visibility Condition entry, and if all required data is available, evaluate
---- the associated conditional and apply property overrides immediately.
+
+ConditionalEngine._conditionalStates = ConditionalEngine._conditionalStates or {}
+setmetatable(ConditionalEngine._conditionalStates, { __mode = "k" })  -- Weak keys = auto cleanup
+
+-- Structure: 
+-- {
+--   [frame] = {
+--     [conditionalKey] = {
+--       lastResult = true/false,
+--       lastChangeTime = GetTime(),
+--       temporaryOverrides = { ... }  -- for time-limited overrides
+--     }
+--   }
+-- }
+
 function ConditionalEngine:EvaluateAll()
     local State = SpellStyler.State
     if not State then return end
@@ -586,15 +517,25 @@ function ConditionalEngine:EvaluateAll()
         local trackerTypeDatabase = specDatabase[trackerType]
         if trackerTypeDatabase then
             for baseSpellID, trackerValue in pairs(trackerTypeDatabase) do
+                -- check if the database for the spell/frame has any conditionas associated to it
                 local specialVisibilityConditions = trackerValue.specialVisibilityConditions
                 if specialVisibilityConditions and #specialVisibilityConditions > 0 then
-                    -- Get the actual frame to access activeSpellID
+                    -- Get the actual frame to access activeSpellID - the activeSpellID is required when evaluating the conditional
                     local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType]
                         and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                     
                     if customFrame then
                         local activeSpellID = (customFrame.meta and customFrame.meta.activeSpellID) or baseSpellID
+                        local spellInfo = C_Spell.GetSpellInfo(activeSpellID)
                         
+                        -- IMPORTANT: Ensure variant frame exists/doesn't exist based on current conditionals
+                        -- This must happen BEFORE property overrides are applied, so they have the correct target frames
+                        -- We only manage the frame lifecycle here, not property updates (to avoid overhead)
+                        if FrameTrackerManager.EnsureVariantFrameLifecycle then
+                            FrameTrackerManager:EnsureVariantFrameLifecycle(customFrame, trackerValue, baseSpellID, trackerType)
+                        end
+                        
+                        -- now loop over each condition and see if it has properties assigned that might need to be updated if the condition is true
                         for conditionalIndex, specialVisibilityCondition in ipairs(specialVisibilityConditions) do
                             local conditionalName = specialVisibilityCondition.conditionalName
                             if conditionalName and conditionalName ~= ""
@@ -611,13 +552,50 @@ function ConditionalEngine:EvaluateAll()
                                 end
                                 
                                 local context = { spellID = activeSpellID, trackerType = trackerType }
-                                local conditionalPassed = EvaluateConditional(conditionalName, self.liveValues, context)
-                                
-                                if conditionalPassed then
-                                    -- Conditional passed: cache overrides and trigger unified update path
-                                    self:ApplyFramePropertyOverrides(customFrame, conditionalKey, specialVisibilityCondition.propertyOverrides, trackerValue)
+                                local conditionalResult = EvaluateConditional(conditionalName, self.liveValues, context)
+                                -- now that we have evaluated the conditional, save its state so we can see when it changed.
+                                if not self._conditionalStates[customFrame] then
+                                    self._conditionalStates[customFrame] = {}
+                                end
+                                if not self._conditionalStates[customFrame][conditionalKey] then
+                                    self._conditionalStates[customFrame][conditionalKey] = {}
+                                end
+                                DevTool:AddData({
+                                    conditionalName = conditionalName,
+                                    conditionalResult = conditionalResult,
+                                    propertyOverrides = specialVisibilityCondition.propertyOverrides,
+                                    didItChangeToTrue = self._conditionalStates[customFrame][conditionalKey].previousConditionalResult ~= conditionalResult and conditionalResult == true,
+                                    isActive = C_Spell.GetSpellCooldown(activeSpellID).isActive
+                                }, "conditional for " .. spellInfo.name)
+                                -- save the most recent evaluation then check if there was a difference
+                                local previousConditionalResult = self._conditionalStates[customFrame][conditionalKey].previousConditionalResult
+                                if previousConditionalResult ~= conditionalResult and conditionalResult == true then
+                                    -- it became true, so all properties can be applied
+                                    self:ApplyFramePropertyOverrides(customFrame, conditionalKey, specialVisibilityCondition.propertyOverrides, trackerValue, conditionalName)
+                                    for _, override in ipairs(specialVisibilityCondition.propertyOverrides) do
+                                        -- if override.property == propertyPath then
+                                        --     return override.value
+                                        -- end
+                                        -- Creat the timer for the specific property override IF its a temporaryOverride property
+                                        if override.duration ~= nil and override.duration > 0 then
+                                            C_Timer.After(override.duration, function()
+                                                -- Check if conditional is still true AND property overrides still exist
+                                                if self._conditionalStates[customFrame] 
+                                                    and self._conditionalStates[customFrame][conditionalKey]
+                                                    and self._conditionalStates[customFrame][conditionalKey].previousConditionalResult
+                                                    and self._framePropertyOverrides[customFrame]
+                                                    and self._framePropertyOverrides[customFrame][conditionalKey] then
+                                                    -- Still true, safe to remove this property
+                                                    self._framePropertyOverrides[customFrame][conditionalKey][override.property] = nil
+                                                    -- Trigger update
+                                                    FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+                                                end
+                                                -- Otherwise conditional went false already, cache was cleared, do nothing
+                                            end)
+                                        end 
+                                    end
                                 else
-                                    -- Conditional failed: clear this condition's cached overrides
+                                    -- Conditional failed: clear this condition's cached overrides (ALL even the temporary properties)
                                     self:ClearFramePropertyOverrides(customFrame, conditionalKey)
                                     -- Trigger unified update path to revert to state values
                                     if SpellStyler.FrameTrackerManager then
@@ -627,6 +605,8 @@ function ConditionalEngine:EvaluateAll()
                                         )
                                     end
                                 end
+                                -- make sure to save the current value so we can detect when it changes next time
+                                self._conditionalStates[customFrame][conditionalKey].previousConditionalResult = conditionalResult
                             end
                         end
                     end

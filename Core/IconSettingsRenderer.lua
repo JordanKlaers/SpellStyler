@@ -497,9 +497,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
 	}
     local COMPARISON_OPTIONS = {
         { label = "less than",             value = "<"  },
-        { label = "less than or equal to", value = "<=" },
         { label = "greater than",          value = ">"  },
-        { label = "greater than or equal", value = ">=" },
     }
     return {
         -- Icon settings
@@ -1023,11 +1021,11 @@ local PROPERTY_DEFS = {
     { label = "Offset X",              path = "position.x",                     inputType = "text"  },
     { label = "Offset Y",              path = "position.y",                     inputType = "text"  },
     { label = "Icon Color",            path = "iconColor",                      inputType = "color" },
-    { label = "Icon Custom Texture",   path = "iconSettings.iconTexturePath",   inputType = "text"  },
+    { label = "Icon Custom Texture",   path = "iconSettings.iconTexturePath",   inputType = "text",     inputLabel = "Texture path:"  },
     { label = "Icon Width",            path = "iconSettings.width",             inputType = "text"  },
     { label = "Icon Height",           path = "iconSettings.height",            inputType = "text"  },
     { label = "Opacity",               path = "iconSettings.opacity",           inputType = "text"  },
-    { label = "Trigger Glow",          path = "glowNotification.shouldDisplay", inputType = "text"  },
+    { label = "Trigger Glow",          path = "glowNotification.shouldDisplay", inputType = "text",     inputLabel = "Glow duration:"  },
     { label = "Custom Label",          path = "customLabel.text",               inputType = "text"  },
     { label = "Custom Label Size",     path = "customLabel.size",               inputType = "text"  },
     { label = "Custom Label X",        path = "customLabel.x",                  inputType = "text"  },
@@ -1130,8 +1128,23 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
         delBtn:SetSize(22, 22)
         delBtn:SetPoint("LEFT", subHeaderBg, "RIGHT", 4, 0)
         delBtn:SetScript("OnClick", function()
+            -- Get the frame and conditional key before removing from state
+            local customFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
+            local conditionalKey = (cond.customName and cond.customName ~= "") and cond.customName or (cond.conditionalName or ("Condition " .. capturedI))
+            
+            -- Remove from state
             SpellStyler.State:RemoveSpecialVisibilityCondition(uniqueID, trackerType, capturedI)
             _conditionEntryStates[uidKey][capturedI] = nil
+            
+            -- Explicitly clear this conditional's cached overrides and update the frame
+            if customFrame and SpellStyler.ConditionalEngine then
+                SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
+                if SpellStyler.FrameTrackerManager then
+                    SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
+                end
+            end
+            
+            -- Now rerender the UI to show the deletion
             rerender()
         end)
 
@@ -1153,8 +1166,8 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
             local BOX_W    = 252  -- bordered box width; delete btn floats to the right
             local BOX_PAD  = 6   -- inner horizontal/vertical padding
             local ROW_H    = 24  -- height of each inner row
-            local ROW_GAP  = 4   -- gap between the two rows
-            local BOX_H    = BOX_PAD + ROW_H + ROW_GAP + ROW_H + BOX_PAD  -- 64
+            local ROW_GAP  = 4   -- gap between the rows
+            local BOX_H    = BOX_PAD + ROW_H + ROW_GAP + ROW_H + ROW_GAP + ROW_H + (BOX_PAD * 2)  -- 92
 
             for j, override in ipairs(overrides) do
                 local capturedJ = j
@@ -1178,7 +1191,23 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
                 delOverrideBtn:SetSize(20, 20)
                 delOverrideBtn:SetPoint("TOPRIGHT", overrideBox, "TOPRIGHT", -4, -4)
                 delOverrideBtn:SetScript("OnClick", function()
+                    -- Get the frame and conditional key before removing from state
+                    local customFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
+                    local conditionalKey = (cond.customName and cond.customName ~= "") and cond.customName or (cond.conditionalName or ("Condition " .. capturedI))
+                    
+                    -- Remove the property override from state
                     SpellStyler.State:RemovePropertyOverride(uniqueID, trackerType, capturedI, capturedJ)
+                    
+                    -- Explicitly clear this conditional's cached overrides and update the frame
+                    if customFrame and SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
+                        if SpellStyler.FrameTrackerManager then
+                            SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
+                        end
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
+                    
+                    -- Now rerender the UI to show the deletion
                     rerender()
                 end)
 
@@ -1214,16 +1243,19 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", "")
                             end
                             rerender()
+                            if SpellStyler.ConditionalEngine then
+                                SpellStyler.ConditionalEngine:EvaluateAll()
+                            end
                         end
                         UIDropDownMenu_AddButton(info, level)
                     end
                 end)
                 RefreshPropDropdown()
 
-                -- ── Row 2: "Set value:" ────────────────────────────────────────
+                -- ── Row 2: Value input (label from propDef.inputLabel or "Set value:") ────
                 local valLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                valLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -(BOX_PAD + ROW_H + ROW_GAP))
-                valLabel:SetText("Set value:")
+                valLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -(BOX_PAD + ROW_H + ROW_GAP) - 5)
+                valLabel:SetText((propDef and propDef.inputLabel) or "Set value:")
                 valLabel:SetTextColor(0.65, 0.65, 0.65)
 
                 if propDef and propDef.inputType == "color" then
@@ -1242,16 +1274,25 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
+                                if SpellStyler.ConditionalEngine then
+                                    SpellStyler.ConditionalEngine:EvaluateAll()
+                                end
                             end,
                             opacityFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
+                                if SpellStyler.ConditionalEngine then
+                                    SpellStyler.ConditionalEngine:EvaluateAll()
+                                end
                             end,
                             cancelFunc = function(prev)
                                 colorBtn:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 })
+                                if SpellStyler.ConditionalEngine then
+                                    SpellStyler.ConditionalEngine:EvaluateAll()
+                                end
                             end,
                             hasOpacity = 1,
                             opacity    = cur.a or 1,
@@ -1270,8 +1311,35 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
                     textInput:SetText(tostring(override.value or ""))
                     textInput:SetScript("OnTextChanged", function(self)
                         SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", self:GetText())
+                        if SpellStyler.ConditionalEngine then
+                            SpellStyler.ConditionalEngine:EvaluateAll()
+                        end
                     end)
                 end
+
+                -- ── Row 3: Duration input ──────────────────────────────────────
+                local durationLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                durationLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -(BOX_PAD + ROW_H + ROW_GAP + ROW_H + ROW_GAP))
+                durationLabel:SetWidth(170)
+                durationLabel:SetWordWrap(true)
+                durationLabel:SetJustifyH("LEFT")
+                durationLabel:SetText("Add duration for temporary application. Otherwise leave blank")
+                durationLabel:SetTextColor(0.65, 0.65, 0.65)
+
+                local durationInput = CreateFrame("EditBox", nil, overrideBox, "InputBoxTemplate")
+                durationInput:SetSize(60, 18)
+                durationInput:SetPoint("TOPRIGHT", propDropdown, "BOTTOMRIGHT", -16, -(ROW_H + ROW_GAP + 4))
+                durationInput:SetAutoFocus(false)
+                durationInput:SetMaxLetters(10)
+                durationInput:SetText(tostring(override.duration or ""))
+                durationInput:SetScript("OnTextChanged", function(self)
+                    local text = self:GetText()
+                    local duration = (text and text ~= "") and tonumber(text) or nil
+                    SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "duration", duration)
+                    if SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
+                end)
 
                 currentAnchor = overrideBox
             end
@@ -1331,6 +1399,9 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
                 noneInfo.func     = function()
                     SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, capturedI, "")
                     RefreshCondTrigger()
+                    if SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
                 end
                 UIDropDownMenu_AddButton(noneInfo, level)
 

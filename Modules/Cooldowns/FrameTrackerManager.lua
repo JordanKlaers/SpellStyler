@@ -1,9 +1,3 @@
--- ============================================================================
--- SpellStyler FrameTrackerManager.lua
--- Creates positionable highlight clones for tracker buffs
--- Detects active/inactive state via auraInstanceID (no secret value math)
--- ============================================================================
-
 local addonName, SpellStyler = ...
 SpellStyler.FrameTrackerManager = SpellStyler.FrameTrackerManager or {}
 local FrameTrackerManager = SpellStyler.FrameTrackerManager
@@ -29,16 +23,10 @@ local FRAME_PREFIX = "TweaksUI_CustomFrameTracker_"
 --- @field forceUpdate? boolean     Clear cooldown/bar before applying
 
 
--- ============================================================================
--- STATE
--- ============================================================================
 FrameTrackerManager.cooldownManagerFrames = {
     buffs = {}
 }
 
--- Maps cooldownID (stable slot key from GetCooldownID) → baseSpellID (DB key).
--- Built once at scan time; used at runtime so callbacks never call GetSpellID(),
--- which returns a different value once a buff becomes active on that slot.
 FrameTrackerManager.cooldownIDToBaseSpellID = {}
 
 FrameTrackerManager.SpellStyler_frames = {
@@ -46,20 +34,11 @@ FrameTrackerManager.SpellStyler_frames = {
     spells = {},
 }
 
--- Per-frame debounce queue for DriveFrameUpdate.
--- Keyed by frame table reference; each entry holds the merged flags, opts, and
--- a list of source strings collected during the current coalesce window.
 FrameTrackerManager._driveQueue     = {}
 FrameTrackerManager._totemLogQueue  = {}
 
--- updateFrame is defined in the UPDATE SYSTEM section
 local isInitialized = false
-------------------------------------------------------------------------
--- GlowUtil wiring helper
--- Reads glowNotification config and calls the appropriate GlowUtil.Setup*.
--- Chooses SetupProcGlow for glowStyle='thick', SetupAnts for everything else.
--- Safe to call when GlowUtil is not yet loaded (no-ops gracefully).
-------------------------------------------------------------------------
+
 local function ApplyGlowNotificationSetup(frame, trackerConfig)
     if not SpellStyler.GlowUtil then return end
     local gn = trackerConfig and trackerConfig.glowNotification
@@ -79,13 +58,6 @@ local function ApplyGlowNotificationSetup(frame, trackerConfig)
     end
 end
 
-
--- ============================================================================
--- VISIBILITY CONDITION CHECKING
--- Per-icon highlights should respect the tracker's visibility conditions
--- ============================================================================
-
--- Get current player state for visibility checks (mirrors Cooldowns.lua logic)
 local function GetPlayerState()
     local state = {
         inCombat = InCombatLockdown() or UnitAffectingCombat("player"),
@@ -112,13 +84,33 @@ local function GetPlayerState()
     return state
 end
 
+--- Check if a trackerConfig has any conditionals that use charges
+--- @param trackerConfig table The tracker configuration to check
+--- @return boolean True if any conditional uses charges
+local function TrackerHasChargesConditionals(trackerConfig)
+    if not trackerConfig or not trackerConfig.specialVisibilityConditions then
+        return false
+    end
+    
+    -- Check if ConditionalEngine is available
+    if not SpellStyler.ConditionalEngine or not SpellStyler.ConditionalEngine.ConditionalUsesCharges then
+        return false
+    end
+    
+    -- Check each conditional to see if any use charges
+    for _, condition in ipairs(trackerConfig.specialVisibilityConditions) do
+        if condition.conditionalName and SpellStyler.ConditionalEngine:ConditionalUsesCharges(condition.conditionalName) then
+            return true
+        end
+    end
+    
+    return false
+end
+
 function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType)
     local viewer = SpellStyler.Containers:GetCooldownManagerViewer(trackerType)
     if not viewer or not viewer.itemFramePool then return end
 
-    -- ── Step 1: Disable and hide all existing custom frames for this tracker type ──
-    -- Mark every DB entry as disabled so entries not found in this scan stay hidden.
-    -- Frames are destroyed now so CreateTrackerFrame can rebuild cleanly below.
     local existingTrackers = State:GetAllTrackerValues(trackerType)
     if existingTrackers then
         for spellID, trackerValue in pairs(existingTrackers) do
@@ -132,7 +124,7 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
         end
     end
 
-    -- Wipe the CDM lookup so it only reflects what is active right now.
+    
     FrameTrackerManager.cooldownManagerFrames[trackerType] = {}
     wipe(FrameTrackerManager.cooldownIDToBaseSpellID)
 
@@ -183,7 +175,21 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             if trackerConfig then
                 -- Wipe devNotes before creating frame (fresh start for error tracking)
                 State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
-                FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType)
+                local baseFrame = FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType, false)
+                
+                -- Check if this frame needs a variant for charge-based conditionals
+                -- Only create a variant if there's actually a charges conditional configured
+                if baseFrame and TrackerHasChargesConditionals(trackerConfig) then
+                    local variantFrame = FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType, true)
+                    if variantFrame then
+                        baseFrame.variantFrame = variantFrame
+                        variantFrame.isVariant = true
+                        -- Create shared variants array: allows iterating all variants from either frame
+                        -- (e.g., in event handlers: for _, f in ipairs(frame.variants) do ... end)
+                        -- baseFrame.variants = { baseFrame, variantFrame }
+                        -- variantFrame.variants = baseFrame.variants
+                    end
+                end
             end
         end
     end
@@ -196,9 +202,6 @@ end
 
 
 
---- Loops over every non-buffs tracker type in the database and ensures a live
---- tracker frame exists for each entry.  Safe to call multiple times; 
---- CreateTrackerFrame is a no-op when the frame already exists.
 function FrameTrackerManager:CreateNonBuffTrackerFrames()
     for _, trackerType in ipairs({ "spells" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
@@ -212,7 +215,21 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                 then
                     -- Wipe devNotes before creating frame (fresh start for error tracking)
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
-                    FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType)
+                    local baseFrame = FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, false)
+                    
+                    -- Check if this frame needs a variant for charge-based conditionals
+                    -- Only create a variant if there's actually a charges conditional configured
+                    if baseFrame and TrackerHasChargesConditionals(trackerConfig) then
+                        local variantFrame = FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, true)
+                        if variantFrame then
+                            baseFrame.variantFrame = variantFrame
+                            variantFrame.isVariant = true
+                            -- Create shared variants array: allows iterating all variants from either frame
+                            -- (e.g., in event handlers: for _, f in ipairs(frame.variants) do ... end)
+                            baseFrame.variants = { baseFrame, variantFrame }
+                            variantFrame.variants = baseFrame.variants
+                        end
+                    end
                 end
             end
         end
@@ -241,6 +258,10 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key]:SetScale(trackerConfig.statusBar.scale or 1)
     frame[key]:SetMinMaxValues(0, 1)
     frame[key]:SetValue(0)
+    -- Use one strata higher than icon to ensure statusBar renders above iconContainer's stacking context
+    local iconStrata = trackerConfig.iconSettings.frameStrataLevel or "MEDIUM"
+    local strataMap = { BACKGROUND = "LOW", LOW = "MEDIUM", MEDIUM = "HIGH", HIGH = "DIALOG" }
+    frame[key]:SetFrameStrata(strataMap[iconStrata] or "HIGH")
     frame[key]:SetFrameLevel(frame:GetFrameLevel() + 3)  -- Base level for status bar
     frame[key]:SetStatusBarColor(
         trackerConfig.statusBar.color.r or 0.2,
@@ -441,86 +462,332 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     -- Initial visibility is controlled by ApplyVisibility.StatusBar during the first DriveFrameUpdate
 end
 
---- Creates a charge-based display bar that positions the icon on/off screen based on spell charges.
---- The bar is sized from the icon position to off-screen, and by setting its value to the current
---- charge count, the icon (anchored to the bar) moves to visible or hidden positions.
---- @param frame table The tracker frame to attach the bar to
---- @param trackerConfig table Tracker configuration block
---- @param baseSpellID number Base spell ID
-function FrameTrackerManager:CreateChargeBasedDisplayBar(frame, trackerConfig, baseSpellID)
-    local cbdConfig = trackerConfig.chargeBasedDisplay
-    if not cbdConfig or not cbdConfig.enabled then return end
+--- Helper to create a single charge anchor StatusBar
+local function CreateSingleChargeAnchorBar(frame, baseSpellID, nameSuffix, minValue, maxValue, textureAnchorPoint, trackerConfig, isVariantFrame)
+    local barName = "ChargeAnchorBar_" .. baseSpellID .. nameSuffix
+    local bar = CreateFrame("StatusBar", barName, frame, "BackdropTemplate")
     
-    -- Calculate threshold values based on mode and operator
-    -- Normalize all combinations to "show when >= threshold" form
-    local mode = cbdConfig.displayState and "show" or "hide"  -- "show" or "hide"
-    local operator = cbdConfig.displayOperator or ">="  -- ">=", ">", "<", "<="
-    local value = cbdConfig.chargeValue or 1
+    local barTexture = trackerConfig.statusBar.defaultBarTexture
+    bar:SetStatusBarTexture(barTexture)
     
-    local low
-    local high
-    if operator == "<" or operator == ">=" then
-        high = value
-        low = value - 1
-    elseif operator == "<=" or operator == ">" then
-        high = value + 1
-        low = value
+    local anchorHeight = 100
+    
+    bar:SetMinMaxValues(minValue, maxValue)
+    bar:SetValue(minValue)
+    bar:SetSize(10, anchorHeight)
+    bar:SetOrientation("VERTICAL")
+    
+    
+    local borderColor, colorName
+    if isVariantFrame then
+        if nameSuffix == "A" then
+            borderColor = {1, 0, 0, 1}
+            colorName = "red"
+        else
+            borderColor = {1, 1, 0, 1}
+            colorName = "yellow"
+        end
+    else
+        if nameSuffix == "A" then
+            borderColor = {0, 1, 0, 1}
+            colorName = "green"
+        else
+            borderColor = {0, 0, 1, 1}
+            colorName = "blue"
+        end
     end
-
+    bar:SetStatusBarColor(unpack(borderColor))
+    bar:SetAlpha(1)
     
+    bar:SetBackdrop({
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 2
+    })
+    bar:SetBackdropBorderColor(unpack(borderColor))
     
-    -- Create the invisible status bar
-    frame.chargeAnchorBar = CreateFrame("StatusBar", "ChargeAnchorBar_" .. baseSpellID, frame, "BackdropTemplate")
+    bar:Show()
+    bar:ClearAllPoints()
     
-    local barTexture = (trackerConfig.statusBar.customBarTexture and trackerConfig.statusBar.customBarTexture ~= "")
-        and trackerConfig.statusBar.customBarTexture
-        or trackerConfig.statusBar.defaultBarTexture
-    frame.chargeAnchorBar:SetStatusBarTexture(barTexture)
-
-    local anchorHeight = UIParent:GetHeight() * 2
-    
-    frame.chargeAnchorBar:SetMinMaxValues(low, high)
-    frame.chargeAnchorBar:SetValue(low)  -- Start at max (visible)
-    frame.chargeAnchorBar:SetSize(10, anchorHeight)
-    frame.chargeAnchorBar:SetOrientation("VERTICAL")  -- Fill vertically, not horizontally
-    
-    -- Make the bar invisible but functional
-    frame.chargeAnchorBar:SetStatusBarColor(1, 1, 1, 0)
-    frame.chargeAnchorBar:SetAlpha(0)
-    
-    frame.chargeAnchorBar:Show()
-    frame.chargeAnchorBar:ClearAllPoints()
-    
-    -- Use BOTTOM anchor point when flipped, TOP when normal
-    local barAnchorPoint = "TOP"
-    local greater = (operator ~= '<' and operator ~= '<=')
-    local lesser = (operator ~= '>' and operator ~= '>=')
-    if (mode == 'show' and greater) or (mode == 'hide' and lesser) then
-        barAnchorPoint = "TOP"
-    elseif (mode == 'show' and lesser) or (mode == 'hide' and greater) then
-        barAnchorPoint = "BOTTOM"
-    end
-    frame.chargeAnchorBar:SetPoint(
-        barAnchorPoint,
-        UIParent,
-        trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
-        trackerConfig.position.x or 0,
-        trackerConfig.position.y or 0
-    )
-    
-    -- Store the config for later reference
-    frame.chargeAnchorBar._config = {
-        mode = mode,
-        operator = operator,
-        anchorPoint = barAnchorPoint
+    bar._config = {
+        minValue = minValue,
+        maxValue = maxValue,
+        textureAnchorPoint = textureAnchorPoint
     }
+    
+    return bar, colorName
 end
 
-function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType)
-    if FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+--- Helper to calculate min/max values based on operator and charge value
+--- For "<": show when charges < value, so bar range is (value-1, value)
+--- For ">": show when charges > value, so bar range is (value, value+1)
+local function CalculateBarRange(operator, value)
+    if operator == "<" then
+        return value - 1, value
+    else  -- ">"
+        return value, value + 1
+    end
+end
+
+--- Unified function to create charge anchor bars for both visibility and conditionals
+--- Handles all 8 cases (A-H) automatically based on configuration
+function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, isVariantFrame)
+    local cbdConfig = trackerConfig.chargeBasedDisplay
+    local hasChargeBasedDisplay = cbdConfig and cbdConfig.enabled
+    
+    local conditionalData = nil
+    if SpellStyler.ConditionalEngine and TrackerHasChargesConditionals(trackerConfig) and trackerConfig.specialVisibilityConditions then
+        for _, condition in ipairs(trackerConfig.specialVisibilityConditions) do
+            if condition.conditionalName and SpellStyler.ConditionalEngine:ConditionalUsesCharges(condition.conditionalName) then
+                conditionalData = SpellStyler.ConditionalEngine:GetChargeConditionalData(condition.conditionalName)
+                if conditionalData then break end
+            end
+        end
+    end
+    
+    if not hasChargeBasedDisplay and not conditionalData then return end
+    
+    local visibilityValue = hasChargeBasedDisplay and (cbdConfig.chargeValue or 1) or nil
+    local visibilityOperator = hasChargeBasedDisplay and (cbdConfig.displayOperator or ">") or nil
+    local visibilityMode = hasChargeBasedDisplay and (cbdConfig.displayState and "show" or "hide") or nil
+    
+    local variantValue = conditionalData and conditionalData.targetValue or nil
+    local variantOperator = conditionalData and conditionalData.comparison or nil
+    
+    -- Direction logic: show + > means UP, show + < means DOWN, hide + > means DOWN, hide + < means UP
+    local visibilityDirectionUp = visibilityOperator and ((visibilityMode == 'show' and visibilityOperator == '>') or
+                                  (visibilityMode == 'hide' and visibilityOperator == '<'))
+    local variantDirectionUp = variantOperator and (variantOperator == '>')
+    
+    -- Calculate if visibility shows at lower charge values than variant
+    -- Need to consider the operators: < means "below threshold", > means "above threshold"
+    local visibilityBelowVariant = false
+    if visibilityValue and variantValue and visibilityOperator and variantOperator then
+        if visibilityOperator == "<" and variantOperator == ">" then
+            -- visibility shows at charges [0, V-1], variant shows at [W+1, inf]
+            -- visibility is below if its max (V-1) is less than variant's min (W+1)
+            visibilityBelowVariant = (visibilityValue - 1) < (variantValue + 1)
+        else
+            -- For other operator combinations, use simple value comparison
+            visibilityBelowVariant = visibilityValue < variantValue
+        end
+    end
+    
+    local caseType = "single"
+    
+    if hasChargeBasedDisplay and conditionalData then
+        if visibilityBelowVariant then
+            if variantDirectionUp and not visibilityDirectionUp then
+                caseType = "A"
+            elseif not variantDirectionUp and not visibilityDirectionUp then
+                caseType = "B"
+            elseif not variantDirectionUp and visibilityDirectionUp then
+                caseType = "C"
+            elseif variantDirectionUp and visibilityDirectionUp then
+                caseType = "D"
+            end
+        else
+            if variantDirectionUp and not visibilityDirectionUp then
+                caseType = "E"
+            elseif not variantDirectionUp and not visibilityDirectionUp then
+                caseType = "F"
+            elseif not variantDirectionUp and visibilityDirectionUp then
+                caseType = "G"
+            elseif variantDirectionUp and visibilityDirectionUp then
+                caseType = "H"
+            end
+        end
+    end
+    
+    DevTool:AddData("case type " .. caseType, "CreateChargeAnchorBars")
+    
+    local xOffset = isVariantFrame and -100 or -20
+    
+    -- Case A: Base frame only (1 bar, BOTTOM anchor)
+    if caseType == "A" and not isVariantFrame then
+        local barAColor
+        local minVal, maxVal = visibilityValue - 1, visibilityValue
+        frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+            frame, baseSpellID, "A", minVal, maxVal, "BOTTOM", trackerConfig, isVariantFrame
+        )
+        frame.chargeAnchorBarA:SetPoint("BOTTOM", UIParent, 
+            trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+            (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+        DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case A base: " .. barAColor)
+        
+    -- Case B: Variant frame only (1 bar, BOTTOM anchor)
+    elseif caseType == "B" and isVariantFrame then
+        local barAColor
+        local minVal, maxVal = visibilityValue - 1, visibilityValue
+        frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+            frame, baseSpellID, "A", minVal, maxVal, "BOTTOM", trackerConfig, isVariantFrame
+        )
+        frame.chargeAnchorBarA:SetPoint("BOTTOM", UIParent,
+            trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+            (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+        DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case B variant: " .. barAColor)
+        
+    -- Case C
+    elseif caseType == "C" then
+        if isVariantFrame then
+            -- Variant: 2 bars (barB anchored to UIParent, barA chained to barB texture)
+            local barAColor, barBColor
+            local visMinVal, visMaxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+            local varMinVal, varMaxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarB, barBColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "B", visMinVal, visMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", varMinVal, varMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarB:SetPoint("TOP", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            frame.chargeAnchorBarA:SetPoint("BOTTOM", frame.chargeAnchorBarB:GetStatusBarTexture(), "TOP", 0, 0)
+            DevTool:AddData({barB = {min = visMinVal, max = visMaxVal, color = barBColor},
+                            barA = {min = varMinVal, max = varMaxVal, color = barAColor}}, "Case C variant dual")
+        else
+            -- Base: 1 bar (TOP anchor)
+            local barAColor
+            local minVal, maxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", minVal, maxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA:SetPoint("TOP", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case C base: " .. barAColor)
+        end
+        
+    -- Case D
+    elseif caseType == "D" then
+        if not isVariantFrame then
+            -- Base: 2 bars (barB anchored to UIParent, barA chained to barB texture)
+            local barAColor, barBColor
+            local visMinVal, visMaxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+            local varMinVal, varMaxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarB, barBColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "B", visMinVal, visMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", varMinVal, varMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarB:SetPoint("TOP", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            frame.chargeAnchorBarA:SetPoint("BOTTOM", frame.chargeAnchorBarB:GetStatusBarTexture(), "TOP", 0, 0)
+            DevTool:AddData({barB = {min = visMinVal, max = visMaxVal, color = barBColor},
+                            barA = {min = varMinVal, max = varMaxVal, color = barAColor}}, "Case D base dual")
+        else
+            -- Variant: 1 bar
+            local barAColor
+            local minVal, maxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", minVal, maxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA:SetPoint("TOP", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case D variant: " .. barAColor)
+        end
+        
+    -- Case E
+    elseif caseType == "E" then
+        if not isVariantFrame then
+            -- Base: 1 bar (BOTTOM anchor)
+            local barAColor
+            local minVal, maxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", minVal, maxVal, "BOTTOM", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA:SetPoint("BOTTOM", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case E base: " .. barAColor)
+        else
+            -- Variant: 2 bars (barB anchored to UIParent, barA chained to barB texture)
+            local barAColor, barBColor
+            local visMinVal, visMaxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+            local varMinVal, varMaxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarB, barBColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "B", visMinVal, visMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", varMinVal, varMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarB:SetPoint("TOP", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            frame.chargeAnchorBarA:SetPoint("BOTTOM", frame.chargeAnchorBarB:GetStatusBarTexture(), "TOP", 0, 0)
+            DevTool:AddData({barB = {min = visMinVal, max = visMaxVal, color = barBColor},
+                            barA = {min = varMinVal, max = varMaxVal, color = barAColor}}, "Case E variant dual")
+        end
+        
+    -- Case F
+    elseif caseType == "F" then
+        if isVariantFrame then
+            -- Variant: 1 bar (BOTTOM anchor)
+            local barAColor
+            local minVal, maxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", minVal, maxVal, "BOTTOM", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA:SetPoint("BOTTOM", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case F variant: " .. barAColor)
+        else
+            -- Base: 2 bars (barB anchored to UIParent, barA chained to barB texture)
+            local barAColor, barBColor
+            local visMinVal, visMaxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+            local varMinVal, varMaxVal = CalculateBarRange(variantOperator, variantValue)
+            frame.chargeAnchorBarB, barBColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "B", visMinVal, visMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+                frame, baseSpellID, "A", varMinVal, varMaxVal, "TOP", trackerConfig, isVariantFrame
+            )
+            frame.chargeAnchorBarB:SetPoint("TOP", UIParent,
+                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+                (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+            frame.chargeAnchorBarA:SetPoint("BOTTOM", frame.chargeAnchorBarB:GetStatusBarTexture(), "TOP", 0, 0)
+            DevTool:AddData({barB = {min = visMinVal, max = visMaxVal, color = barBColor},
+                            barA = {min = varMinVal, max = varMaxVal, color = barAColor}}, "Case F base dual")
+        end
+        
+    -- Case G: Base frame only (1 bar, TOP anchor)
+    elseif caseType == "G" and not isVariantFrame then
+        local barAColor
+        local minVal, maxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+        frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+            frame, baseSpellID, "A", minVal, maxVal, "TOP", trackerConfig, isVariantFrame
+        )
+        frame.chargeAnchorBarA:SetPoint("TOP", UIParent,
+            trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+            (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+        DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case G base: " .. barAColor)
+        
+    -- Case H: Variant frame only (1 bar, TOP anchor)
+    elseif caseType == "H" and isVariantFrame then
+        local barAColor
+        local minVal, maxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+        frame.chargeAnchorBarA, barAColor = CreateSingleChargeAnchorBar(
+            frame, baseSpellID, "A", minVal, maxVal, "TOP", trackerConfig, isVariantFrame
+        )
+        frame.chargeAnchorBarA:SetPoint("TOP", UIParent,
+            trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
+            (trackerConfig.position.x or 0) + xOffset, trackerConfig.position.y or 0)
+        DevTool:AddData({min = minVal, max = maxVal, color = barAColor}, "Case H variant: " .. barAColor)
+    end
+end
+
+function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, isVariantFrame)
+    -- For variant frames, skip the duplicate check and allow creation
+    -- Base frames still check if they already exist
+    if not isVariantFrame and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
         return FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
     end
-    local frameName = FRAME_PREFIX .. baseSpellID
+    
+    local frameName = FRAME_PREFIX .. baseSpellID .. (isVariantFrame and "_Variant" or "")
     --[[
         upon creating the frame, it starts with the overrideSpellID. "meta.activeSpellID" could update even further - for example:
             base = divine toll
@@ -530,7 +797,11 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     local spellChargesInfo = C_Spell.GetSpellCharges(trackerConfig.overrideSpellID or baseSpellID)
     local spellInfo = C_Spell.GetSpellInfo(trackerConfig.overrideSpellID  or baseSpellID)
     local frame = CreateFrame("Button", frameName, UIParent, "BackdropTemplate")
-    FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] = frame
+    
+    -- Only add base frames to the global registry; variant frames are stored on their base frame
+    if not isVariantFrame then
+        FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] = frame
+    end
     -- Only set the icon's own size when it is not managed by a container.
     -- LayoutContainer resizes and positions frames that are _inContainer.
     if not frame._inContainer then
@@ -578,32 +849,40 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     frame:SetBackdropColor(0, 0, 0, 0)
     frame:SetBackdropBorderColor(0, 0, 0, 0)
     
-    -- Icon texture
-    frame.icon = frame:CreateTexture(nil, "ARTWORK")
+    -- Icon container (handles opacity/alpha) - set lower frame level so statusBar renders above
+    frame.iconContainer = CreateFrame('Frame', 'iconContainer_' .. frame.meta.activeSpellID, frame)
+    frame.iconContainer:SetAllPoints(frame)
+    frame.iconContainer:SetFrameLevel(frame:GetFrameLevel() - 1)
+    
+    -- Icon texture (created on iconContainer, referenced via frame.icon)
+    frame.icon = frame.iconContainer:CreateTexture(nil, "ARTWORK")
     frame.Icon = frame.icon
 
-    frame.icon:SetPoint("TOPLEFT", 0, 0)
-    frame.icon:SetPoint("BOTTOMRIGHT", 0, 0)
+    frame.icon:SetAllPoints(frame.iconContainer)
     local zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom / 100) or 0
     frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
     local iconTexture = frame.meta.customTexture or trackerConfig.defaultIconTexturePath
     frame.icon:SetTexture(iconTexture)
+    
+    -- Apply color (RGB only, alpha goes on iconContainer)
     local _, insufficientPower = C_Spell.IsSpellUsable(frame.meta.activeSpellID)
     local color = (insufficientPower and trackerConfig.iconSettings.insufficientPower and trackerConfig.iconSettings.insufficientPowerIconColor)
         or trackerConfig.iconColor or {}
     frame.icon:SetVertexColor(
         color.r or 1,
         color.g or 1,
-        color.b or 1,
-        color.a or 1
+        color.b or 1
     )
+    
+    -- Apply alpha to iconContainer
+    frame.iconContainer:SetAlpha(color.a or 1)
 
     frame.icon:SetDesaturated(false)  -- Initialize as not desaturated
     
-    frame.cooldown = CreateFrame("Cooldown", frameName .. "_Cooldown", frame, "CooldownFrameTemplate")
+    frame.cooldown = CreateFrame("Cooldown", frameName .. "_Cooldown", frame.iconContainer, "CooldownFrameTemplate")
     frame.Cooldown = frame.cooldown
-    frame.cooldown:SetAllPoints(frame.icon)
-    frame.cooldown:SetFrameLevel(frame:GetFrameLevel() + 2)  -- Above icon texture
+    frame.cooldown:SetAllPoints(frame.iconContainer)
+    frame.cooldown:SetFrameLevel(frame.iconContainer:GetFrameLevel() + 1)  -- Above icon texture
     frame.cooldown:SetDrawEdge(true)
     frame.cooldown:SetDrawBling(false)
     frame.cooldown:SetSwipeColor(0, 0, 0, 0.8)
@@ -642,6 +921,11 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
                 end)
             end
         end
+        C_Timer.After(0, function()
+            local spellInfo = C_Spell.GetSpellInfo(frame.meta.activeSpellID)
+            local a, insufficientPower = C_Spell.IsSpellUsable(frame.meta.activeSpellID)
+            SpellStyler.ConditionalEngine:EvaluateAll()
+        end)
         
         FrameTrackerManager:DriveFrameUpdate(
             frame,
@@ -656,8 +940,7 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     
     FrameTrackerManager:CreateStatusBar(frame, "statusBar", trackerConfig, baseSpellID, trackerType)
 
-    -- Create charge-based display bar if enabled
-    FrameTrackerManager:CreateChargeBasedDisplayBar(frame, trackerConfig, baseSpellID)
+    FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, isVariantFrame)
 
     -- Stack count text (bottom right, larger font)
     frame.count = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
@@ -753,26 +1036,24 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     
     -- Apply saved position or default
     local pos = trackerConfig.position
-    if frame.chargeAnchorBar then
-        -- Anchor to charge-based display bar's moving edge
-        -- Use the bar's anchor point (TOP for normal, BOTTOM for flipped)
-        local barConfig = frame.chargeAnchorBar._config
-        -- local textureAnchor = barConfig and barConfig.anchorPoint or "TOP"
-        local barAnchorPoint = barConfig and barConfig.needsFlip and "BOTTOM" or "TOP"
+    if frame.chargeAnchorBarA then
         frame:ClearAllPoints()
-        frame:SetPoint("CENTER", frame.chargeAnchorBar:GetStatusBarTexture(), barAnchorPoint, 0, 0)
+        frame:SetPoint("CENTER", frame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
     elseif pos and pos.anchorPoint and pos.x and pos.y then
         frame:ClearAllPoints()
+        -- For variant frames, offset by 100 pixels to the right so both are visible
+        local xOffset = isVariantFrame and 100 or 0
         frame:SetPoint(
             pos.anchorPoint, 
             UIParent,  -- Always use UIParent for simplicity
             pos.relativeAnchorPoint or pos.anchorPoint, 
-            pos.x or 0, 
+            (pos.x or 0) + xOffset, 
             pos.y or 0
         )
     else
         -- Default position - center with offset based on slot
-        frame:SetPoint("CENTER", UIParent, "CENTER", -200, -100)
+        local xOffset = isVariantFrame and 100 or 0
+        frame:SetPoint("CENTER", UIParent, "CENTER", -200 + xOffset, -100)
     end
 
     -- Initially hidden
@@ -814,9 +1095,59 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     return frame
 end
 
-function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
-    local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+--- Ensures variant frame exists or doesn't exist based on charge conditionals.
+--- Creates or destroys variant frame as needed. Safe to call repeatedly.
+--- @param baseFrame table The base tracker frame
+--- @param trackerConfig table The tracker configuration
+--- @param baseSpellID number The base spell ID
+--- @param trackerType string The tracker type ("spells", "buffs", etc.)
+function FrameTrackerManager:EnsureVariantFrameLifecycle(baseFrame, trackerConfig, baseSpellID, trackerType)
+    if not baseFrame or not trackerConfig then return end
+    
+    -- Check if variant frame should exist based on charge conditionals
+    local shouldHaveVariant = TrackerHasChargesConditionals(trackerConfig)
+    local hasVariant = baseFrame.variantFrame ~= nil
+    
+    -- Manage variant frame lifecycle
+    if shouldHaveVariant and not hasVariant then
+        -- Create variant frame
+        local variantFrame = self:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, true)
+        baseFrame.variantFrame = variantFrame
+        variantFrame.isVariant = true
+        baseFrame.variants = {baseFrame, variantFrame}
+        variantFrame.variants = baseFrame.variants
+    elseif not shouldHaveVariant and hasVariant then
+        -- Destroy variant frame
+        local variantFrame = baseFrame.variantFrame
+        if variantFrame then
+            -- Cancel any tickers
+            if variantFrame._displayCountTicker then
+                variantFrame._displayCountTicker:Cancel()
+                variantFrame._displayCountTicker = nil
+            end
+            -- Clear the cooldown
+            if variantFrame.cooldown then
+                variantFrame.cooldown:Clear()
+            end
+            -- Hide and detach
+            variantFrame:Hide()
+            variantFrame:ClearAllPoints()
+            variantFrame:SetParent(nil)
+            -- Clear references
+            baseFrame.variantFrame = nil
+            baseFrame.variants = nil
+            variantFrame.variants = nil
+        end
+    end
+end
+
+--- Helper function to apply property updates to a single frame (base or variant)
+--- @param frame table The frame to update
+--- @param trackerConfig table The tracker configuration
+--- @param baseSpellID number The base spell ID
+--- @param trackerType string The tracker type
+local function ApplyFramePropertyUpdates(frame, trackerConfig, baseSpellID, trackerType)
+    if not frame then return end
     
     -- Update icon texture: check override first, then state
     local iconTexOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.iconTexturePath")
@@ -826,7 +1157,6 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
     local zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom / 100) or 0
     frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
     
- 
     -- Update size (skip when the frame is managed by a container; LayoutContainer controls its size)
     if not frame._inContainer then
         local widthOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.width")
@@ -842,8 +1172,8 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
 
     -- Update opacity: check override first, then state
     -- NOTE: Commented out to avoid conflicts with visibility alpha control in _ExecuteDrive
-    -- local opacityOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.opacity")
-    -- frame:SetAlpha(opacityOverride or trackerConfig.iconSettings.opacity or 1)
+    local opacityOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.opacity")
+    frame:SetAlpha(opacityOverride or trackerConfig.iconSettings.opacity or 1)
 
     -- Update frame strata and level
     frame:SetFrameStrata(trackerConfig.iconSettings.frameStrataLevel or "MEDIUM")
@@ -1078,49 +1408,59 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
         if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:SetScale(borderScale) end
     end
     
-    -- Update or create charge-based display bar if enabled
-    -- Destroy existing bar if disabled
-    if trackerConfig.chargeBasedDisplay and trackerConfig.chargeBasedDisplay.enabled then
-        -- Destroy and recreate to apply new settings
-        if frame.chargeAnchorBar then
-            frame.chargeAnchorBar:Hide()
-            frame.chargeAnchorBar:SetParent(nil)
-            frame.chargeAnchorBar = nil
-        end
-        FrameTrackerManager:CreateChargeBasedDisplayBar(frame, trackerConfig, baseSpellID)
-    elseif frame.chargeAnchorBar then
-        -- Disabled: remove the bar
-        frame.chargeAnchorBar:Hide()
-        frame.chargeAnchorBar:SetParent(nil)
-        frame.chargeAnchorBar = nil
+    if frame.chargeAnchorBarA then
+        frame.chargeAnchorBarA:Hide()
+        frame.chargeAnchorBarA:ClearAllPoints()
+        frame.chargeAnchorBarA = nil
+    end
+    if frame.chargeAnchorBarB then
+        frame.chargeAnchorBarB:Hide()
+        frame.chargeAnchorBarB:ClearAllPoints()
+        frame.chargeAnchorBarB = nil
     end
     
-    -- Update position: check override first, then state
+    FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, frame.isVariant or false)
+    
     local pos = trackerConfig.position
-    if frame.chargeAnchorBar then
-        -- Anchor to charge-based display bar's moving edge
-        -- Use the bar's anchor point (TOP for normal, BOTTOM for flipped)
-        local barConfig = frame.chargeAnchorBar._config
-        -- local textureAnchor = barConfig and barConfig.anchorPoint or "TOP"
-        local barAnchorPoint = barConfig and barConfig.needsFlip and "BOTTOM" or "TOP"
+    if frame.chargeAnchorBarA then
         frame:ClearAllPoints()
-        frame:SetPoint("CENTER", frame.chargeAnchorBar:GetStatusBarTexture(), barAnchorPoint, 0, 0)
+        frame:SetPoint("CENTER", frame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
     elseif pos and pos.anchorPoint and not frame._inContainer then
         local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.x")
         local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.y")
         frame:ClearAllPoints()
+        -- For variant frames, offset by 100 pixels to the right so both are visible
+        local xOffset = frame.isVariant and 100 or 0
         frame:SetPoint(
             pos.anchorPoint, 
             UIParent,
             pos.relativeAnchorPoint or pos.anchorPoint, 
-            (pos.x + (xOverride or 0)) or 0, 
+            ((pos.x + (xOverride or 0)) or 0) + xOffset, 
             (pos.y + (yOverride or 0)) or 0
         )
     end
+end
 
-
+function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+    local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
+    local baseFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    
+    if not baseFrame then return end
+    
+    -- Ensure variant frame lifecycle is correct based on current conditionals
+    self:EnsureVariantFrameLifecycle(baseFrame, trackerConfig, baseSpellID, trackerType)
+    
+    -- Apply property updates to base frame
+    ApplyFramePropertyUpdates(baseFrame, trackerConfig, baseSpellID, trackerType)
+    
+    -- Apply property updates to variant frame if it exists
+    if baseFrame.variantFrame then
+        ApplyFramePropertyUpdates(baseFrame.variantFrame, trackerConfig, baseSpellID, trackerType)
+    end
+    
+    -- Drive frame updates for both frames
     FrameTrackerManager:DriveFrameUpdate(
-        frame,
+        baseFrame,
         {
             resolveDuration = true,
             syncChargeText = true
@@ -1128,7 +1468,18 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
         nil,
         "configurationChanges"
     )
-
+    
+    if baseFrame.variantFrame then
+        FrameTrackerManager:DriveFrameUpdate(
+            baseFrame.variantFrame,
+            {
+                resolveDuration = true,
+                syncChargeText = true
+            },
+            nil,
+            "configurationChanges"
+        )
+    end
 end
 -- ============================================================================
 -- DRAGGING FUNCTIONS FOR CONFIG MENU
@@ -1240,6 +1591,12 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
     if hasSpecialization and baseSpellID and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        -- Skip if mock cooldown is active
+        local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+        if frame.meta.mockCooldownActive then
+            return
+        end
+        
         if trackerType == "buffs" then
             pcall(function()
                 --if the icon does NOT have a custom texture, then update it dynamically
@@ -1248,6 +1605,7 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
                     local icon = cdm_frame.Icon or cdm_frame.icon
                     local texture = (icon.GetTexture and icon:GetTexture()) or icon.texture or cdm_frame.spellStyler_texture
                     frame.icon:SetTexture(texture)
+                    if frame.variantFrame then frame.variantFrame.icon:SetTexture(texture) end
                 end
             end)
             
@@ -1258,10 +1616,13 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
             -- non-zero ID from its previous application, which would incorrectly
             -- make Set Icon Visibility think the buff is still active.
             frame.meta.currentAuraInstanceID = cdm_frame:GetAuraSpellInstanceID() or 0
+            if frame.variantFrame then frame.variantFrame.meta.currentAuraInstanceID = frame.meta.currentAuraInstanceID end
             if frame.meta.currentAuraInstanceID ~= 0 then
                 frame.meta.buffStatus = 'present'
+                if frame.variantFrame then frame.variantFrame.meta.buffStatus = 'present' end
             else
                 frame.meta.buffStatus = 'absent'
+                if frame.variantFrame then frame.variantFrame.meta.buffStatus = 'absent' end
             end
             -- Guard: config can be nil during spec transitions when a stale CDM frame
             -- fires while the new spec's database hasn't been built yet, or when the
@@ -1277,6 +1638,18 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
                 nil,
                 "hookCallback_" .. caller
             )
+            if frame.variantFrame then 
+                FrameTrackerManager:DriveFrameUpdate(
+                    frame.variantFrame,
+                    {
+                        resolveDuration = true,
+                        syncChargeText = true
+                    },
+
+                    nil,
+                    "hookCallback_" .. caller
+                )
+            end
         end
     end
 end
@@ -1668,13 +2041,24 @@ function FrameTrackerManager:renderUpdateChargesText(data)
                         local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
                         local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
                         data.customFrame.count:SetText(playerCount or targetCount)
-                        if data.config.chargeBasedDisplay.enabled and data.customFrame.chargeAnchorBar then
-                            data.customFrame.chargeAnchorBar:SetValue(playerCount or targetCount or 0)
+                        if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
+                            local chargeValue = playerCount or targetCount or 0
+                            if data.customFrame.chargeAnchorBarA then
+                                data.customFrame.chargeAnchorBarA:SetValue(chargeValue)
+                                if data.customFrame.chargeAnchorBarB then
+                                    data.customFrame.chargeAnchorBarB:SetValue(chargeValue)
+                                end
+                            end
                         end
                     else
                         data.customFrame.count:SetText("")
-                        if data.config.chargeBasedDisplay.enabled and data.customFrame.chargeAnchorBar then
-                            data.customFrame.chargeAnchorBar:SetValue(0)
+                        if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
+                            if data.customFrame.chargeAnchorBarA then
+                                data.customFrame.chargeAnchorBarA:SetValue(0)
+                                if data.customFrame.chargeAnchorBarB then
+                                    data.customFrame.chargeAnchorBarB:SetValue(0)
+                                end
+                            end
                         end
                     end
                 end
@@ -1697,8 +2081,13 @@ function FrameTrackerManager:renderUpdateChargesText(data)
                     end
                     data.customFrame.count:SetText(currentCharges)
                     data.customFrame.count:SetAlpha(currentCharges)
-                    if data.config.chargeBasedDisplay.enabled and data.customFrame.chargeAnchorBar then
-                        data.customFrame.chargeAnchorBar:SetValue(currentCharges)
+                    if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
+                        if data.customFrame.chargeAnchorBarA then
+                            data.customFrame.chargeAnchorBarA:SetValue(currentCharges)
+                            if data.customFrame.chargeAnchorBarB then
+                                data.customFrame.chargeAnchorBarB:SetValue(currentCharges)
+                            end
+                        end
                     end
                 end
             end
@@ -1745,13 +2134,17 @@ FrameTrackerManager.ApplyVisibility = {
         local iconColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "iconColor")
         local color = iconColorOverride or (context.config and context.config.iconColor) or {}
         
-        -- Apply color with the appropriate alpha
+        -- Apply RGB color to icon texture
         context.customFrame.icon:SetVertexColor(
             color.r or 1,
             color.g or 1,
             color.b or 1,
             alpha
         )
+        
+        -- Apply combined alpha to iconContainer: dynamicAlpha * colorAlpha * opacitySettings
+        local colorAlpha = color.a or 1
+        context.customFrame.iconContainer:SetAlpha(colorAlpha)
     end,
     --[[
     
@@ -1920,6 +2313,11 @@ FrameTrackerManager.ApplyVisibility = {
 --- @param data ApplyCooldownDurationData
 --local function _DoApplyCooldownDuration(data)
 function FrameTrackerManager:ApplyCooldownDuration(data)
+    -- Skip duration resolution if mock cooldown is active
+    if data.customFrame and data.customFrame.meta and data.customFrame.meta.mockCooldownActive then
+        return
+    end
+    
     local durationObject = data.durationObject  -- optional pre-resolved duration object
     local s, e
     if not durationObject then
@@ -2145,6 +2543,83 @@ eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 
+
+local function eventHandlers(event, frame, meta)
+    if event == "SPELL_DATA_LOAD_RESULT" then
+        frame.meta.spellName = meta.spellName
+        frame.meta.isSpellWithCharges = meta.isSpellWithCharges
+        FrameTrackerManager:DriveFrameUpdate(
+            frame, {
+                resolveDuration = true,
+                syncChargeText = true
+            },
+            nil,
+            'spellDataLoaded'
+        )
+    end
+    if event == "SPELL_UPDATE_CHARGES" then
+        local isActive = C_Spell.GetSpellCharges(frame.meta.activeSpellID).isActive
+        -- clear any active cooldown and reapply (This helps when a spell gains its final charge in the middle of a cooldown. It will clear, rather than compeltely the cooldown duration that means nothing at that point)
+        if not isActive then
+            if frame and frame.cooldown then frame.cooldown:Clear() end
+            if frame and frame.statusBar then frame.statusBar:SetValue(0) end
+            FrameTrackerManager:DriveFrameUpdate(
+                frame, {
+                    resolveDuration = false,
+                    syncChargeText = true
+                },
+                nil,
+                'spellupdateCharges'
+            )
+        else
+            FrameTrackerManager:DriveFrameUpdate(
+                frame, {
+                    resolveDuration = true,
+                    syncChargeText = true
+                },
+                nil,
+                'spellupdateCharges'
+            )
+        end
+    end
+    if event == "UNIT_POWER_UPDATE" then
+    end
+    if event == "UNIT_AURA" then
+        frame.meta.currentAuraInstanceID = 0 --clear
+        frame.meta.buffStatus = 'absent'
+        frame.cooldown:Clear()
+        frame.statusBar:SetValue(0)
+        FrameTrackerManager:DriveFrameUpdate(
+            frame,
+            {
+                resolveDuration = false,
+                syncChargeText = true
+            },
+            nil,
+            "unitAura_explicitRemoval"
+        )
+    end
+    if event == "SPELL_UPDATE_ICON" then
+        frame.meta.activeSpellID = meta.activeSpellID
+        frame.cooldown:Clear()
+        frame.cooldown:Hide()
+        FrameTrackerManager:DriveFrameUpdate(
+            frame,
+            {
+                resolveDuration = true,
+                syncChargeText = true
+            },
+            nil,
+            "spellUpdateIcon"
+        )
+    end
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+    end
+    if event == "SPELL_UPDATE_COOLDOWN" then
+    end
+end
+
+
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnetedWorld = true
@@ -2165,17 +2640,16 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                             local config = State:GetSpecificTrackerValue(baseSpellID, tType)
                             local spellChargesInfo = C_Spell.GetSpellCharges(config.overrideSpellID)
                             local spellInfo = C_Spell.GetSpellInfo(config.overrideSpellID)
-                            customFrame.meta.spellName = spellInfo.name
-                            customFrame.meta.isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
-
-                            FrameTrackerManager:DriveFrameUpdate(
-                                customFrame, {
-                                    resolveDuration = true,
-                                    syncChargeText = true
-                                },
-                                nil,
-                                'spellDataLoaded'
-                            )
+                            eventHandlers(event, customFrame, {
+                                spellName = spellInfo.name,
+                                isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
+                            })
+                            if customFrame.variantFrame then
+                                eventHandlers(event, customFrame.variantFrame, {
+                                    spellName = spellInfo.name,
+                                    isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
+                                })
+                            end
                         end)
                     end
                 end
@@ -2223,30 +2697,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         for _, tType in ipairs({"essential", "utility", "spells"}) do
             if FrameTrackerManager.SpellStyler_frames[tType] then
                 for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
-                    local match = FrameTrackerManager:MatchTrackerFrame(baseSpellID)
-                    if match and match.customFrame.meta.isSpellWithCharges then
-                        local isActive = C_Spell.GetSpellCharges(match.customFrame.meta.activeSpellID).isActive
-                        -- clear any active cooldown and reapply (This helps when a spell gains its final charge in the middle of a cooldown. It will clear, rather than compeltely the cooldown duration that means nothing at that point)
-                        if not isActive then
-                            if match.customFrame and match.customFrame.cooldown then match.customFrame.cooldown:Clear() end
-                            if match.customFrame and match.customFrame.statusBar then match.customFrame.statusBar:SetValue(0) end
-                            FrameTrackerManager:DriveFrameUpdate(
-                                customFrame, {
-                                    resolveDuration = false,
-                                    syncChargeText = true
-                                },
-                                nil,
-                                'spellupdateCharges'
-                            )
-                        else
-                            FrameTrackerManager:DriveFrameUpdate(
-                                customFrame, {
-                                    resolveDuration = true,
-                                    syncChargeText = true
-                                },
-                                nil,
-                                'spellupdateCharges'
-                            )
+                    -- Skip if mock cooldown is active
+                    if not customFrame.meta.mockCooldownActive then
+                        local match = FrameTrackerManager:MatchTrackerFrame(baseSpellID)
+                        if match and match.customFrame.meta.isSpellWithCharges then
+                            eventHandlers("SPELL_UPDATE_CHARGES", match.customFrame, nil)
+                            if match.customFrame.variantFrame then eventHandlers("SPELL_UPDATE_CHARGES", match.customFrame.variantFrame, nil) end
                         end
                     end
                 end
@@ -2256,36 +2712,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "UNIT_POWER_UPDATE" then
         local unitTarget, powerType = ...
         if unitTarget == "player" then
-            local power = GetComboPoints("player", "target")
-            SpellStyler.ConditionalEngine:NotifySourceChanged("ComboPoints", power)
-            for _, tType in ipairs({"spells", "buffs"}) do
-                if FrameTrackerManager.SpellStyler_frames[tType] then
-                    for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
-                        local config = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, tType)
-                        if config.iconSettings.insufficientPower then
-                            local _, insufficientPower = C_Spell.IsSpellUsable(customFrame.meta.activeSpellID)
-                            local color = (insufficientPower and config.iconSettings.insufficientPower and config.iconSettings.insufficientPowerIconColor)
-                                or config.iconColor or {}
-                            customFrame.icon:SetVertexColor(
-                                color.r or 1,
-                                color.g or 1,
-                                color.b or 1,
-                                color.a or 1
-                            )
-
-                            FrameTrackerManager:DriveFrameUpdate(
-                                customFrame,
-                                {
-                                    resolveDuration = false,
-                                    syncChargeText = false
-                                },
-                                nil,
-                                'unitPowerUpdate'
-                            )
-                        end
-                    end
-                end
-            end
+            SpellStyler.ConditionalEngine:EvaluateAll()
         end
     end
 
@@ -2302,7 +2729,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
         --If an aura has been removed, its possible it was something that could modify a spells cooldown rate. The only way to respond (correctl update the duration and its ModRate, is to reapply, for any active cooldown)
         for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
-            if customFrame.meta.isDurationActive then
+            -- Skip if mock cooldown is active
+            if customFrame.meta.isDurationActive and not customFrame.meta.mockCooldownActive then
                 FrameTrackerManager:DriveFrameUpdate(
                     customFrame,
                     {
@@ -2312,6 +2740,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     nil,
                     "respondingToPotentialModRateChange"
                 )
+                if customFrame.variantFrame then
+                    FrameTrackerManager:DriveFrameUpdate(
+                        customFrame.variantFrame,
+                        {
+                            resolveDuration = true,
+                            syncChargeText = true
+                        },
+                        nil,
+                        "respondingToPotentialModRateChange"
+                    )
+                end
             end
         end
 
@@ -2329,22 +2768,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         
         -- Handle explicit removals
         for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["buffs"]) do
-            local currentAuraInstanceID = customFrame.meta.currentAuraInstanceID or 0
-            local shouldClear = removedAuraSet[currentAuraInstanceID]
-            if shouldClear then
-                customFrame.meta.currentAuraInstanceID = 0 --clear
-                customFrame.meta.buffStatus = 'absent'
-                customFrame.cooldown:Clear()
-                customFrame.statusBar:SetValue(0)
-                FrameTrackerManager:DriveFrameUpdate(
-                    customFrame,
-                    {
-                        resolveDuration = false,
-                        syncChargeText = true
-                    },
-                    nil,
-                    "unitAura_explicitRemoval"
-                )
+            -- Skip if mock cooldown is active
+            if not (customFrame.meta.mockCooldownActive) then
+                local currentAuraInstanceID = customFrame.meta.currentAuraInstanceID or 0
+                local shouldClear = removedAuraSet[currentAuraInstanceID]
+                if shouldClear then
+                    eventHandlers("UNIT_AURA", customFrame, nil)
+                    if customFrame.variantFrame then eventHandlers("UNIT_AURA", customFrame.variantFrame, nil) end
+                end
             end
         end
     end
@@ -2354,25 +2785,20 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         pcall(function()
             local match = FrameTrackerManager:MatchTrackerFrame(spellID)
             if match then
+                -- Skip if mock cooldown is active
+                if match.customFrame.meta.mockCooldownActive then
+                    return
+                end
+                
                 local spellInfo = C_Spell.GetSpellInfo(spellID)
                 if match.config.iconSettings.iconTexturePath == nil or match.config.iconSettings.iconTexturePath == '' then
                     match.customFrame.icon:SetTexture(spellInfo.iconID)
+                    if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(spellInfo.iconID) end
                 end
                 if (match.trackerType ~= 'buffs') then
                     --only reapply data for non-buffs. The buffs should be using the hooks to update their data
-                    match.customFrame.meta.activeSpellID = C_Spell.GetOverrideSpell(match.baseSpellID)
-                    
-                    match.customFrame.cooldown:Clear()
-                    match.customFrame.cooldown:Hide()
-                    FrameTrackerManager:DriveFrameUpdate(
-                        match.customFrame,
-                        {
-                            resolveDuration = true,
-                            syncChargeText = true
-                        },
-                        nil,
-                        "spellUpdateIcon"
-                    )
+                    eventHandlers("SPELL_UPDATE_ICON", match.customFrame, { activeSpellID = C_Spell.GetOverrideSpell(match.baseSpellID) })
+                    if match.customFrame.variantFrame then eventHandlers("SPELL_UPDATE_ICON", match.customFrame, { activeSpellID = C_Spell.GetOverrideSpell(match.baseSpellID) }) end
                 end
             end
         end)
@@ -2405,12 +2831,20 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     local match = FrameTrackerManager:MatchTrackerFrame(spellID)
 
                     if match then
+                        -- Skip if mock cooldown is active
+                        if match.customFrame.meta.mockCooldownActive then
+                            return
+                        end
+                        
                         local override = C_Spell.GetOverrideSpell(spellID)
                         if override ~= spellID then
                             local spellInfoUpdate = C_Spell.GetSpellInfo(override)
                             --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                             --Save the override spell onto the frame though to be able to check future casts
                             match.customFrame.meta.activeSpellID = override
+                            if match.customFrame.variantFrame then
+                                match.customFrame.variantFrame.meta.activeSpellID = override
+                            end
 
                             -- Attempt to update charges if it mutated into a spell with charges
                             -- FrameTrackerManager:renderUpdateChargesText(match)
@@ -2423,6 +2857,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                                 nil,
                                 "unitSpellcastSucceeded_spellOverwritten"
                             )
+                            if match.customFrame.variantFrame then
+                                FrameTrackerManager:DriveFrameUpdate(
+                                    match.customFrame.variantFrame,
+                                    {
+                                        resolveDuration = false,
+                                        syncChargeText = true
+                                    },
+                                    nil,
+                                    "unitSpellcastSucceeded_spellOverwritten"
+                                )
+                            end
                         else
                             local spellInfo = C_Spell.GetSpellInfo(spellID)
                             -- FrameTrackerManager:ApplyCooldownDuration(match)
@@ -2435,6 +2880,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                                 nil,
                                 "unitSpellcastSucceeded_spellUnchanged"
                             )
+                            if match.customFrame.variantFrame then
+                                FrameTrackerManager:DriveFrameUpdate(
+                                    match.customFrame.variantFrame,
+                                    {
+                                        resolveDuration = true,
+                                        syncChargeText = true
+                                    },
+                                    nil,
+                                    "unitSpellcastSucceeded_spellUnchanged"
+                                )
+                            end
                         end
                     end
                     
@@ -2452,6 +2908,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
         if frameMatchData then
+            -- Skip if mock cooldown is active
+            if frameMatchData.customFrame.meta.mockCooldownActive then
+                return
+            end
+            
             local success, error = pcall(function()
                 local isActive
                 pcall(function()
@@ -2472,6 +2933,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         nil,
                         "spellUpdateCooldown_updateOtherSpellsOnCooldown"
                     )
+                    if frameMatchData.customFrame.variantFrame then
+                        FrameTrackerManager:DriveFrameUpdate(
+                            frameMatchData.customFrame.variantFrame,
+                            {
+                                resolveDuration = true,
+                                syncChargeText = true
+                            },
+                            nil,
+                            "spellUpdateCooldown_updateOtherSpellsOnCooldown"
+                        )
+                    end
                 end
 
                 if cooldownInfo.isOnGCD == true then
@@ -2484,6 +2956,9 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                     --Save the override spell onto the frame though to be able to check future casts
                     frameMatchData.customFrame.meta.activeSpellID = overrideSpellID
+                    if frameMatchData.customFrame.variantFrame then
+                        frameMatchData.customFrame.variantFrame.meta.activeSpellID = overrideSpellID
+                    end
                     return
                 end
                 -- FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
@@ -2496,6 +2971,17 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     nil,
                     "spellUpdateCooldown_updateEventSpell"
                 )
+                if frameMatchData.customFrame.variantFrame then
+                    FrameTrackerManager:DriveFrameUpdate(
+                        frameMatchData.customFrame.variantFrame,
+                        {
+                            resolveDuration = true,
+                            syncChargeText = true
+                        },
+                        nil,
+                        "spellUpdateCooldown_updateEventSpell"
+                    )
+                end
             end)
         end
     end
