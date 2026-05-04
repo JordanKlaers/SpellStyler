@@ -1477,6 +1477,14 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         if _iconPositionInputs[axis] then
             _iconPositionInputs[axis]:SetText(tostring(newValue))
         end
+        
+        -- If frame has charge anchor bars, refresh them at new position
+        -- Skip visibility updates to avoid visual artifacts during arrow key movement
+        local frame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uniqueID, trackerType)
+        if frame and (frame.chargeAnchorBarA or frame.chargeAnchorBarB or 
+                     (frame.variantFrame and (frame.variantFrame.chargeAnchorBarA or frame.variantFrame.chargeAnchorBarB))) then
+            SpellStyler.FrameTrackerManager:RefreshChargeAnchorBars(uniqueID, trackerType, true)
+        end
     end
     _shiftBarPosition = function(axis, delta)
         local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.x") or 0
@@ -2355,6 +2363,7 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
     for trackerType, frames in pairs(FrameTrackerManager.SpellStyler_frames) do
         for baseSpellID, frame in pairs(frames) do
             if frame and not frame._inContainer then
+                -- Enable dragging for base frame
                 frame:EnableMouse(true)
                 frame:RegisterForDrag("LeftButton")
                 
@@ -2386,8 +2395,9 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
                     
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position", positionData)
                     
-                    -- Verify it was saved
-                    local saved = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "position")
+                    -- State setter automatically calls CreateChargeAnchorBarInfrastructure + UpdateFrame_ConfigurationChanges
+                    -- This will reposition both base and variant frames and recreate charge bars at new position
+                    -- Variant frame is REUSED (preserving ConditionalEngine cache)
                 end)
                 
                 -- Add click handler to select icon in settings
@@ -2396,6 +2406,54 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
                         onFrameClickCallback(baseSpellID, trackerType)
                     end
                 end)
+                
+                -- Enable dragging for variant frame if it exists (shares same position as base)
+                if frame.variantFrame and not frame.variantFrame._inContainer then
+                    frame.variantFrame:EnableMouse(true)
+                    frame.variantFrame:RegisterForDrag("LeftButton")
+                    
+                    frame.variantFrame:SetScript("OnDragStart", function(self)
+                        self:StartMoving()
+                        -- Notify settings panel that this icon was selected
+                        if onFrameClickCallback then
+                            onFrameClickCallback(self.meta.baseSpellID, self.meta.trackerType)
+                        end
+                    end)
+                    
+                    frame.variantFrame:SetScript("OnDragStop", function(self)
+                        self:StopMovingOrSizing()
+                        -- Save to the same position property as base frame
+                        local point, relativeTo, relativePoint, xOff, yOff = self:GetPoint()
+                        local relRef = nil
+                        if relativeTo == UIParent then
+                            relRef = "UIParent"
+                        end
+                        
+                        local positionData = {
+                            anchorPoint = point or "CENTER",
+                            relativeToFrame = relRef or nil,
+                            relativeAnchorPoint = relativePoint or point or "CENTER",
+                            x = xOff or 0,
+                            y = yOff or 0
+                        }
+                        
+                        -- Use meta from variant frame to get correct baseSpellID/trackerType
+                        State:SetTrackerValueConfigProperty(self.meta.baseSpellID, self.meta.trackerType, "position", positionData)
+                        
+                        -- Verify it was saved
+                        local saved = State:GetTrackerValueConfigProperty(self.meta.baseSpellID, self.meta.trackerType, "position")
+                        
+                        -- Infrastructure rebuild is already triggered by State setter
+                        -- This will reuse the variant frame and recreate charge bars at new position
+                    end)
+                    
+                    -- Add click handler for variant frame
+                    frame.variantFrame:SetScript("OnMouseDown", function(self, button)
+                        if button == "LeftButton" and onFrameClickCallback then
+                            onFrameClickCallback(self.meta.baseSpellID, self.meta.trackerType)
+                        end
+                    end)
+                end
             end
         end
     end
@@ -2419,6 +2477,19 @@ function IconSettingsRenderer:DisableDraggingForAllFrames()
                 -- Hide the drag border indicator
                 if frame._SpellStyler_dragBorder then
                     frame._SpellStyler_dragBorder:Hide()
+                end
+                
+                -- Disable dragging for variant frame if it exists
+                if frame.variantFrame then
+                    frame.variantFrame:EnableMouse(false)
+                    frame.variantFrame:RegisterForDrag()
+                    frame.variantFrame:SetScript("OnDragStart", nil)
+                    frame.variantFrame:SetScript("OnDragStop",  nil)
+                    frame.variantFrame:SetScript("OnMouseDown", nil)
+                    
+                    if frame.variantFrame._SpellStyler_dragBorder then
+                        frame.variantFrame._SpellStyler_dragBorder:Hide()
+                    end
                 end
             end
         end

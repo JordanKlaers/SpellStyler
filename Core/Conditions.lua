@@ -745,13 +745,6 @@ ConditionsRenderer.conditionalTypeRenderers = {
                 info.func = function(btn)
                     data.comparison = btn.value
                     RefreshComp()
-                    -- Refresh charge bars for all trackers using this conditional
-                    if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.RefreshChargeAnchorBarsForConditional then
-                        local conditionalName = container.conditionalName
-                        if conditionalName then
-                            SpellStyler.FrameTrackerManager:RefreshChargeAnchorBarsForConditional(conditionalName)
-                        end
-                    end
                     -- Re-evaluate all conditionals
                     if SpellStyler.ConditionalEngine then
                         SpellStyler.ConditionalEngine:EvaluateAll()
@@ -772,12 +765,8 @@ ConditionsRenderer.conditionalTypeRenderers = {
             if v then
                 data.targetValue = math.max(0, math.min(10, v))
                 -- Refresh charge bars for all trackers using this conditional
-                if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.RefreshChargeAnchorBarsForConditional then
+                if SpellStyler.FrameTrackerManager then
                     C_Timer.After(0.5, function()  -- Debounce to avoid excessive refreshes while typing
-                        local conditionalName = container.conditionalName
-                        if conditionalName then
-                            SpellStyler.FrameTrackerManager:RefreshChargeAnchorBarsForConditional(conditionalName)
-                        end
                         -- Re-evaluate all conditionals
                         if SpellStyler.ConditionalEngine then
                             SpellStyler.ConditionalEngine:EvaluateAll()

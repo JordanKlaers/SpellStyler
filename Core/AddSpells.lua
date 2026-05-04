@@ -221,7 +221,10 @@ function AddSpells:RenderAddSpellsView(parent)
         -- Wipe devNotes before creating frame (fresh start for error tracking)
         local baseSpellID = C_Spell.GetBaseSpell(selectedSpell.spellID)
         SpellStyler.State:SetTrackerValueConfigProperty(baseSpellID, "spells", "devNotes", {})
-        FTM:CreateTrackerFrame(baseSpellID, trackerConfig, "spells")
+        
+        -- CreateFrameMiddleware creates base frame, variant frame (if needed),
+        -- sets up charge infrastructure, and drives updates
+        FTM:CreateFrameMiddleware(baseSpellID, trackerConfig, "spells")
 
         -- 3. Remove from the grid so it can't be added twice
         local addedID = selectedSpell.spellID

@@ -528,12 +528,8 @@ function ConditionalEngine:EvaluateAll()
                         local activeSpellID = (customFrame.meta and customFrame.meta.activeSpellID) or baseSpellID
                         local spellInfo = C_Spell.GetSpellInfo(activeSpellID)
                         
-                        -- IMPORTANT: Ensure variant frame exists/doesn't exist based on current conditionals
-                        -- This must happen BEFORE property overrides are applied, so they have the correct target frames
-                        -- We only manage the frame lifecycle here, not property updates (to avoid overhead)
-                        if FrameTrackerManager.EnsureVariantFrameLifecycle then
-                            FrameTrackerManager:EnsureVariantFrameLifecycle(customFrame, trackerValue, baseSpellID, trackerType)
-                        end
+                        -- Variant frame lifecycle is managed by RebuildChargeInfrastructure
+                        -- Do NOT manage it here or it will get out of sync with charge bars
                         
                         -- now loop over each condition and see if it has properties assigned that might need to be updated if the condition is true
                         for conditionalIndex, specialVisibilityCondition in ipairs(specialVisibilityConditions) do
@@ -560,13 +556,6 @@ function ConditionalEngine:EvaluateAll()
                                 if not self._conditionalStates[customFrame][conditionalKey] then
                                     self._conditionalStates[customFrame][conditionalKey] = {}
                                 end
-                                DevTool:AddData({
-                                    conditionalName = conditionalName,
-                                    conditionalResult = conditionalResult,
-                                    propertyOverrides = specialVisibilityCondition.propertyOverrides,
-                                    didItChangeToTrue = self._conditionalStates[customFrame][conditionalKey].previousConditionalResult ~= conditionalResult and conditionalResult == true,
-                                    isActive = C_Spell.GetSpellCooldown(activeSpellID).isActive
-                                }, "conditional for " .. spellInfo.name)
                                 -- save the most recent evaluation then check if there was a difference
                                 local previousConditionalResult = self._conditionalStates[customFrame][conditionalKey].previousConditionalResult
                                 if previousConditionalResult ~= conditionalResult and conditionalResult == true then

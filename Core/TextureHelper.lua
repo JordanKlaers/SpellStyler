@@ -364,22 +364,7 @@ pcall(function()
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                local match = SpellStyler.FrameTrackerManager:MatchTrackerFrame(115151)
-                local point, relativeTo, relativePoint, offsetX, offsetY = match.customFrame:GetPoint()
-                local statusBarSize_left, statusBarSize_bottom, statusBarSize_width ,statusBarSize_height = match.customFrame.chargeAnchorBar:GetStatusBarTexture():GetRect()
-                DevTool:AddData({
-                    match = match,
-                    isVisible = match.customFrame.IsVisible and match.customFrame:IsVisible(),
-                    getPoint = {
-                        point = point,
-                        relativeTo = relativeTo,
-                        relativePoint = relativePoint,
-                        offsetX  = offsetX,
-                        offsetY = offsetY
-                    },
-                    bottom = match.customFrame:GetBottom(),
-                    sbs = { statusBarSize_left, statusBarSize_bottom, statusBarSize_width ,statusBarSize_height }
-                }, "isVisible")
+                
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool

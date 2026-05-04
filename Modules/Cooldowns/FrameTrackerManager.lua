@@ -175,23 +175,10 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             if trackerConfig then
                 -- Wipe devNotes before creating frame (fresh start for error tracking)
                 State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
-                local baseFrame = FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType, false)
                 
-                -- Variant frames are ONLY created when there are property conditionals that use charges
-                -- Charge-based VISIBILITY does NOT require a variant frame (only base frame needed)
-                -- TrackerHasChargesConditionals checks specialVisibilityConditions, NOT chargeBasedDisplay
-                if baseFrame and TrackerHasChargesConditionals(trackerConfig) then
-                    local variantFrame = FrameTrackerManager:CreateTrackerFrame(spellID, trackerConfig, trackerType, true)
-                    if variantFrame then
-                        baseFrame.variantFrame = variantFrame
-                        variantFrame.isVariant = true
-                        variantFrame.baseFrame = baseFrame  -- Reference back to base frame for dualFrameStatus checks
-                        -- Create shared variants array: allows iterating all variants from either frame
-                        -- (e.g., in event handlers: for _, f in ipairs(frame.variants) do ... end)
-                        -- baseFrame.variants = { baseFrame, variantFrame }
-                        -- variantFrame.variants = baseFrame.variants
-                    end
-                end
+                -- CreateFrameMiddleware creates base frame, variant frame (if needed),
+                -- sets up charge infrastructure, and drives updates
+                FrameTrackerManager:CreateFrameMiddleware(spellID, trackerConfig, trackerType)
             end
         end
     end
@@ -217,23 +204,10 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                 then
                     -- Wipe devNotes before creating frame (fresh start for error tracking)
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
-                    local baseFrame = FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, false)
                     
-                    -- Variant frames are ONLY created when there are property conditionals that use charges
-                    -- Charge-based VISIBILITY does NOT require a variant frame (only base frame needed)
-                    -- TrackerHasChargesConditionals checks specialVisibilityConditions, NOT chargeBasedDisplay
-                    if baseFrame and TrackerHasChargesConditionals(trackerConfig) then
-                        local variantFrame = FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, true)
-                        if variantFrame then
-                            baseFrame.variantFrame = variantFrame
-                            variantFrame.isVariant = true
-                            variantFrame.baseFrame = baseFrame  -- Reference back to base frame for dualFrameStatus checks
-                            -- Create shared variants array: allows iterating all variants from either frame
-                            -- (e.g., in event handlers: for _, f in ipairs(frame.variants) do ... end)
-                            baseFrame.variants = { baseFrame, variantFrame }
-                            variantFrame.variants = baseFrame.variants
-                        end
-                    end
+                    -- CreateFrameMiddleware creates base frame, variant frame (if needed),
+                    -- sets up charge infrastructure, and drives updates
+                    FrameTrackerManager:CreateFrameMiddleware(baseSpellID, trackerConfig, trackerType)
                 end
             end
         end
@@ -520,73 +494,74 @@ local function HideFrameElements(frame)
     
     -- Hide the frame itself and set alpha to 0
     frame:Hide()
-    frame:SetAlpha(0)
+    -- frame:SetAlpha(0)
     
     -- Hide and zero alpha on all icon elements
     if frame.iconContainer then 
         frame.iconContainer:Hide()
-        frame.iconContainer:SetAlpha(0)
+        -- frame.iconContainer:SetAlpha(0)
     end
     if frame.icon then 
         frame.icon:Hide()
-        frame.icon:SetAlpha(0)
+        -- frame.icon:SetAlpha(0)
     end
     if frame.cooldown then 
         frame.cooldown:Hide()
-        frame.cooldown:SetAlpha(0)
+        -- frame.cooldown:SetAlpha(0)
     end
     
     -- Hide statusBar and all its sub-elements
     if frame.statusBar then 
         frame.statusBar:Hide()
-        frame.statusBar:SetAlpha(0)
+        -- frame.statusBar:SetAlpha(0)
         
         -- Critical: These textures are parented to the main frame, not statusBar
         -- So hiding statusBar doesn't hide them - must hide explicitly
         if frame.statusBar.bgTexture then 
             frame.statusBar.bgTexture:Hide()
-            frame.statusBar.bgTexture:SetAlpha(0)
+            -- frame.statusBar.bgTexture:SetAlpha(0)
         end
         if frame.statusBar.fullCoverTexture then 
             frame.statusBar.fullCoverTexture:Hide()
-            frame.statusBar.fullCoverTexture:SetAlpha(0)
+            -- frame.statusBar.fullCoverTexture:SetAlpha(0)
         end
         if frame.statusBar.glowTexture then 
             frame.statusBar.glowTexture:Hide()
-            frame.statusBar.glowTexture:SetAlpha(0)
+            -- frame.statusBar.glowTexture:SetAlpha(0)
         end
         
         -- Hide border frame and all its pieces
         if frame.statusBar.border then
             frame.statusBar.border:Hide()
-            frame.statusBar.border:SetAlpha(0)
+            -- frame.statusBar.border:SetAlpha(0)
         end
-        if frame.statusBar.borderCornerTL then frame.statusBar.borderCornerTL:SetAlpha(0) end
-        if frame.statusBar.borderCornerTR then frame.statusBar.borderCornerTR:SetAlpha(0) end
-        if frame.statusBar.borderCornerBR then frame.statusBar.borderCornerBR:SetAlpha(0) end
-        if frame.statusBar.borderCornerBL then frame.statusBar.borderCornerBL:SetAlpha(0) end
-        if frame.statusBar.borderEdgeTop then frame.statusBar.borderEdgeTop:SetAlpha(0) end
-        if frame.statusBar.borderEdgeRight then frame.statusBar.borderEdgeRight:SetAlpha(0) end
-        if frame.statusBar.borderEdgeBottom then frame.statusBar.borderEdgeBottom:SetAlpha(0) end
-        if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:SetAlpha(0) end
+        if frame.statusBar.borderCornerTL then frame.statusBar.borderCornerTL:Hide() end
+        if frame.statusBar.borderCornerTR then frame.statusBar.borderCornerTR:Hide() end
+        if frame.statusBar.borderCornerBR then frame.statusBar.borderCornerBR:Hide() end
+        if frame.statusBar.borderCornerBL then frame.statusBar.borderCornerBL:Hide() end
+        if frame.statusBar.borderEdgeTop then frame.statusBar.borderEdgeTop:Hide() end
+        if frame.statusBar.borderEdgeRight then frame.statusBar.borderEdgeRight:Hide() end
+        if frame.statusBar.borderEdgeBottom then frame.statusBar.borderEdgeBottom:Hide() end
+        if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:Hide() end
     end
     
     -- Hide count text
     if frame.count then 
+        frame.count:SetText("")
         frame.count:Hide()
-        frame.count:SetAlpha(0)
+        -- frame.count:SetAlpha(0)
     end
     
     -- Hide custom label
     if frame.customLabel then 
         frame.customLabel:Hide()
-        frame.customLabel:SetAlpha(0)
+        -- frame.customLabel:SetAlpha(0)
     end
     
     -- Hide glow frame
     if frame.glowFrame then 
         frame.glowFrame:Hide()
-        frame.glowFrame:SetAlpha(0)
+        -- frame.glowFrame:SetAlpha(0)
     end
 end
 
@@ -597,72 +572,72 @@ local function ShowFrameElements(frame)
     
     -- Show the frame itself and restore alpha to 1
     frame:Show()
-    frame:SetAlpha(1)
+    -- frame:SetAlpha(1)
     
     -- Show and restore alpha on all icon elements
     if frame.iconContainer then 
         frame.iconContainer:Show()
-        frame.iconContainer:SetAlpha(1)
+        -- frame.iconContainer:SetAlpha(1)
     end
     if frame.icon then 
         frame.icon:Show()
-        frame.icon:SetAlpha(1)
+        -- frame.icon:SetAlpha(1)
     end
     if frame.cooldown then 
         frame.cooldown:Show()
-        frame.cooldown:SetAlpha(1)
+        -- frame.cooldown:SetAlpha(1)
     end
     
     -- Show statusBar (note: actual visibility controlled by ApplyVisibility during DriveFrameUpdate)
     if frame.statusBar then 
         frame.statusBar:Show()
-        frame.statusBar:SetAlpha(1)
+        -- frame.statusBar:SetAlpha(1)
         
         -- Show textures parented to main frame
         if frame.statusBar.bgTexture then 
             frame.statusBar.bgTexture:Show()
-            frame.statusBar.bgTexture:SetAlpha(1)
+            -- frame.statusBar.bgTexture:SetAlpha(1)
         end
         if frame.statusBar.fullCoverTexture then 
             frame.statusBar.fullCoverTexture:Show()
-            frame.statusBar.fullCoverTexture:SetAlpha(1)
+            -- frame.statusBar.fullCoverTexture:SetAlpha(1)
         end
         if frame.statusBar.glowTexture then 
             frame.statusBar.glowTexture:Show()
-            frame.statusBar.glowTexture:SetAlpha(1)
+            -- frame.statusBar.glowTexture:SetAlpha(1)
         end
         
         -- Show border frame and all its pieces
         if frame.statusBar.border then
             frame.statusBar.border:Show()
-            frame.statusBar.border:SetAlpha(1)
+            -- frame.statusBar.border:SetAlpha(1)
         end
-        if frame.statusBar.borderCornerTL then frame.statusBar.borderCornerTL:SetAlpha(1) end
-        if frame.statusBar.borderCornerTR then frame.statusBar.borderCornerTR:SetAlpha(1) end
-        if frame.statusBar.borderCornerBR then frame.statusBar.borderCornerBR:SetAlpha(1) end
-        if frame.statusBar.borderCornerBL then frame.statusBar.borderCornerBL:SetAlpha(1) end
-        if frame.statusBar.borderEdgeTop then frame.statusBar.borderEdgeTop:SetAlpha(1) end
-        if frame.statusBar.borderEdgeRight then frame.statusBar.borderEdgeRight:SetAlpha(1) end
-        if frame.statusBar.borderEdgeBottom then frame.statusBar.borderEdgeBottom:SetAlpha(1) end
-        if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:SetAlpha(1) end
+        if frame.statusBar.borderCornerTL then frame.statusBar.borderCornerTL:Show() end
+        if frame.statusBar.borderCornerTR then frame.statusBar.borderCornerTR:Show() end
+        if frame.statusBar.borderCornerBR then frame.statusBar.borderCornerBR:Show() end
+        if frame.statusBar.borderCornerBL then frame.statusBar.borderCornerBL:Show() end
+        if frame.statusBar.borderEdgeTop then frame.statusBar.borderEdgeTop:Show() end
+        if frame.statusBar.borderEdgeRight then frame.statusBar.borderEdgeRight:Show() end
+        if frame.statusBar.borderEdgeBottom then frame.statusBar.borderEdgeBottom:Show() end
+        if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:Show() end
     end
     
     -- Show count text (actual visibility controlled by ApplyVisibility during DriveFrameUpdate)
     if frame.count then 
         frame.count:Show()
-        frame.count:SetAlpha(1)
+        -- frame.count:SetAlpha(1)
     end
     
     -- Show custom label (actual visibility controlled by config during DriveFrameUpdate)
     if frame.customLabel then 
         frame.customLabel:Show()
-        frame.customLabel:SetAlpha(1)
+        -- frame.customLabel:SetAlpha(1)
     end
     
     -- Glow frame starts hidden (shown only when proc notification triggers)
     if frame.glowFrame then 
         frame.glowFrame:Hide()
-        frame.glowFrame:SetAlpha(1)
+        -- frame.glowFrame:SetAlpha(1)
     end
 end
 
@@ -682,7 +657,7 @@ end
 
 --- Unified function to create charge anchor bars for both visibility and conditionals
 --- Handles all 8 cases (A-H) automatically based on configuration
-function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, isVariantFrame)
+function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, isVariantFrame, skipVisibilityUpdate)
     local cbdConfig = trackerConfig.chargeBasedDisplay
     local hasChargeBasedDisplay = cbdConfig and cbdConfig.enabled
     
@@ -766,12 +741,14 @@ function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSp
         end
     end
     
-    DevTool:AddData("case type " .. caseType, "CreateChargeAnchorBars")
-    
-    local xOffset = isVariantFrame and -100 or -20
-    
-    local visMinVal, visMaxVal = CalculateBarRange(visibilityOperator, visibilityValue)
-    local varMinVal, varMaxVal = CalculateBarRange(variantOperator, variantValue)
+    local visMinVal, visMaxVal = 0, 0
+    if visibilityOperator ~= nil and visibilityValue ~= nil then
+        visMinVal, visMaxVal = CalculateBarRange(visibilityOperator, visibilityValue)
+    end
+    local varMinVal, varMaxVal = 0, 0
+    if variantOperator ~= nil and variantValue ~= nil then
+        varMinVal, varMaxVal = CalculateBarRange(variantOperator, variantValue)
+    end
     
     -- Constructor values: stores min/max, anchor, and render flag for each bar
     -- Bar A: Uses variant values in dual-bar cases, visibility values in single-bar cases
@@ -897,6 +874,9 @@ function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSp
         constructorValues.A.shouldRender = true
     end
 
+    -- debugging to see the variant frame not overlapped with the base
+    local x = 0 --isVariantFrame and -100 or 0
+    
     -- Create Bar B first (if needed) - always anchored to UIParent
     if constructorValues.B.shouldRender then
         frame.chargeAnchorBarB = CreateSingleChargeAnchorBar(
@@ -904,7 +884,7 @@ function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSp
         )
         frame.chargeAnchorBarB:SetPoint(constructorValues.B.anchor, UIParent,
             trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
-            (trackerConfig.position.x or 0), trackerConfig.position.y or 0)
+            ((trackerConfig.position.x + x) or 0), trackerConfig.position.y or 0)
     end
     
     -- Create Bar A (if needed) - anchored to Bar B texture if B exists, otherwise UIParent
@@ -920,22 +900,22 @@ function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSp
             -- Single-bar case: Anchor A to UIParent
             frame.chargeAnchorBarA:SetPoint(constructorValues.A.anchor, UIParent,
                 trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
-                (trackerConfig.position.x or 0), trackerConfig.position.y or 0)
+                ((trackerConfig.position.x + x) or 0), trackerConfig.position.y or 0)
         end
     end
     
-    -- Handle frame visibility based on case type
+    -- Handle frame visibility based on case type (unless skipped for drag operations)
     -- Cases A, B, G, H: Single-frame cases - hide the unused frame
     -- Cases C, D, E, F: Dual-frame cases - ensure both frames are visible (restore if previously hidden)
+    
     if caseType == "A" or caseType == "G" then
         if isVariantFrame then
             -- This variant frame will never be shown, hide all its elements
-            HideFrameElements(frame)
-            DevTool:AddData("Hiding variant frame (never used)", "Case " .. caseType)
-        else
-            -- Base frame is active, mark variant as hidden
             frame.meta.dualFrameStatus = 'hideVariant'
-            -- Restore base frame visibility in case it was previously hidden
+            HideFrameElements(frame)
+        else
+            -- Base frame is active, clear any hide flag and restore visibility
+            frame.meta.dualFrameStatus = nil
             ShowFrameElements(frame)
         end
     elseif caseType == "B" or caseType == "H" then
@@ -944,9 +924,9 @@ function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSp
             -- Set status first so it's available for checks, then hide elements
             frame.meta.dualFrameStatus = 'hideBase'
             HideFrameElements(frame)
-            DevTool:AddData("Hiding base frame (never used)", "Case " .. caseType)
         else
-            -- Variant frame is active, restore visibility in case it was previously hidden
+            -- Variant frame is active, clear any hide flag and restore visibility
+            frame.meta.dualFrameStatus = nil
             ShowFrameElements(frame)
         end
     elseif caseType == "C" or caseType == "D" or caseType == "E" or caseType == "F" then
@@ -954,92 +934,9 @@ function FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSp
         -- Clear any dualFrameStatus flags from previous configurations
         frame.meta.dualFrameStatus = nil
         ShowFrameElements(frame)
-        DevTool:AddData("Dual-frame case - ensuring visibility", "Case " .. caseType)
     end
 end
 
---- Refreshes charge anchor bars for a frame by destroying and recreating them.
---- Only call this when charge-related settings are modified (chargeBasedDisplay or charge conditionals).
---- @param baseSpellID number The base spell ID
---- @param trackerType string The tracker type
-function FrameTrackerManager:RefreshChargeAnchorBars(baseSpellID, trackerType)
-    local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
-    if not trackerConfig then return end
-    
-    local baseFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-    if not baseFrame then return end
-    
-    -- Helper to refresh bars for a single frame
-    local function refreshBarsForFrame(frame, isVariant)
-        if not frame then return end
-        
-        -- Destroy existing bars
-        if frame.chargeAnchorBarA then
-            frame.chargeAnchorBarA:Hide()
-            frame.chargeAnchorBarA:ClearAllPoints()
-            frame.chargeAnchorBarA = nil
-        end
-        if frame.chargeAnchorBarB then
-            frame.chargeAnchorBarB:Hide()
-            frame.chargeAnchorBarB:ClearAllPoints()
-            frame.chargeAnchorBarB = nil
-        end
-        
-        -- Recreate bars
-        FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, isVariant or false)
-        
-        -- Update positioning
-        local pos = trackerConfig.position
-        if frame.chargeAnchorBarA then
-            frame:ClearAllPoints()
-            frame:SetPoint("CENTER", frame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
-        elseif pos and pos.anchorPoint and not frame._inContainer then
-            local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.x")
-            local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.y")
-            frame:ClearAllPoints()
-            local xOffset = frame.isVariant and 100 or 0
-            frame:SetPoint(
-                pos.anchorPoint, 
-                UIParent,
-                pos.relativeAnchorPoint or pos.anchorPoint, 
-                ((pos.x + (xOverride or 0)) or 0) + xOffset, 
-                (pos.y + (yOverride or 0)) or 0
-            )
-        end
-    end
-    
-    -- Refresh bars for base frame
-    refreshBarsForFrame(baseFrame, false)
-    
-    -- Refresh bars for variant frame if it exists
-    if baseFrame.variantFrame then
-        refreshBarsForFrame(baseFrame.variantFrame, true)
-    end
-end
-
---- Refreshes charge anchor bars for all trackers using a specific conditional name.
---- Call this when a global conditional's charge-related parameters are modified.
---- @param conditionalName string The name of the conditional that was modified
-function FrameTrackerManager:RefreshChargeAnchorBarsForConditional(conditionalName)
-    if not conditionalName or conditionalName == "" then return end
-    
-    -- Iterate through all tracker types and all trackers
-    for trackerType, trackers in pairs(FrameTrackerManager.SpellStyler_frames) do
-        for baseSpellID, baseFrame in pairs(trackers) do
-            local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
-            if trackerConfig and trackerConfig.specialVisibilityConditions then
-                -- Check if this tracker uses the modified conditional
-                for _, condition in ipairs(trackerConfig.specialVisibilityConditions) do
-                    if condition.conditionalName == conditionalName then
-                        -- This tracker uses the modified conditional - refresh its bars
-                        self:RefreshChargeAnchorBars(baseSpellID, trackerType)
-                        break  -- No need to check other conditions for this tracker
-                    end
-                end
-            end
-        end
-    end
-end
 
 function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, isVariantFrame)
     -- For variant frames, skip the duplicate check and allow creation
@@ -1202,7 +1099,6 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     
     FrameTrackerManager:CreateStatusBar(frame, "statusBar", trackerConfig, baseSpellID, trackerType)
 
-    FrameTrackerManager:CreateChargeAnchorBars(frame, trackerConfig, baseSpellID, isVariantFrame)
 
     -- Stack count text (bottom right, larger font)
     frame.count = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
@@ -1304,7 +1200,7 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     elseif pos and pos.anchorPoint and pos.x and pos.y then
         frame:ClearAllPoints()
         -- For variant frames, offset by 100 pixels to the right so both are visible
-        local xOffset = isVariantFrame and 100 or 0
+        local xOffset = 0 --isVariantFrame and 100 or 0
         frame:SetPoint(
             pos.anchorPoint, 
             UIParent,  -- Always use UIParent for simplicity
@@ -1314,22 +1210,12 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
         )
     else
         -- Default position - center with offset based on slot
-        local xOffset = isVariantFrame and 100 or 0
+        local xOffset = 0 --isVariantFrame and 100 or 0
         frame:SetPoint("CENTER", UIParent, "CENTER", -200 + xOffset, -100)
     end
 
     -- Initially hidden
     frame:Show()
-
-    FrameTrackerManager:DriveFrameUpdate(
-        frame,
-        {
-            resolveDuration = true,
-            syncChargeText = true
-        },
-        nil,
-        "createTrackerFrame"
-    )
 
     -- If the "Replace with Spell Display Count" setting is on, start a ticker
     -- that reads the action-bar display count and writes it into frame.count.
@@ -1356,52 +1242,6 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
     return frame
 end
 
---- Ensures variant frame exists or doesn't exist based on charge conditionals.
---- Creates or destroys variant frame as needed. Safe to call repeatedly.
---- @param baseFrame table The base tracker frame
---- @param trackerConfig table The tracker configuration
---- @param baseSpellID number The base spell ID
---- @param trackerType string The tracker type ("spells", "buffs", etc.)
-function FrameTrackerManager:EnsureVariantFrameLifecycle(baseFrame, trackerConfig, baseSpellID, trackerType)
-    if not baseFrame or not trackerConfig then return end
-    
-    -- Check if variant frame should exist based on charge conditionals
-    local shouldHaveVariant = TrackerHasChargesConditionals(trackerConfig)
-    local hasVariant = baseFrame.variantFrame ~= nil
-    
-    -- Manage variant frame lifecycle
-    if shouldHaveVariant and not hasVariant then
-        -- Create variant frame
-        local variantFrame = self:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, true)
-        baseFrame.variantFrame = variantFrame
-        variantFrame.isVariant = true
-        variantFrame.baseFrame = baseFrame  -- Reference back to base frame for dualFrameStatus checks
-        baseFrame.variants = {baseFrame, variantFrame}
-        variantFrame.variants = baseFrame.variants
-    elseif not shouldHaveVariant and hasVariant then
-        -- Destroy variant frame
-        local variantFrame = baseFrame.variantFrame
-        if variantFrame then
-            -- Cancel any tickers
-            if variantFrame._displayCountTicker then
-                variantFrame._displayCountTicker:Cancel()
-                variantFrame._displayCountTicker = nil
-            end
-            -- Clear the cooldown
-            if variantFrame.cooldown then
-                variantFrame.cooldown:Clear()
-            end
-            -- Hide and detach
-            variantFrame:Hide()
-            variantFrame:ClearAllPoints()
-            variantFrame:SetParent(nil)
-            -- Clear references
-            baseFrame.variantFrame = nil
-            baseFrame.variants = nil
-            variantFrame.variants = nil
-        end
-    end
-end
 
 --- Helper function to apply property updates to a single frame (base or variant)
 --- @param frame table The frame to update
@@ -1686,7 +1526,7 @@ local function ApplyFramePropertyUpdates(frame, trackerConfig, baseSpellID, trac
         local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "position.y")
         frame:ClearAllPoints()
         -- For variant frames, offset by 100 pixels to the right so both are visible
-        local xOffset = frame.isVariant and 100 or 0
+        local xOffset = 0 --frame.isVariant and 100 or 0
         frame:SetPoint(
             pos.anchorPoint, 
             UIParent,
@@ -1697,14 +1537,15 @@ local function ApplyFramePropertyUpdates(frame, trackerConfig, baseSpellID, trac
     end
 end
 
+--- Updates frame properties after configuration changes.
+--- This is used for property updates that don't require full charge infrastructure rebuild.
+--- @param baseSpellID number The base spell ID
+--- @param trackerType string The tracker type
 function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
     local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
     local baseFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
     
     if not baseFrame then return end
-    
-    -- Ensure variant frame lifecycle is correct based on current conditionals
-    self:EnsureVariantFrameLifecycle(baseFrame, trackerConfig, baseSpellID, trackerType)
     
     -- Apply property updates to base frame only if it shouldn't be hidden
     if not baseFrame.meta or baseFrame.meta.dualFrameStatus ~= 'hideBase' then
@@ -1712,7 +1553,7 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
     end
     
     -- Apply property updates to variant frame if it exists and shouldn't be hidden
-    if baseFrame.variantFrame and baseFrame.meta and baseFrame.meta.dualFrameStatus ~= 'hideVariant' then
+    if baseFrame.variantFrame and baseFrame.variantFrame.meta and baseFrame.variantFrame.meta.dualFrameStatus ~= 'hideVariant' then
         ApplyFramePropertyUpdates(baseFrame.variantFrame, trackerConfig, baseSpellID, trackerType)
     end
     
@@ -1729,7 +1570,7 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
         )
     end
     
-    if baseFrame.variantFrame and baseFrame.meta and baseFrame.meta.dualFrameStatus ~= 'hideVariant' then
+    if baseFrame.variantFrame and baseFrame.variantFrame.meta and baseFrame.variantFrame.meta.dualFrameStatus ~= 'hideVariant' then
         FrameTrackerManager:DriveFrameUpdate(
             baseFrame.variantFrame,
             {
@@ -1741,6 +1582,213 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
         )
     end
 end
+
+--- Creates/destroys charge anchor bars and variant frames as needed.
+--- This method checks if bars exist and destroys them, then recreates them properly.
+--- Always call this followed by UpdateFrame_ConfigurationChanges when settings change.
+--- @param baseSpellID number The base spell ID
+--- @param trackerType string The tracker type
+function FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
+    local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
+    if not trackerConfig then return end
+    
+    local baseFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    if not baseFrame then return end
+    
+    -- ================================================================
+    -- STEP 1: DESTROY EXISTING CHARGE BARS ON BASE FRAME
+    -- ================================================================
+    if baseFrame.chargeAnchorBarA then
+        baseFrame.chargeAnchorBarA:Hide()
+        baseFrame.chargeAnchorBarA:ClearAllPoints()
+        baseFrame.chargeAnchorBarA = nil
+    end
+    if baseFrame.chargeAnchorBarB then
+        baseFrame.chargeAnchorBarB:Hide()
+        baseFrame.chargeAnchorBarB:ClearAllPoints()
+        baseFrame.chargeAnchorBarB = nil
+    end
+    
+    -- Clear any stale dualFrameStatus flags on base frame
+    if baseFrame.meta then
+        baseFrame.meta.dualFrameStatus = nil
+    end
+    
+    -- Restore base frame visibility in case it was previously hidden
+    ShowFrameElements(baseFrame)
+    
+    -- ================================================================
+    -- STEP 2: CHECK IF VARIANT FRAME IS NEEDED
+    -- ================================================================
+    local shouldHaveVariant = TrackerHasChargesConditionals(trackerConfig)
+    
+    -- ================================================================
+    -- STEP 3: HANDLE VARIANT FRAME LIFECYCLE
+    -- ================================================================
+    if baseFrame.variantFrame and not shouldHaveVariant then
+        -- Variant exists but is no longer needed - destroy it completely
+        local variantFrame = baseFrame.variantFrame
+        
+        -- Clear ConditionalEngine cache for this frame before destroying
+        if SpellStyler.ConditionalEngine then
+            SpellStyler.ConditionalEngine:ClearAllFramePropertyOverrides(variantFrame)
+        end
+        
+        -- Destroy charge anchor bars on variant
+        if variantFrame.chargeAnchorBarA then
+            variantFrame.chargeAnchorBarA:Hide()
+            variantFrame.chargeAnchorBarA:ClearAllPoints()
+            variantFrame.chargeAnchorBarA = nil
+        end
+        if variantFrame.chargeAnchorBarB then
+            variantFrame.chargeAnchorBarB:Hide()
+            variantFrame.chargeAnchorBarB:ClearAllPoints()
+            variantFrame.chargeAnchorBarB = nil
+        end
+        
+        -- Destroy variant frame completely
+        variantFrame:Hide()
+        variantFrame:ClearAllPoints()
+        if variantFrame.iconContainer then variantFrame.iconContainer:Hide() end
+        if variantFrame.statusBar then variantFrame.statusBar:Hide() end
+        if variantFrame.count then variantFrame.count:Hide() end
+        if variantFrame.customLabel then variantFrame.customLabel:Hide() end
+        if variantFrame.glowFrame then variantFrame.glowFrame:Hide() end
+        
+        baseFrame.variantFrame = nil
+        baseFrame.variants = nil
+        variantFrame.variants = nil
+        
+    elseif baseFrame.variantFrame and shouldHaveVariant then
+        -- Variant exists and is still needed - just clear its bars (REUSE frame to preserve ConditionalEngine cache)
+        local variantFrame = baseFrame.variantFrame
+        
+        if variantFrame.chargeAnchorBarA then
+            variantFrame.chargeAnchorBarA:Hide()
+            variantFrame.chargeAnchorBarA:ClearAllPoints()
+            variantFrame.chargeAnchorBarA = nil
+        end
+        if variantFrame.chargeAnchorBarB then
+            variantFrame.chargeAnchorBarB:Hide()
+            variantFrame.chargeAnchorBarB:ClearAllPoints()
+            variantFrame.chargeAnchorBarB = nil
+        end
+        
+        -- Clear any stale dualFrameStatus flags on variant frame
+        if variantFrame.meta then
+            variantFrame.meta.dualFrameStatus = nil
+        end
+        
+        -- Restore variant frame visibility
+        ShowFrameElements(variantFrame)
+    end
+
+    
+    -- ================================================================
+    -- STEP 4: CREATE VARIANT FRAME IF NEEDED (but doesn't exist yet)
+    -- ================================================================
+    if shouldHaveVariant and not baseFrame.variantFrame then
+        local variantFrame = self:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, true)
+        baseFrame.variantFrame = variantFrame
+        variantFrame.isVariant = true
+        variantFrame.baseFrame = baseFrame
+        baseFrame.variants = {baseFrame, variantFrame}
+        variantFrame.variants = baseFrame.variants
+    end
+    
+    -- ================================================================
+    -- STEP 5: CREATE CHARGE ANCHOR BARS ON BASE FRAME
+    -- ================================================================
+    self:CreateChargeAnchorBars(baseFrame, trackerConfig, baseSpellID, false, false)
+    
+    -- Position base frame
+    local pos = trackerConfig.position
+    if baseFrame.chargeAnchorBarA then
+        baseFrame:ClearAllPoints()
+        baseFrame:SetPoint("CENTER", baseFrame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
+    elseif pos and pos.anchorPoint and not baseFrame._inContainer then
+        local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(baseFrame, "position.x")
+        local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(baseFrame, "position.y")
+        baseFrame:ClearAllPoints()
+        baseFrame:SetPoint(
+            pos.anchorPoint, 
+            UIParent,
+            pos.relativeAnchorPoint or pos.anchorPoint, 
+            ((pos.x + (xOverride or 0)) or 0), 
+            (pos.y + (yOverride or 0)) or 0
+        )
+    end
+    
+    -- ================================================================
+    -- STEP 6: CREATE CHARGE ANCHOR BARS ON VARIANT FRAME IF IT EXISTS
+    -- ================================================================
+    if baseFrame.variantFrame then
+        self:CreateChargeAnchorBars(baseFrame.variantFrame, trackerConfig, baseSpellID, true, false)
+        
+        -- Position variant frame (shares same position as base frame)
+        if baseFrame.variantFrame.chargeAnchorBarA then
+            baseFrame.variantFrame:ClearAllPoints()
+            baseFrame.variantFrame:SetPoint("CENTER", baseFrame.variantFrame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
+        elseif pos and pos.anchorPoint and not baseFrame.variantFrame._inContainer then
+            local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(baseFrame.variantFrame, "position.x")
+            local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(baseFrame.variantFrame, "position.y")
+            baseFrame.variantFrame:ClearAllPoints()
+            baseFrame.variantFrame:SetPoint(
+                pos.anchorPoint, 
+                UIParent,
+                pos.relativeAnchorPoint or pos.anchorPoint, 
+                ((pos.x + (xOverride or 0)) or 0), 
+                (pos.y + (yOverride or 0)) or 0
+            )
+        end
+    end
+end
+
+--- Middleware for creating tracker frames with proper charge infrastructure.
+--- Use this instead of calling CreateTrackerFrame directly when creating new frames.
+--- @param baseSpellID number The base spell ID
+--- @param trackerConfig table The tracker configuration
+--- @param trackerType string The tracker type
+--- @return table baseFrame The created base frame
+function FrameTrackerManager:CreateFrameMiddleware(baseSpellID, trackerConfig, trackerType)
+    -- Create base frame (CreateTrackerFrame no longer creates charge bars internally)
+    local baseFrame = self:CreateTrackerFrame(baseSpellID, trackerConfig, trackerType, false)
+    
+    if not baseFrame then return nil end
+    
+    -- Create variant frame if TrackerHasChargesConditionals, destroy/create all charge bars
+    self:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
+    
+    -- Apply configuration changes to both frames
+    self:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+    
+    -- Drive initial update to populate base frame with data (cooldown, charges, etc.)
+    self:DriveFrameUpdate(
+        baseFrame,
+        {
+            resolveDuration = true,
+            syncChargeText = true
+        },
+        nil,
+        "CreateFrameMiddleware_baseFrame"
+    )
+    
+    -- Drive initial update for variant frame if it exists
+    if baseFrame.variantFrame then
+        self:DriveFrameUpdate(
+            baseFrame.variantFrame,
+            {
+                resolveDuration = true,
+                syncChargeText = true
+            },
+            nil,
+            "CreateFrameMiddleware_variantFrame"
+        )
+    end
+    
+    return baseFrame
+end
+
 -- ============================================================================
 -- DRAGGING FUNCTIONS FOR CONFIG MENU
 -- Moved to IconSettingsRenderer.lua (SetFrameClickCallback, EnableDraggingForAllFrames, DisableDraggingForAllFrames)
