@@ -742,7 +742,21 @@ ConditionsRenderer.conditionalTypeRenderers = {
                 local info = UIDropDownMenu_CreateInfo()
                 info.text = opt.label; info.value = opt.value
                 info.checked = (data.comparison == opt.value)
-                info.func = function(btn) data.comparison = btn.value; RefreshComp() end
+                info.func = function(btn)
+                    data.comparison = btn.value
+                    RefreshComp()
+                    -- Refresh charge bars for all trackers using this conditional
+                    if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.RefreshChargeAnchorBarsForConditional then
+                        local conditionalName = container.conditionalName
+                        if conditionalName then
+                            SpellStyler.FrameTrackerManager:RefreshChargeAnchorBarsForConditional(conditionalName)
+                        end
+                    end
+                    -- Re-evaluate all conditionals
+                    if SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
+                end
                 UIDropDownMenu_AddButton(info, level)
             end
         end)
@@ -755,7 +769,22 @@ ConditionsRenderer.conditionalTypeRenderers = {
         if data.targetValue ~= nil then targetInput:SetText(tostring(data.targetValue)) end
         targetInput:SetScript("OnTextChanged", function(self)
             local v = tonumber(self:GetText())
-            if v then data.targetValue = math.max(0, math.min(10, v)) end
+            if v then
+                data.targetValue = math.max(0, math.min(10, v))
+                -- Refresh charge bars for all trackers using this conditional
+                if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.RefreshChargeAnchorBarsForConditional then
+                    C_Timer.After(0.5, function()  -- Debounce to avoid excessive refreshes while typing
+                        local conditionalName = container.conditionalName
+                        if conditionalName then
+                            SpellStyler.FrameTrackerManager:RefreshChargeAnchorBarsForConditional(conditionalName)
+                        end
+                        -- Re-evaluate all conditionals
+                        if SpellStyler.ConditionalEngine then
+                            SpellStyler.ConditionalEngine:EvaluateAll()
+                        end
+                    end)
+                end
+            end
         end)
         
         compDropdown:Hide()
@@ -838,6 +867,8 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
             typeContentFrame = CreateFrame("Frame", nil, entryFrame)
             typeContentFrame:SetPoint("TOPLEFT", typeDropdown, "BOTTOMLEFT", 24, 0)
             typeContentFrame:SetPoint("RIGHT",   entryFrame,   "RIGHT",      -8, 0)
+            -- Store conditional name on frame so block renderers can access it
+            typeContentFrame.conditionalName = state and state.selectedConditional
             local capturedGen = state.renderGeneration
             local function onHeightResolved(h)
                 if state.renderGeneration ~= capturedGen then return end

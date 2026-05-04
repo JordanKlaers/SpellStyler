@@ -495,6 +495,14 @@ function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, val
     accessNestedValue(db[trackerType][baseSpellID], path, value, "set")
     local trackerValue = db[trackerType][baseSpellID]
     if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        -- Check if this is a charge-related property that requires bar refresh
+        local isChargeRelatedPath = path:match("^chargeBasedDisplay%.")
+        
+        if isChargeRelatedPath and FrameTrackerManager.RefreshChargeAnchorBars then
+            -- Refresh charge bars first, then update configuration
+            FrameTrackerManager:RefreshChargeAnchorBars(baseSpellID, trackerType)
+        end
+        
         FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
         -- FrameTrackerManager:UpdateFrame_copyCharges({
         --     config = trackerValue,
@@ -705,10 +713,16 @@ function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, ove
 end
 
 function State:SetSpecialVisibilityConditionConditionalName(baseSpellID, trackerType, condIndex, conditionalName)
+    FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
     entry.specialVisibilityConditions[condIndex].conditionalName = conditionalName
+    
+    -- Refresh charge bars since the conditional type may affect charge-based behavior
+    if FrameTrackerManager and FrameTrackerManager.RefreshChargeAnchorBars then
+        FrameTrackerManager:RefreshChargeAnchorBars(baseSpellID, trackerType)
+    end
     
     -- Trigger live evaluation update
     if SpellStyler.ConditionalEngine then

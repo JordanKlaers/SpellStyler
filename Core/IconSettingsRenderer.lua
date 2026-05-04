@@ -1079,6 +1079,10 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
         local name = nameInput:GetText()
         if name and name ~= "" then
             SpellStyler.State:AddSpecialVisibilityCondition(uniqueID, trackerType, name)
+            -- Refresh charge bars since conditionals may affect charge-based behavior
+            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.RefreshChargeAnchorBars then
+                SpellStyler.FrameTrackerManager:RefreshChargeAnchorBars(uniqueID, trackerType)
+            end
             rerender()
         end
     end)
@@ -1140,6 +1144,10 @@ function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container
             if customFrame and SpellStyler.ConditionalEngine then
                 SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
                 if SpellStyler.FrameTrackerManager then
+                    -- Refresh charge bars since conditional removal may affect charge-based behavior
+                    if SpellStyler.FrameTrackerManager.RefreshChargeAnchorBars then
+                        SpellStyler.FrameTrackerManager:RefreshChargeAnchorBars(uniqueID, trackerType)
+                    end
                     SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
                 end
             end
