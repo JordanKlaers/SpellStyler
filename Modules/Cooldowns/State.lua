@@ -470,6 +470,12 @@ function State:GetSpecificTrackerValue(baseSpellID, trackerType)
     local db = State:GetDataBase_V2()
     local iconConfig = db[trackerType][baseSpellID] or {}
     local foundConfig = db[trackerType][baseSpellID] and true or false
+    
+    -- Ensure visualChargeBar defaults are populated whenever we access tracker config
+    if foundConfig then
+        State:EnsureVisualChargeBarDefaults(iconConfig)
+    end
+    
     return iconConfig, foundConfig
 end
 
@@ -517,13 +523,50 @@ function State:GetTrackerValueConfigProperty(baseSpellID, trackerType, path)
     return accessNestedValue(db[trackerType][baseSpellID], path, nil, "get")
 end
 
+--- Ensures visualChargeBar config has all required defaults
+--- @param trackerValue table The tracker configuration
+function State:EnsureVisualChargeBarDefaults(trackerValue)
+    -- Check if visualChargeBar doesn't exist OR if it's missing critical fields (empty object or incomplete)
+    if not trackerValue.visualChargeBar or not trackerValue.visualChargeBar.width or not trackerValue.visualChargeBar.displayState then
+        local iconSize = (trackerValue.iconSettings and trackerValue.iconSettings.width) or 
+                       (trackerValue.iconSettings and trackerValue.iconSettings.size) or 48
+        trackerValue.visualChargeBar = {
+            displayState = "always",
+            defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
+            customBarTexture = "",
+            onlyRenderBar = false,
+            barOrientation = "horizontal",
+            fillOrEmpty = "regular",
+            progressDirection = "standard",
+            textureRotation = 0,
+            defaultFillValue = "empty",
+            color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
+            backgroundColor = { r = 0, g = 0, b = 0, a = 0.65 },
+            glowColor = { r = 1, g = 1, b = 1, a = 0.25 },
+            borderColor = { r = 0, g = 0, b = 0, a = 1 },
+            borderScale = 0.5,
+            scale = 1,
+            x = 0,
+            y = 0,
+            width = iconSize * 5,
+            height = iconSize / 2,
+            anchorParent = "RIGHT",
+            anchorSelf = "LEFT",
+            minValue = 0,
+            maxValue = 5
+        }
+    end
+end
+
 function State:getTrackerValuesListForSettings()
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local listTrackerValues = {}
+    
     for _, trackerType in ipairs({ "buffs" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
         local group = {}
         for baseSpellID, trackerValue in pairs(trackerValues) do
+            State:EnsureVisualChargeBarDefaults(trackerValue)
             if FrameTrackerManager.cooldownManagerFrames[trackerType][baseSpellID] then
                 local frame = FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                 local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
@@ -556,6 +599,7 @@ function State:getTrackerValuesListForSettings()
     local spellsValues = State:GetAllTrackerValues("spells")
     local spellsGroup = {}
     for baseSpellID, trackerValue in pairs(spellsValues or {}) do
+        State:EnsureVisualChargeBarDefaults(trackerValue)
         if trackerValue.isEnabled ~= false and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerValue.overrideSpellID)) then
             local frame = FrameTrackerManager.SpellStyler_frames["spells"] and FrameTrackerManager.SpellStyler_frames["spells"][baseSpellID]
             local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID

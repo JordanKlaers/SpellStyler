@@ -35,6 +35,7 @@ FrameTrackerManager.SpellStyler_frames = {
 }
 
 FrameTrackerManager._driveQueue     = {}
+FrameTrackerManager._processCDMQueue = {}
 FrameTrackerManager._totemLogQueue  = {}
 
 local isInitialized = false
@@ -220,21 +221,45 @@ end
 --- @param trackerConfig table Tracker configuration block
 --- @param baseSpellID number  Base spell ID (used for SetStatusBarContainerVisibility)
 --- @param trackerType string  Tracker type (used for SetStatusBarContainerVisibility)
-function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpellID, trackerType, x, y, useBaseTexture)
+function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpellID, trackerType, x, y, useBaseTexture, configKey)
+    -- Default to statusBar if no configKey provided (for cooldown bar)
+    configKey = configKey or "statusBar"
+    
+    local barConfig = trackerConfig[configKey]
+    if not barConfig then return end
+    if configKey ~= 'statusBar' then
+        DevTool:AddData({
+            frame = frame,
+            key = key,
+            trackerConfig = trackerConfig,
+            baseSpellID = baseSpellID,
+            trackerType = trackerType,
+            x = x,
+            y = y,
+            useBaseTexture = useBaseTexture,
+            barConfig = barConfig
+        }, configKey)
+    end
     local statusBarName = frame:GetName() .. "_" .. key
     frame[key] = CreateFrame("StatusBar", statusBarName, frame)
-    frame[key]:SetPoint(trackerConfig.statusBar.anchorSelf or "LEFT", frame, trackerConfig.statusBar.anchorParent or "RIGHT", x or trackerConfig.statusBar.x or 0, y or trackerConfig.statusBar.y or 0)
+    frame[key]:SetPoint(barConfig.anchorSelf or "LEFT", frame, barConfig.anchorParent or "RIGHT", x or barConfig.x or 0, y or barConfig.y or 0)
     local _iconW = trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48
     local _iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
-    local statusBarWidth = trackerConfig.statusBar and trackerConfig.statusBar.width or (_iconW * 4)
-    local statusBarHeight = trackerConfig.statusBar and trackerConfig.statusBar.height or (_iconH / 2)
+    local statusBarWidth = barConfig and barConfig.width or (_iconW * 4)
+    local statusBarHeight = barConfig and barConfig.height or (_iconH / 2)
 
-    local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "statusBar.onlyRenderBar")
-    local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (trackerConfig.statusBar.onlyRenderBar or false)
-    local forceHideViaAlpha = onlyBar or trackerConfig.statusBar.displayState == 'never'
+    local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, configKey .. ".onlyRenderBar")
+    local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (barConfig.onlyRenderBar or false)
+    local forceHideViaAlpha = onlyBar or barConfig.displayState == 'never'
     frame[key]:SetSize(statusBarWidth, statusBarHeight)
-    frame[key]:SetScale(trackerConfig.statusBar.scale or 1)
-    frame[key]:SetMinMaxValues(0, 1)
+    frame[key]:SetScale(barConfig.scale or 1)
+    
+    -- For visualChargeBar, use min/max values from config; otherwise 0-1 for cooldown percentage
+    if configKey == "visualChargeBar" then
+        frame[key]:SetMinMaxValues(barConfig.minValue or 0, barConfig.maxValue or 5)
+    else
+        frame[key]:SetMinMaxValues(0, 1)
+    end
     frame[key]:SetValue(0)
     -- Use one strata higher than icon to ensure statusBar renders above iconContainer's stacking context
     local iconStrata = trackerConfig.iconSettings.frameStrataLevel or "MEDIUM"
@@ -242,9 +267,9 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key]:SetFrameStrata(strataMap[iconStrata] or "HIGH")
     frame[key]:SetFrameLevel(frame:GetFrameLevel() + 3)  -- Base level for status bar
     frame[key]:SetStatusBarColor(
-        trackerConfig.statusBar.color.r or 0.2,
-        trackerConfig.statusBar.color.g or 0.8,
-        trackerConfig.statusBar.color.b or 1,
+        barConfig.color.r or 0.2,
+        barConfig.color.g or 0.8,
+        barConfig.color.b or 1,
         0 -- start with an alpha of zero so that GCD doesnt trigger accidentally.
     )
     local statusBarTexture = frame[key]:GetStatusBarTexture()
@@ -257,30 +282,30 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].bgTexture:SetAllPoints(frame[key])
     frame[key].bgTexture:Show()  -- Start visible; ApplyVisibility.StatusBar controls actual visibility
     local texture = ""
-    if trackerConfig.statusBar.customBarTexture ~= '' and not useBaseTexture then
-        texture = trackerConfig.statusBar.customBarTexture
+    if barConfig.customBarTexture ~= '' and not useBaseTexture then
+        texture = barConfig.customBarTexture
     else
-        texture = trackerConfig.statusBar.defaultBarTexture
+        texture = barConfig.defaultBarTexture
     end
     frame[key].bgTexture:SetTexture(texture)
     frame[key].bgTexture:SetVertexColor(
-        trackerConfig.statusBar.backgroundColor.r,
-        trackerConfig.statusBar.backgroundColor.g,
-        trackerConfig.statusBar.backgroundColor.b,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.backgroundColor.a
+        barConfig.backgroundColor.r,
+        barConfig.backgroundColor.g,
+        barConfig.backgroundColor.b,
+        forceHideViaAlpha and 0 or barConfig.backgroundColor.a
     )  -- Darkened background
 
     -- Layer 2: Main Fill (active progress) - ARTWORK layer (sublayer 0, above BACKGROUND)
-    local barTexture = (trackerConfig.statusBar.customBarTexture and trackerConfig.statusBar.customBarTexture ~= "")
-        and trackerConfig.statusBar.customBarTexture
-        or trackerConfig.statusBar.defaultBarTexture
+    local barTexture = (barConfig.customBarTexture and barConfig.customBarTexture ~= "")
+        and barConfig.customBarTexture
+        or barConfig.defaultBarTexture
     frame[key]:SetStatusBarTexture(barTexture)
     
     
     -- Fill direction is controlled via TimerDirection in SetTimerDuration (ElapsedTime = fills up, RemainingTime = depletes)
     frame[key]:SetReverseFill(false)
     frame[key]:SetOrientation(
-        (trackerConfig.statusBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
+        (barConfig.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
     )
 
     -- Layer 2.5: Full-cover texture (ARTWORK sublayer 1, above the fill at sublayer 0).
@@ -290,10 +315,10 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].fullCoverTexture:SetAllPoints(frame[key])
     frame[key].fullCoverTexture:SetTexture(barTexture)
     frame[key].fullCoverTexture:SetVertexColor(
-        trackerConfig.statusBar.color.r or 0.2,
-        trackerConfig.statusBar.color.g or 0.8,
-        trackerConfig.statusBar.color.b or 1,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.color.a or 0.9
+        barConfig.color.r or 0.2,
+        barConfig.color.g or 0.8,
+        barConfig.color.b or 1,
+        forceHideViaAlpha and 0 or barConfig.color.a or 0.9
     )
     frame[key].fullCoverTexture:Show()  -- Start visible; alpha controls actual visibility
 
@@ -304,10 +329,10 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].glowTexture:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarGlow.tga")
     frame[key].glowTexture:SetBlendMode("ADD")
     frame[key].glowTexture:SetVertexColor(
-        trackerConfig.statusBar.glowColor.r or 1,
-        trackerConfig.statusBar.glowColor.g or 1,
-        trackerConfig.statusBar.glowColor.b or 1,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.glowColor.a or 0.25
+        barConfig.glowColor.r or 1,
+        barConfig.glowColor.g or 1,
+        barConfig.glowColor.b or 1,
+        forceHideViaAlpha and 0 or barConfig.glowColor.a or 0.25
     )  -- Semi-transparent glow
     frame[key].glowTexture:SetDrawLayer("OVERLAY", 7)
 
@@ -326,12 +351,12 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].borderCornerTL:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
     frame[key].borderCornerTL:SetRotation(0)
     frame[key].borderCornerTL:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
+        barConfig.borderColor.r or 0,
+        barConfig.borderColor.g or 0,
+        barConfig.borderColor.b or 0,
+        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
     )
-    frame[key].borderCornerTL:SetScale(trackerConfig.statusBar.borderScale or 1)
+    frame[key].borderCornerTL:SetScale(barConfig.borderScale or 1)
 
     -- Top-right corner (rotated 270°)
     frame[key].borderCornerTR = frame[key].border:CreateTexture(nil, "ARTWORK")
@@ -340,12 +365,12 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].borderCornerTR:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
     frame[key].borderCornerTR:SetRotation(3 * math.pi / 2)
     frame[key].borderCornerTR:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
+        barConfig.borderColor.r or 0,
+        barConfig.borderColor.g or 0,
+        barConfig.borderColor.b or 0,
+        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
     )
-    frame[key].borderCornerTR:SetScale(trackerConfig.statusBar.borderScale or 1)
+    frame[key].borderCornerTR:SetScale(barConfig.borderScale or 1)
 
     -- Bottom-right corner (rotated 180°)
     frame[key].borderCornerBR = frame[key].border:CreateTexture(nil, "ARTWORK")
@@ -354,12 +379,12 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].borderCornerBR:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
     frame[key].borderCornerBR:SetRotation(math.pi)
     frame[key].borderCornerBR:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
+        barConfig.borderColor.r or 0,
+        barConfig.borderColor.g or 0,
+        barConfig.borderColor.b or 0,
+        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
     )
-    frame[key].borderCornerBR:SetScale(trackerConfig.statusBar.borderScale or 1)
+    frame[key].borderCornerBR:SetScale(barConfig.borderScale or 1)
 
     -- Bottom-left corner (rotated 90°)
     frame[key].borderCornerBL = frame[key].border:CreateTexture(nil, "ARTWORK")
@@ -368,12 +393,12 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].borderCornerBL:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
     frame[key].borderCornerBL:SetRotation(math.pi / 2)
     frame[key].borderCornerBL:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
+        barConfig.borderColor.r or 0,
+        barConfig.borderColor.g or 0,
+        barConfig.borderColor.b or 0,
+        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
     )
-    frame[key].borderCornerBL:SetScale(trackerConfig.statusBar.borderScale or 1)
+    frame[key].borderCornerBL:SetScale(barConfig.borderScale or 1)
 
     -- Top edge
     frame[key].borderEdgeTop = frame[key].border:CreateTexture(nil, "ARTWORK")
@@ -1097,8 +1122,12 @@ function FrameTrackerManager:CreateTrackerFrame(baseSpellID, trackerConfig, trac
         )
     end)
     
-    FrameTrackerManager:CreateStatusBar(frame, "statusBar", trackerConfig, baseSpellID, trackerType)
-
+    FrameTrackerManager:CreateStatusBar(frame, "statusBar", trackerConfig, baseSpellID, trackerType, nil, nil, nil, "statusBar")
+    
+    -- Create visual charge bar if visualChargeBar config exists
+    if trackerConfig.visualChargeBar and trackerConfig.countText.renderAsStatusBar then
+        -- FrameTrackerManager:CreateStatusBar(frame, "visualChargeBar", trackerConfig, baseSpellID, trackerType, nil, nil, nil, "visualChargeBar")
+    end
 
     -- Stack count text (bottom right, larger font)
     frame.count = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
@@ -1253,7 +1282,7 @@ local function ApplyFramePropertyUpdates(frame, trackerConfig, baseSpellID, trac
     
     -- Update icon texture: check override first, then state
     local iconTexOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.iconTexturePath")
-    local customTexture = iconTexOverride or (trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath)
+    local customTexture = iconTexOverride or (trackerConfig.iconSettings.iconTexturePath and trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath) or nil
     local texture = customTexture or frame.updatedIconID or trackerConfig.defaultIconTexturePath
     frame.icon:SetTexture(texture)
     local zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom / 100) or 0
@@ -1510,6 +1539,151 @@ local function ApplyFramePropertyUpdates(frame, trackerConfig, baseSpellID, trac
         if frame.statusBar.borderEdgeLeft then frame.statusBar.borderEdgeLeft:SetScale(borderScale) end
     end
     
+    -- Update visual charge bar styling (if visualChargeBar config exists)
+    if frame.visualChargeBar and trackerConfig.visualChargeBar and trackerConfig.countText.renderAsStatusBar then
+        pcall(function()
+
+            frame.visualChargeBar:SetStatusBarColor(
+                trackerConfig.visualChargeBar.color.r or 0.2,
+                trackerConfig.visualChargeBar.color.g or 0.8,
+                trackerConfig.visualChargeBar.color.b or 1,
+                1
+            )
+            -- Apply size: check override first, then state
+            local widthOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.width")
+            local heightOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.height")
+            local width = widthOverride or trackerConfig.visualChargeBar.width or 200
+            local height = heightOverride or trackerConfig.visualChargeBar.height or 20
+            frame.visualChargeBar:SetSize(width, height)
+            
+            -- Apply scale: check override first, then state
+            local scaleOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.scale")
+            frame.visualChargeBar:SetScale(scaleOverride or trackerConfig.visualChargeBar.scale or 1)
+            frame.visualChargeBar.bgTexture:SetScale(scaleOverride or trackerConfig.visualChargeBar.scale or 1)
+
+            -- Apply position/anchoring: check override first, then state
+            local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.x")
+            local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.y")
+            local anchorSelfOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.anchorSelf")
+            local anchorParentOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.anchorParent")
+            frame.visualChargeBar:ClearAllPoints()
+            frame.visualChargeBar:SetPoint(
+                anchorSelfOverride or trackerConfig.visualChargeBar.anchorSelf or "LEFT",
+                frame,
+                anchorParentOverride or trackerConfig.visualChargeBar.anchorParent or "RIGHT",
+                xOverride or trackerConfig.visualChargeBar.x or 0,
+                yOverride or trackerConfig.visualChargeBar.y or 0
+            )
+
+            -- Apply bar texture: check override first, then state (custom overrides default)
+            local textureOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.customBarTexture")
+            local barTexture = textureOverride
+                or (trackerConfig.visualChargeBar.customBarTexture and trackerConfig.visualChargeBar.customBarTexture ~= "" and trackerConfig.visualChargeBar.customBarTexture)
+                or trackerConfig.visualChargeBar.defaultBarTexture
+            if barTexture then
+                frame.visualChargeBar:SetStatusBarTexture(barTexture)
+                -- Explicitly set draw layer to ensure proper layering (above background)
+                local statusBarTexture = frame.visualChargeBar:GetStatusBarTexture()
+                if statusBarTexture then
+                    statusBarTexture:SetDrawLayer("ARTWORK", 0)
+                end
+                -- Keep the full-cover texture in sync with the bar texture
+                if frame.visualChargeBar.fullCoverTexture then
+                    frame.visualChargeBar.fullCoverTexture:SetTexture(barTexture)
+                end
+                -- Update background texture too
+                if frame.visualChargeBar.bgTexture then
+                    frame.visualChargeBar.bgTexture:SetTexture(barTexture)
+                end
+            end
+
+            -- Apply orientation
+            frame.visualChargeBar:SetOrientation(
+                (trackerConfig.visualChargeBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
+            )
+            -- Apply fillOrEmpty: 'regular' = normal fill, 'inverse' = SetReverseFill
+            local shouldReverse = trackerConfig.visualChargeBar.fillOrEmpty == 'inverse'
+            frame.visualChargeBar:SetReverseFill(shouldReverse)
+
+            -- Apply fill style (progressDirection) immediately so a settings change is reflected live
+            local fillStyle = (trackerConfig and trackerConfig.visualChargeBar and trackerConfig.visualChargeBar.progressDirection == 'reverse')
+            frame.visualChargeBar:SetFillStyle(fillStyle and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
+
+            -- Apply rotation: check override first, then state
+            local rotationOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.rotation")
+            local rotation = rotationOverride or trackerConfig.visualChargeBar.textureRotation
+            if rotation then
+                frame.visualChargeBar:SetRotation(rotation)
+            end
+            
+            -- Update min/max values based on config
+            frame.visualChargeBar:SetMinMaxValues(
+                trackerConfig.visualChargeBar.minValue or 0,
+                trackerConfig.visualChargeBar.maxValue or 5
+            )
+        end)
+        -- Called outside pcall so a pcall error can't prevent it from running
+        
+        local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.onlyRenderBar")
+        local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (trackerConfig.visualChargeBar.onlyRenderBar or false)
+        if onlyBar or trackerConfig.visualChargeBar.displayState == 'never' then
+            frame.visualChargeBar.borderCornerTL:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderCornerTR:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderCornerBR:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderCornerBL:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderEdgeTop:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderEdgeRight:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderEdgeBottom:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.borderEdgeLeft:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.bgTexture:SetVertexColor(0,0,0,0)
+            frame.visualChargeBar.glowTexture:SetVertexColor(0,0,0,0)
+        elseif trackerConfig.visualChargeBar.displayState == 'always' then
+            local borderColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.borderColor")
+            local borderColor = borderColorOverride or trackerConfig.visualChargeBar.borderColor
+            local backgroundColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.backgroundColor")
+            local backgroundColor = backgroundColorOverride or trackerConfig.visualChargeBar.backgroundColor
+            local glowColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.glowColor")
+            local glowColor = glowColorOverride or trackerConfig.visualChargeBar.glowColor
+
+            frame.visualChargeBar.borderCornerTL:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderCornerTR:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderCornerBR:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderCornerBL:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderEdgeTop:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderEdgeRight:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderEdgeBottom:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.borderEdgeLeft:SetVertexColor(borderColor.r, borderColor.g, borderColor.b, borderColor.a)
+            frame.visualChargeBar.bgTexture:SetVertexColor(backgroundColor.r, backgroundColor.g, backgroundColor.b, backgroundColor.a)
+            frame.visualChargeBar.glowTexture:SetVertexColor(glowColor.r, glowColor.g, glowColor.b, glowColor.a)
+        end
+        -- to ensure it's not suppressed by errors or overridden
+        local borderScaleOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "visualChargeBar.borderScale")
+        local borderScale = borderScaleOverride or trackerConfig.visualChargeBar.borderScale or 0.5
+        if frame.visualChargeBar.borderCornerTL then frame.visualChargeBar.borderCornerTL:SetScale(borderScale) end
+        if frame.visualChargeBar.borderCornerTR then frame.visualChargeBar.borderCornerTR:SetScale(borderScale) end
+        if frame.visualChargeBar.borderCornerBR then frame.visualChargeBar.borderCornerBR:SetScale(borderScale) end
+        if frame.visualChargeBar.borderCornerBL then frame.visualChargeBar.borderCornerBL:SetScale(borderScale) end
+        if frame.visualChargeBar.borderEdgeTop then frame.visualChargeBar.borderEdgeTop:SetScale(borderScale) end
+        if frame.visualChargeBar.borderEdgeRight then frame.visualChargeBar.borderEdgeRight:SetScale(borderScale) end
+        if frame.visualChargeBar.borderEdgeBottom then frame.visualChargeBar.borderEdgeBottom:SetScale(borderScale) end
+        if frame.visualChargeBar.borderEdgeLeft then frame.visualChargeBar.borderEdgeLeft:SetScale(borderScale) end
+    elseif frame.visualChargeBar and (not trackerConfig.visualChargeBar or not trackerConfig.countText.renderAsStatusBar) then
+        -- Hide visualChargeBar if it exists but visualChargeBar config doesn't
+        frame.visualChargeBar:SetAlpha(0)
+        if frame.visualChargeBar.bgTexture then frame.visualChargeBar.bgTexture:SetAlpha(0) end
+        if frame.visualChargeBar.fullCoverTexture then frame.visualChargeBar.fullCoverTexture:SetAlpha(0) end
+        if frame.visualChargeBar.glowTexture then frame.visualChargeBar.glowTexture:SetAlpha(0) end
+        if frame.visualChargeBar.border then frame.visualChargeBar.border:SetAlpha(0) end
+        if frame.visualChargeBar.borderCornerTL then frame.visualChargeBar.borderCornerTL:SetAlpha(0) end
+        if frame.visualChargeBar.borderCornerTR then frame.visualChargeBar.borderCornerTR:SetAlpha(0) end
+        if frame.visualChargeBar.borderCornerBR then frame.visualChargeBar.borderCornerBR:SetAlpha(0) end
+        if frame.visualChargeBar.borderCornerBL then frame.visualChargeBar.borderCornerBL:SetAlpha(0) end
+        if frame.visualChargeBar.borderEdgeTop then frame.visualChargeBar.borderEdgeTop:SetAlpha(0) end
+        if frame.visualChargeBar.borderEdgeRight then frame.visualChargeBar.borderEdgeRight:SetAlpha(0) end
+        if frame.visualChargeBar.borderEdgeBottom then frame.visualChargeBar.borderEdgeBottom:SetAlpha(0) end
+        if frame.visualChargeBar.borderEdgeLeft then frame.visualChargeBar.borderEdgeLeft:SetAlpha(0) end
+    end
+    
     -- NOTE: Charge anchor bars are NOT recreated here to avoid flickering.
     -- They are only created/refreshed when:
     -- 1. Frame is initially created (CreateTrackerFrame)
@@ -1546,6 +1720,20 @@ function FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, track
     local baseFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
     
     if not baseFrame then return end
+    
+    -- Create visual charge bar if visualChargeBar config exists but bar doesn't exist yet
+    if trackerConfig.visualChargeBar then
+        if not baseFrame.visualChargeBar then
+            self:CreateStatusBar(baseFrame, "visualChargeBar", trackerConfig, baseSpellID, trackerType, nil, nil, nil, "visualChargeBar")
+        end
+    end
+    
+    -- Create visual charge bar for variant frame if needed
+    if baseFrame.variantFrame and trackerConfig.visualChargeBar then
+        if not baseFrame.variantFrame.visualChargeBar then
+            self:CreateStatusBar(baseFrame.variantFrame, "visualChargeBar", trackerConfig, baseSpellID, trackerType, nil, nil, nil, "visualChargeBar")
+        end
+    end
     
     -- Apply property updates to base frame only if it shouldn't be hidden
     if not baseFrame.meta or baseFrame.meta.dualFrameStatus ~= 'hideBase' then
@@ -1889,16 +2077,29 @@ function FrameTrackerManager:SetupCooldownManagerHooks()
     end
 end
 
---- Handles CDM frame callbacks for buff tracking
+--- Internal: executes the actual CDM frame processing after the debounce window closes.
+--- Called by ProcessCDMFrameCallback after coalescing multiple rapid-fire hook invocations.
 --- @param cdm_frame table The Blizzard cooldown manager frame
 --- @param trackerType string The tracker type ("buffs")
---- @param caller string Debug label for the source of the call
-local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
+--- @param callers table Array of caller labels collected during the debounce window
+local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
     local baseSpellID = FrameTrackerManager:ResolveCDMBaseSpellID(cdm_frame)
     local classSpecialization = State:GetCurrentSpecID()
     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
     if hasSpecialization and baseSpellID and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        -- Track active buffs for conditional engine
+        if trackerType == "buffs" then
+            local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+            if customFrame and customFrame.meta and customFrame.meta.currentAuraInstanceID and customFrame.meta.currentAuraInstanceID ~= 0 then
+                -- Buff is active
+                if SpellStyler.ConditionalEngine then
+                    local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
+                    activeBuffs[baseSpellID] = true
+                    SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
+                end
+            end
+        end
         -- Skip if mock cooldown is active
         local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
         if frame.meta.mockCooldownActive then
@@ -1932,10 +2133,21 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
                 frame.meta.buffStatus = 'absent'
                 if frame.variantFrame then frame.variantFrame.meta.buffStatus = 'absent' end
             end
+
+            if SpellStyler.ConditionalEngine then
+                local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
+                activeBuffs[baseSpellID] = frame.meta.currentAuraInstanceID ~= 0
+                SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
+            end
+
             -- Guard: config can be nil during spec transitions when a stale CDM frame
             -- fires while the new spec's database hasn't been built yet, or when the
             -- scan picked up an old-spec spell that the new spec doesn't track.
             if not config or not config.statusBar then return end
+            
+            -- Build combined caller string for debugging
+            local callerStr = table.concat(callers, ", ")
+            
             if frame.meta.dualFrameStatus ~= 'hideBase' then
                 FrameTrackerManager:DriveFrameUpdate(
                     frame,
@@ -1945,7 +2157,7 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
                     },
 
                     nil,
-                    "hookCallback_" .. caller
+                    "hookCallback_" .. callerStr
                 )
             end
             if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then 
@@ -1957,10 +2169,38 @@ local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
                     },
 
                     nil,
-                    "hookCallback_" .. caller
+                    "hookCallback_" .. callerStr
                 )
             end
         end
+    end
+end
+
+--- Handles CDM frame callbacks for buff tracking with debouncing.
+--- Multiple rapid calls for the same CDM frame are coalesced into a single execution.
+--- @param cdm_frame table The Blizzard cooldown manager frame
+--- @param trackerType string The tracker type ("buffs")
+--- @param caller string Debug label for the source of the call
+local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
+    local q = FrameTrackerManager._processCDMQueue
+    if not q[cdm_frame] then
+        -- First call in this window: open the timer.
+        q[cdm_frame] = {
+            trackerType = trackerType,
+            callers = { caller or "unknown" }
+        }
+        C_Timer.After(0.005, function()
+            local entry = q[cdm_frame]
+            if entry then
+                _ExecuteProcessCDM(cdm_frame, entry.trackerType, entry.callers)
+                q[cdm_frame] = nil
+            end
+        end)
+    else
+        -- Subsequent call within the same window: merge.
+        local entry = q[cdm_frame]
+        -- Append caller label for debugging
+        table.insert(entry.callers, caller or "unknown")
     end
 end
 
@@ -2319,28 +2559,70 @@ function FrameTrackerManager:renderUpdateChargesText(data)
             
             -- Apply visibility alpha based on display setting and charge count
             if data.customFrame.meta.trackerType == "buffs" then
-                if data.config.countText.display then
-                    if data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
-                        local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
-                        local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
+                
+                if data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
+                    local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
+                    local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("target", data.customFrame.meta.currentAuraInstanceID, 1)
+                    local playerAuraData =        C_UnitAuras.GetAuraDataByAuraInstanceID("player", data.customFrame.meta.currentAuraInstanceID)
+                    local targetAuraData =        C_UnitAuras.GetAuraDataByAuraInstanceID("target", data.customFrame.meta.currentAuraInstanceID)
+                    local auraCountAsNumber =   (playerAuraData and playerAuraData.applications) or (targetAuraData and targetAuraData.applications) or 0
+                    if data.config.countText.display then
                         data.customFrame.count:SetText(playerCount or targetCount)
-                        if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
-                            local chargeValue = playerCount or targetCount or 0
-                            if data.customFrame.chargeAnchorBarA then
-                                data.customFrame.chargeAnchorBarA:SetValue(chargeValue)
-                                if data.customFrame.chargeAnchorBarB then
-                                    data.customFrame.chargeAnchorBarB:SetValue(chargeValue)
-                                end
-                            end
-                        end
                     else
                         data.customFrame.count:SetText("")
-                        if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
-                            if data.customFrame.chargeAnchorBarA then
-                                data.customFrame.chargeAnchorBarA:SetValue(0)
-                                if data.customFrame.chargeAnchorBarB then
-                                    data.customFrame.chargeAnchorBarB:SetValue(0)
-                                end
+                    end
+
+                    if data.customFrame.visualChargeBar and data.config.visualChargeBar and data.config.countText.renderAsStatusBar then
+                        local s,e = pcall(function() data.customFrame.visualChargeBar:SetValue(auraCountAsNumber) end)
+                        if e then
+                            DevTool:AddData({
+                                e = e,
+                                playerAuraData = playerAuraData,
+                                targetAuraData = targetAuraData,
+                                auraCountAsNumber = auraCountAsNumber
+                            }, "buff e")
+                        else
+                            DevTool:AddData({
+                                e = e,
+                                playerAuraData = playerAuraData,
+                                targetAuraData = targetAuraData,
+                                auraCountAsNumber = auraCountAsNumber
+                            }, "buff no e")
+                        end
+                        -- Apply alpha based on displayState setting (cannot check currentCharges as it may be secret)
+                        local displayState = data.config.visualChargeBar.displayState
+                        local barAlpha
+                        if displayState == "always" then
+                            barAlpha = 1
+                        elseif displayState == "available" or displayState == "inactive" then
+                            barAlpha = auraCountAsNumber  -- Blizzard clamps secret values automatically
+                        elseif displayState == "never" then
+                            barAlpha = 0
+                        else
+                            barAlpha = 1  -- Default to always visible
+                        end
+                        data.customFrame.visualChargeBar:SetAlpha(barAlpha)
+                    end
+
+                    if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
+                        local chargeValue = auraCountAsNumber or 0
+                        if data.customFrame.chargeAnchorBarA then
+                            data.customFrame.chargeAnchorBarA:SetValue(chargeValue)
+                            if data.customFrame.chargeAnchorBarB then
+                                data.customFrame.chargeAnchorBarB:SetValue(chargeValue)
+                            end
+                        end
+                    end
+                else
+                    if data.customFrame.visualChargeBar and data.config.visualChargeBar and data.config.countText.renderAsStatusBar then
+                        local s,e = pcall(function() data.customFrame.visualChargeBar:SetValue(0) end)
+                    end
+                    data.customFrame.count:SetText("")
+                    if data.config.chargeBasedDisplay.enabled or TrackerHasChargesConditionals(data.config) then
+                        if data.customFrame.chargeAnchorBarA then
+                            data.customFrame.chargeAnchorBarA:SetValue(0)
+                            if data.customFrame.chargeAnchorBarB then
+                                data.customFrame.chargeAnchorBarB:SetValue(0)
                             end
                         end
                     end
@@ -2371,6 +2653,25 @@ function FrameTrackerManager:renderUpdateChargesText(data)
                                 data.customFrame.chargeAnchorBarB:SetValue(currentCharges)
                             end
                         end
+                    end
+                    
+                    -- Update visualChargeBar if visualChargeBar config exists
+                    if data.customFrame.visualChargeBar and data.config.visualChargeBar and data.config.countText.renderAsStatusBar then
+                        data.customFrame.visualChargeBar:SetValue(currentCharges)
+                        local s,e = pcall(function() data.customFrame.visualChargeBar:SetValue(currentCharges) end)
+                        -- Apply alpha based on displayState setting (cannot check currentCharges as it may be secret)
+                        local displayState = data.config.visualChargeBar.displayState
+                        local barAlpha
+                        if displayState == "always" then
+                            barAlpha = 1
+                        elseif displayState == "available" or displayState == "inactive" then
+                            barAlpha = currentCharges  -- Blizzard clamps secret values automatically
+                        elseif displayState == "never" then
+                            barAlpha = 0
+                        else
+                            barAlpha = 1  -- Default to always visible
+                        end
+                        data.customFrame.visualChargeBar:SetAlpha(barAlpha)
                     end
                 end
             end
@@ -2596,8 +2897,9 @@ FrameTrackerManager.ApplyVisibility = {
 --- @param data ApplyCooldownDurationData
 --local function _DoApplyCooldownDuration(data)
 function FrameTrackerManager:ApplyCooldownDuration(data)
-    -- Skip duration resolution if mock cooldown is active
-    if data.customFrame and data.customFrame.meta and data.customFrame.meta.mockCooldownActive then
+    -- Skip duration resolution if mock cooldown is active BUT we don't have a pre-provided duration
+    -- (If we have a durationObject, we're SETTING the mock cooldown, so we should continue)
+    if data.customFrame and data.customFrame.meta and data.customFrame.meta.mockCooldownActive and not data.durationObject then
         return
     end
     
@@ -2825,6 +3127,7 @@ eventFrame:RegisterEvent("SPELL_DATA_LOAD_RESULT")
 eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
+eventFrame:RegisterEvent("PLAYER_ALIVE")
 
 
 local function eventHandlers(event, frame, meta)
@@ -2902,11 +3205,51 @@ local function eventHandlers(event, frame, meta)
     end
 end
 
+local function forceUpdateAllFrames()
+    for _, tType in ipairs({"essential", "utility", "spells", "buffs"}) do
+        if FrameTrackerManager.SpellStyler_frames[tType] then
+            for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                -- Update configuration changes first
+                FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, tType)
+                
+                -- Drive frame update for base frame
+                if customFrame.meta.dualFrameStatus ~= 'hideBase' then
+                    FrameTrackerManager:DriveFrameUpdate(
+                        customFrame,
+                        {
+                            resolveDuration = true,
+                            syncChargeText = true
+                        },
+                        nil,
+                        "forceUpdateAllFrames"
+                    )
+                end
+                
+                -- Drive frame update for variant frame if it exists
+                if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then
+                    FrameTrackerManager:DriveFrameUpdate(
+                        customFrame.variantFrame,
+                        {
+                            resolveDuration = true,
+                            syncChargeText = true
+                        },
+                        nil,
+                        "forceUpdateAllFrames"
+                    )
+                end
+            end
+        end
+    end
+end
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnetedWorld = true
         FrameTrackerManager:Initalize()
+        pcall(forceUpdateAllFrames)
+    end
+    if event == "PLAYER_ALIVE" then
+        pcall(forceUpdateAllFrames)
     end
     if event == "PLAYER_LEAVING_WORLD" then
         hasPlayerEnetedWorld = false
@@ -3060,6 +3403,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 local currentAuraInstanceID = customFrame.meta.currentAuraInstanceID or 0
                 local shouldClear = removedAuraSet[currentAuraInstanceID]
                 if shouldClear then
+                    -- Track buff removal for conditional engine
+                    if SpellStyler.ConditionalEngine then
+                        local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
+                        activeBuffs[baseSpellID] = false
+                        SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
+                    end
+                    
                     if customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("UNIT_AURA", customFrame, nil) end
                     if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("UNIT_AURA", customFrame.variantFrame, nil) end
                 end
@@ -3096,6 +3446,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local s, e = pcall(function()
             if isSecretSpellID then
             else
+                DevTool:AddData({
+                    unitTarget = unitTarget,
+                    castGUID = castGUID,
+                    spellID = spellID,
+                    castBarID = castBarID
+                }, "what was cast")
                 -- Detect talent changes (spell 384255 is the talent change spell)
                 if spellID == 384255 or spellID == 200749 then
                     -- Immediately hide and wipe old frames so that events fired

@@ -7,6 +7,7 @@ local ConditionalEngine = SpellStyler.ConditionalEngine
 
 ConditionalEngine.liveValues = {
     ComboPoints = 0,
+    activeBuffs = {},  -- table with spellID as key, true/false as value
     -- Aura_<spellID>       = true|false  (written on first NotifySourceChanged)
     -- AuraStacks_<spellID> = number      (written on first NotifySourceChanged)
     -- Cooldown_<spellID>   = number secs (written on first NotifySourceChanged)
@@ -168,6 +169,38 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
 				end
             elseif conditionStructure.conditionType == "Charges" then
                 table.insert(partiallyResolved, true)
+            elseif conditionStructure.conditionType == "buff" then
+                -- Check if the specified buff(s) is/are active
+                local buffData = conditionStructure.buff
+                if buffData and buffData.buffID and buffData.state then
+                    local activeBuffs = currentLiveValues.activeBuffs or {}
+                    local isActive = false
+                    
+                    -- Handle both single ID and table of IDs
+                    if type(buffData.buffID) == "table" then
+                        -- Check if ANY of the buff IDs is active
+                        for _, buffID in ipairs(buffData.buffID) do
+                            if activeBuffs[buffID] then
+                                isActive = true
+                                break
+                            end
+                        end
+                    else
+                        -- Single buff ID
+                        isActive = activeBuffs[buffData.buffID] == true
+                    end
+                    
+                    -- Compare against desired state
+                    if buffData.state == "active" then
+                        table.insert(partiallyResolved, isActive)
+                    elseif buffData.state == "inactive" then
+                        table.insert(partiallyResolved, not isActive)
+                    else
+                        table.insert(partiallyResolved, false)
+                    end
+                else
+                    table.insert(partiallyResolved, false)
+                end
 			end
 		else
 			table.insert(partiallyResolved, deepCopy(conditionStructure))
@@ -583,7 +616,7 @@ function ConditionalEngine:EvaluateAll()
                                             end)
                                         end 
                                     end
-                                else
+                                elseif previousConditionalResult ~= conditionalResult and conditionalResult == false then
                                     -- Conditional failed: clear this condition's cached overrides (ALL even the temporary properties)
                                     self:ClearFramePropertyOverrides(customFrame, conditionalKey)
                                     -- Trigger unified update path to revert to state values

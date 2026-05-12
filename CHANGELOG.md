@@ -192,3 +192,10 @@ Version 1.2.0
 	- Adds override setting to show icons when the settings menu is open despite their original display values
 	- Adds an error logging system for a specific obsecure error to collect more data if it continues to happen
 	- further updates to the conditional system to ensure values are properly updated
+
+Version 1.3.0
+	- Adds conditionals for charges. This system works in conjunction with charge based visibility.
+
+Version 1.2.0
+	- Adds condition for "Is buff present"
+	- Adds ability to display spell/buff charges as a bar not just a number

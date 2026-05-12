@@ -2,8 +2,8 @@
 -- Renders the Conditions settings view inside the settings menu
 
 local ADDON_NAME, SpellStyler = ...
-SpellStyler.ConditionsRenderer = SpellStyler.ConditionsRenderer or {}
-local ConditionsRenderer = SpellStyler.ConditionsRenderer
+SpellStyler.ConditionalCreator = SpellStyler.ConditionalCreator or {}
+local ConditionalCreator = SpellStyler.ConditionalCreator
 
 -- ─── Asset paths ────────────────────────────────────────────────────────────
 local PLUS_ICON_PATH     = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\PlusIcon.tga"
@@ -35,7 +35,7 @@ local PAREN_COLORS = {
 }
 
 -- ─── Misc constants ──────────────────────────────────────────────────────────
-local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges" }
+local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges", "buff" }
 local COMPARISON_OPTIONS = {
     { label = "less than",             value = "<"  },
     { label = "less than or equal to", value = "<=" },
@@ -79,7 +79,7 @@ local OPERATOR_TYPE = { AND = "and", OR = "or" }
 --
 
 -- Returns the flat entries list, creating it and migrating old formats if needed.
-function ConditionsRenderer:GetEntries(conditionalName)
+function ConditionalCreator:GetEntries(conditionalName)
     if not conditionalName then return nil end
     SpellStyler_DB = SpellStyler_DB or {}
     SpellStyler_DB.conditionals = SpellStyler_DB.conditionals or {}
@@ -182,7 +182,7 @@ function ConditionsRenderer:GetEntries(conditionalName)
 end
 
 -- Returns a new array containing only the condition entries (as live references).
-function ConditionsRenderer:GetConditions(conditionalName)
+function ConditionalCreator:GetConditions(conditionalName)
     local entries = self:GetEntries(conditionalName)
     if not entries then return nil end
     local conds = {}
@@ -193,7 +193,7 @@ function ConditionsRenderer:GetConditions(conditionalName)
 end
 
 -- Returns the number of condition entries.
-function ConditionsRenderer:GetConditionCount(conditionalName)
+function ConditionalCreator:GetConditionCount(conditionalName)
     local entries = self:GetEntries(conditionalName)
     if not entries then return 0 end
     local n = 0
@@ -213,7 +213,7 @@ end
 -- Returns colorMap[entryIdx][side][parenPos] → PAREN_COLORS index (1-based).
 -- `side` is "open" or "close"; parenPos is the 1-based position within
 -- that side's count on the given entry.
-function ConditionsRenderer:ComputeParenColors(entries)
+function ConditionalCreator:ComputeParenColors(entries)
     if not entries then return {} end
     local flat = {}
     for ei, entry in ipairs(entries) do
@@ -264,7 +264,7 @@ end
 
 -- ─── Condition mutation ──────────────────────────────────────────────────────
 
-function ConditionsRenderer:AddCondition(conditionalName)
+function ConditionalCreator:AddCondition(conditionalName)
     local entries = self:GetEntries(conditionalName)
     if not entries then return nil end
     local N = self:GetConditionCount(conditionalName)
@@ -290,7 +290,7 @@ function ConditionsRenderer:AddCondition(conditionalName)
     return entries
 end
 
-function ConditionsRenderer:RemoveConditionAtIndex(conditionalName, condIdx)
+function ConditionalCreator:RemoveConditionAtIndex(conditionalName, condIdx)
     local entries = self:GetEntries(conditionalName)
     if not entries then return nil end
     -- Locate the flat index of the condIdx-th condition.
@@ -393,7 +393,7 @@ dragOverlay:EnableMouse(true)
 dragOverlay:Hide()
 
 local function ComputeDropSlot(state, sourceConditionIndex)
-    local N = ConditionsRenderer:GetConditionCount(state.selectedConditional)
+    local N = ConditionalCreator:GetConditionCount(state.selectedConditional)
     if N == 0 then return 1 end
     local _, cursorY = GetCursorPosition()
     local uiY = cursorY / UIParent:GetEffectiveScale()
@@ -423,7 +423,7 @@ local function RepositionForDrag(state)
     local sourceIdx   = activeDrag.sourceConditionIndex
     local dropSlot    = activeDrag.dropSlot
     local placeholder = activeDrag.placeholderFrame
-    local conds = ConditionsRenderer:GetConditions(state.selectedConditional)
+    local conds = ConditionalCreator:GetConditions(state.selectedConditional)
     if not conds then return end
     local N = #conds
     local showOps = (N >= 2)
@@ -497,7 +497,7 @@ local function CreateDragPlaceholder(entryFrame)
     return ph
 end
 
-function ConditionsRenderer:StartDrag(state, sourceConditionIndex, entryFrame, condition)
+function ConditionalCreator:StartDrag(state, sourceConditionIndex, entryFrame, condition)
     if activeDrag then return end
     if self:GetConditionCount(state.selectedConditional) < sourceConditionIndex then return end
     local clone       = CreateDragClone(entryFrame, condition)
@@ -524,7 +524,7 @@ function ConditionsRenderer:StartDrag(state, sourceConditionIndex, entryFrame, c
     dragOverlay:Raise()
 end
 
-function ConditionsRenderer:FinalizeDrag(commit)
+function ConditionalCreator:FinalizeDrag(commit)
     if not activeDrag then return end
     local state     = activeDrag.state
     local sourceIdx = activeDrag.sourceConditionIndex
@@ -576,7 +576,7 @@ dragOverlay:SetScript("OnUpdate", function()
     elseif delta < -1 then activeDrag.dragDirection = "down"
     end
     activeDrag.lastCursorY = curUIY
-    local N = ConditionsRenderer:GetConditionCount(state.selectedConditional)
+    local N = ConditionalCreator:GetConditionCount(state.selectedConditional)
     if N == 0 then return end
     local raw   = ComputeDropSlot(state, activeDrag.sourceConditionIndex)
     local valid = math.max(1, math.min(N, raw))
@@ -587,11 +587,11 @@ dragOverlay:SetScript("OnUpdate", function()
 end)
 
 dragOverlay:SetScript("OnMouseUp", function(_, button)
-    if button == "LeftButton" then ConditionsRenderer:FinalizeDrag(true) end
+    if button == "LeftButton" then ConditionalCreator:FinalizeDrag(true) end
 end)
 
 -- ─── Conditional type renderers ──────────────────────────────────────────────
-ConditionsRenderer.conditionalTypeRenderers = {
+ConditionalCreator.conditionalTypeRenderers = {
     ComboPoints = function(container, condition, vertPadding, onHeightResolved)
         condition.ComboPoints = condition.ComboPoints or {}
         local data = condition.ComboPoints
@@ -787,6 +787,181 @@ ConditionsRenderer.conditionalTypeRenderers = {
         end)
         
         return 0
+    end,
+    buff = function(container, condition, vertPadding, onHeightResolved)
+        condition.buff = condition.buff or {}
+        local data = condition.buff
+        
+        -- "When" label
+        local whenLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        whenLabel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, vertPadding)
+        whenLabel:SetText("When")
+        
+        -- Buff selection dropdown
+        local buffDropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+        buffDropdown:SetPoint("LEFT", whenLabel, "RIGHT", -12, -2)
+        UIDropDownMenu_SetWidth(buffDropdown, 150)
+        
+        local function RefreshBuffDropdown()
+            local txt = "|cFF888888select buff|r"
+            if data.buffID then
+                -- Handle both single ID and table of IDs
+                local firstID = (type(data.buffID) == "table") and data.buffID[1] or data.buffID
+                -- Try to get the buff name
+                pcall(function()
+                    local buffInfo = C_Spell.GetSpellInfo(firstID)
+                    if buffInfo and buffInfo.name then
+                        txt = buffInfo.name
+                    else
+                        txt = "Buff " .. tostring(firstID)
+                    end
+                end)
+            end
+            UIDropDownMenu_SetText(buffDropdown, txt)
+        end
+        
+        UIDropDownMenu_Initialize(buffDropdown, function(self, level)
+            -- Get all tracked buffs from the database
+            local State = SpellStyler.State
+            if not State then return end
+            
+            local db = State:GetDataBase_V2()
+            if not db or not db.buffs then return end
+            
+            -- Build a map of buff names to IDs (combining duplicates)
+            local buffsByName = {}
+            for buffID, trackerValue in pairs(db.buffs) do
+                local buffName = "Buff " .. tostring(buffID)
+                pcall(function()
+                    local buffInfo = C_Spell.GetSpellInfo(buffID)
+                    if buffInfo and buffInfo.name then
+                        buffName = buffInfo.name
+                    end
+                end)
+                
+                if not buffsByName[buffName] then
+                    buffsByName[buffName] = {}
+                end
+                table.insert(buffsByName[buffName], buffID)
+            end
+            
+            -- Convert to sorted list
+            local buffList = {}
+            for name, ids in pairs(buffsByName) do
+                -- Sort IDs within each name group for consistency
+                table.sort(ids)
+                -- Store as single ID if only one, or table if multiple
+                local value = (#ids == 1) and ids[1] or ids
+                table.insert(buffList, { name = name, value = value, ids = ids })
+            end
+            
+            -- Sort by name
+            table.sort(buffList, function(a, b) return a.name < b.name end)
+            
+            -- Add dropdown options
+            if #buffList > 0 then
+                for _, buff in ipairs(buffList) do
+                    local info = UIDropDownMenu_CreateInfo()
+                    info.text = buff.name
+                    info.value = buff.value
+                    
+                    -- Check if current selection matches (handle both single ID and table of IDs)
+                    local isChecked = false
+                    if type(data.buffID) == "table" and type(buff.value) == "table" then
+                        -- Both are tables, compare contents
+                        if #data.buffID == #buff.value then
+                            isChecked = true
+                            for i, id in ipairs(data.buffID) do
+                                if id ~= buff.value[i] then
+                                    isChecked = false
+                                    break
+                                end
+                            end
+                        end
+                    else
+                        -- Simple comparison (handles single IDs or mixed cases)
+                        isChecked = (data.buffID == buff.value)
+                    end
+                    info.checked = isChecked
+                    
+                    info.func = function(btn)
+                        data.buffID = btn.value
+                        RefreshBuffDropdown()
+                        -- Re-evaluate all conditionals
+                        if SpellStyler.ConditionalEngine then
+                            SpellStyler.ConditionalEngine:EvaluateAll()
+                        end
+                    end
+                    UIDropDownMenu_AddButton(info, level)
+                end
+            else
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = "|cFF888888(no buffs tracked)|r"
+                info.disabled = true
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        RefreshBuffDropdown()
+        
+        -- "is" label (on second line)
+        local isLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        isLabel:SetPoint("TOPLEFT", buffDropdown, "BOTTOMLEFT", 16, -8)
+        isLabel:SetText("is")
+        
+        -- State dropdown (active/inactive)
+        local stateDropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+        stateDropdown:SetPoint("LEFT", isLabel, "RIGHT", -12, -2)
+        UIDropDownMenu_SetWidth(stateDropdown, 100)
+        
+        local function RefreshStateDropdown()
+            local txt = "|cFF888888state|r"
+            if data.state == "active" then
+                txt = "active"
+            elseif data.state == "inactive" then
+                txt = "inactive"
+            end
+            UIDropDownMenu_SetText(stateDropdown, txt)
+        end
+        
+        UIDropDownMenu_Initialize(stateDropdown, function(self, level)
+            local states = {
+                { label = "active", value = "active" },
+                { label = "inactive", value = "inactive" },
+            }
+            
+            for _, state in ipairs(states) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = state.label
+                info.value = state.value
+                info.checked = (data.state == state.value)
+                info.func = function(btn)
+                    data.state = btn.value
+                    RefreshStateDropdown()
+                    -- Re-evaluate all conditionals
+                    if SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        RefreshStateDropdown()
+        
+        -- Hide/show dropdowns to measure height
+        buffDropdown:Hide()
+        stateDropdown:Hide()
+        C_Timer.After(0, function()
+            if not container:IsShown() then return end
+            local _, _, _, h = container:GetBoundsRect()
+            buffDropdown:Show()
+            stateDropdown:Show()
+            if h and h > 0 and onHeightResolved then
+                container:SetHeight(h)
+                onHeightResolved(h)
+            end
+        end)
+        
+        return 0
     end
 }
 
@@ -798,7 +973,7 @@ ConditionsRenderer.conditionalTypeRenderers = {
 -- GetBoundsRect resolves via a C_Timer.After(0) callback.
 -- Returns (frame, provisionalHeight).
 --
-function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionIndex, state)
+function ConditionalCreator:CreateConditionFrame(parent, condition, conditionIndex, state)
     local entryFrame = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     entryFrame:SetBackdrop({
         bgFile   = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -830,11 +1005,11 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
     end)
     dragHandle:SetScript("OnMouseDown", function(_, button)
         if button == "LeftButton" then
-            ConditionsRenderer:StartDrag(state, conditionIndex, entryFrame, condition)
+            ConditionalCreator:StartDrag(state, conditionIndex, entryFrame, condition)
         end
     end)
     dragHandle:SetScript("OnMouseUp", function(_, button)
-        if button == "LeftButton" then ConditionsRenderer:FinalizeDrag(true) end
+        if button == "LeftButton" then ConditionalCreator:FinalizeDrag(true) end
     end)
 
     local vertPadding      = -6
@@ -851,7 +1026,7 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
     local function RenderTypeContent(triggerRerender)
         if typeContentFrame then typeContentFrame:Hide(); typeContentFrame = nil end
         local contentHeight = 0
-        local renderer = condition.conditionType and ConditionsRenderer.conditionalTypeRenderers[condition.conditionType]
+        local renderer = condition.conditionType and ConditionalCreator.conditionalTypeRenderers[condition.conditionType]
         if renderer then
             typeContentFrame = CreateFrame("Frame", nil, entryFrame)
             typeContentFrame:SetPoint("TOPLEFT", typeDropdown, "BOTTOMLEFT", 24, 0)
@@ -863,7 +1038,7 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
                 if state.renderGeneration ~= capturedGen then return end
                 typeContentFrame:SetHeight(h)
                 entryFrame:SetHeight(dropdownHeight + h + (2 * -vertPadding) + 2)
-                ConditionsRenderer:RepositionEntries(state)
+                ConditionalCreator:RepositionEntries(state)
             end
             contentHeight = renderer(typeContentFrame, condition, vertPadding, onHeightResolved)
             typeContentFrame:SetHeight(contentHeight)
@@ -871,7 +1046,7 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
         end
         local totalHeight = dropdownHeight + contentHeight + (-vertPadding) + 2
         entryFrame:SetHeight(totalHeight)
-        if triggerRerender and state then ConditionsRenderer:RenderEntries(state) end
+        if triggerRerender and state then ConditionalCreator:RenderEntries(state) end
         return totalHeight
     end
 
@@ -879,7 +1054,7 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
         -- Check if a Charges condition already exists
         local hasChargesCondition = false
         if state and state.selectedConditional then
-            local conditions = ConditionsRenderer:GetConditions(state.selectedConditional)
+            local conditions = ConditionalCreator:GetConditions(state.selectedConditional)
             if conditions then
                 for _, cond in ipairs(conditions) do
                     if cond ~= condition and cond.conditionType == "Charges" then
@@ -915,8 +1090,8 @@ function ConditionsRenderer:CreateConditionFrame(parent, condition, conditionInd
     deleteBtn:SetSize(18, 18)
     deleteBtn:SetPoint("TOPRIGHT", entryFrame, "TOPRIGHT", -6, -6)
     deleteBtn:SetScript("OnClick", function()
-        ConditionsRenderer:RemoveConditionAtIndex(state.selectedConditional, conditionIndex)
-        ConditionsRenderer:RenderEntries(state)
+        ConditionalCreator:RemoveConditionAtIndex(state.selectedConditional, conditionIndex)
+        ConditionalCreator:RenderEntries(state)
     end)
 
     RefreshTypeDropdown()
@@ -936,7 +1111,7 @@ end
 --   conditionCount, state, outParenButtons
 --   colorMap      - from ComputeParenColors()
 --
-function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operand, openCount, closeEntryIdx, openEntryIdx, rowIndex, conditionCount, state, outParenButtons, colorMap)
+function ConditionalCreator:CreateOperatorRowFrame(editFrame, closeCount, operand, openCount, closeEntryIdx, openEntryIdx, rowIndex, conditionCount, state, outParenButtons, colorMap)
     local isFirst = (rowIndex == 1)
     local isLast  = (rowIndex == conditionCount + 1)
 
@@ -963,7 +1138,7 @@ function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operan
         orHL:SetAllPoints(); orHL:SetTexture(OR_ICON_PATH); orHL:SetAlpha(0.6)
 
         local function RefreshOp()
-            local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+            local ents = ConditionalCreator:GetEntries(state.selectedConditional)
             local op   = ents and closeEntryIdx and ents[closeEntryIdx]
             if not op or op.operand == OPERATOR_TYPE.AND then
                 andTex:SetVertexColor(COLOR_AND_ACTIVE[1], COLOR_AND_ACTIVE[2], COLOR_AND_ACTIVE[3])
@@ -974,12 +1149,12 @@ function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operan
             end
         end
         andButton:SetScript("OnClick", function()
-            local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+            local ents = ConditionalCreator:GetEntries(state.selectedConditional)
             if ents and closeEntryIdx then ents[closeEntryIdx].operand = OPERATOR_TYPE.AND end
             RefreshOp()
         end)
         orButton:SetScript("OnClick", function()
-            local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+            local ents = ConditionalCreator:GetEntries(state.selectedConditional)
             if ents and closeEntryIdx then ents[closeEntryIdx].operand = OPERATOR_TYPE.OR end
             RefreshOp()
         end)
@@ -1019,10 +1194,10 @@ function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operan
                 end)
                 btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
                 btn:SetScript("OnClick", function()
-                    local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+                    local ents = ConditionalCreator:GetEntries(state.selectedConditional)
                     if ents and closeEntryIdx and (ents[closeEntryIdx].closeParens or 0) > 0 then
                         ents[closeEntryIdx].closeParens = ents[closeEntryIdx].closeParens - 1
-                        ConditionsRenderer:RefreshParenButtons(state)
+                        ConditionalCreator:RefreshParenButtons(state)
                     end
                 end)
             else
@@ -1033,10 +1208,10 @@ function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operan
                 end)
                 btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
                 btn:SetScript("OnClick", function()
-                    local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+                    local ents = ConditionalCreator:GetEntries(state.selectedConditional)
                     if ents and closeEntryIdx then
                         ents[closeEntryIdx].closeParens = (ents[closeEntryIdx].closeParens or 0) + 1
-                        ConditionsRenderer:RefreshParenButtons(state)
+                        ConditionalCreator:RefreshParenButtons(state)
                     end
                 end)
             end
@@ -1077,10 +1252,10 @@ function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operan
                 end)
                 btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
                 btn:SetScript("OnClick", function()
-                    local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+                    local ents = ConditionalCreator:GetEntries(state.selectedConditional)
                     if ents and openEntryIdx and (ents[openEntryIdx].openParens or 0) > 0 then
                         ents[openEntryIdx].openParens = ents[openEntryIdx].openParens - 1
-                        ConditionsRenderer:RefreshParenButtons(state)
+                        ConditionalCreator:RefreshParenButtons(state)
                     end
                 end)
             else
@@ -1091,10 +1266,10 @@ function ConditionsRenderer:CreateOperatorRowFrame(editFrame, closeCount, operan
                 end)
                 btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
                 btn:SetScript("OnClick", function()
-                    local ents = ConditionsRenderer:GetEntries(state.selectedConditional)
+                    local ents = ConditionalCreator:GetEntries(state.selectedConditional)
                     if ents and openEntryIdx then
                         ents[openEntryIdx].openParens = (ents[openEntryIdx].openParens or 0) + 1
-                        ConditionsRenderer:RefreshParenButtons(state)
+                        ConditionalCreator:RefreshParenButtons(state)
                     end
                 end)
             end
@@ -1107,7 +1282,7 @@ end
 
 
 -- ─── Plus button ─────────────────────────────────────────────────────────────
-function ConditionsRenderer:CreatePlusButton(parent, state)
+function ConditionalCreator:CreatePlusButton(parent, state)
     local btn = CreateFrame("Button", nil, parent)
     btn:SetSize(24, 24)
     local tex = btn:CreateTexture(nil, "ARTWORK")
@@ -1115,8 +1290,8 @@ function ConditionsRenderer:CreatePlusButton(parent, state)
     local hl = btn:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints(); hl:SetTexture(PLUS_ICON_PATH); hl:SetAlpha(0.6)
     btn:SetScript("OnClick", function()
-        ConditionsRenderer:AddCondition(state.selectedConditional)
-        ConditionsRenderer:RenderEntries(state)
+        ConditionalCreator:AddCondition(state.selectedConditional)
+        ConditionalCreator:RenderEntries(state)
     end)
     btn:SetScript("OnEnter", function()
         GameTooltip:SetOwner(btn, "ANCHOR_CURSOR_RIGHT")
@@ -1132,7 +1307,7 @@ end
 -- anchor points to reflect current frame heights.  Safe to call after a single
 -- frame's height changes (e.g. after GetBoundsRect resolves).
 --
-function ConditionsRenderer:RepositionEntries(state)
+function ConditionalCreator:RepositionEntries(state)
     if not state or not state.editFrame then return end
     local conditions   = self:GetConditions(state.selectedConditional) 
     local N            = conditions and #conditions or 0
@@ -1185,7 +1360,7 @@ end
 -- Condition frames are left exactly as-is, so no GetBoundsRect flicker occurs.
 -- Call this instead of RenderEntries when only parenthesis state has changed.
 --
-function ConditionsRenderer:RefreshParenButtons(state)
+function ConditionalCreator:RefreshParenButtons(state)
     if not state or not state.editFrame then return end
 
     -- Destroy old operator row frames.
@@ -1229,7 +1404,7 @@ function ConditionsRenderer:RefreshParenButtons(state)
 end
 
 -- ─── Full rebuild / render ───────────────────────────────────────────────────
-function ConditionsRenderer:RenderEntries(state)
+function ConditionalCreator:RenderEntries(state)
     if not state or not state.editFrame then return end
     state.renderGeneration = (state.renderGeneration or 0) + 1
 
@@ -1301,7 +1476,7 @@ end
 -- Creates a scroll-able content pane anchored below `inputBox`.
 -- Returns the innermost editable frame that RenderEntries should target.
 --
-function ConditionsRenderer:CreateEditArea(parentFrame, inputBox)
+function ConditionalCreator:CreateEditArea(parentFrame, inputBox)
     local scrollFrame = CreateFrame("ScrollFrame", nil, parentFrame)
     scrollFrame:SetPoint("TOP",    inputBox,    "BOTTOM",  0,  -8)
     scrollFrame:SetPoint("LEFT",   parentFrame, "LEFT",    16,   0)
@@ -1327,7 +1502,7 @@ function ConditionsRenderer:CreateEditArea(parentFrame, inputBox)
 end
 
 -- ─── Conditional selection dropdown ─────────────────────────────────────────
-function ConditionsRenderer:CreateConditionalDropdown(parentFrame, state)
+function ConditionalCreator:CreateConditionalDropdown(parentFrame, state)
     local label = parentFrame:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     label:SetPoint("TOPLEFT", parentFrame, "TOPLEFT", 14, -14)
     label:SetText("Conditional:")
@@ -1347,7 +1522,7 @@ function ConditionsRenderer:CreateConditionalDropdown(parentFrame, state)
         local sel = state.selectedConditional
         UIDropDownMenu_SetText(dd, sel and sel or "|cFF888888Select...|r")
         deleteBtn:SetEnabled(sel ~= nil)
-        ConditionsRenderer:RenderEntries(state)
+        ConditionalCreator:RenderEntries(state)
     end
 
     state.refreshDropdown = Refresh
@@ -1425,7 +1600,7 @@ end
 -- Conditions UI and attaches it.  Compatible with the SpellStyler settings
 -- renderer protocol: `RenderConditionsView(parentFrame)`.
 --
-function ConditionsRenderer:RenderConditionsView(parentFrame)
+function ConditionalCreator:RenderConditionsView(parentFrame)
     -- Clear any existing children we created last time.
     if parentFrame._conditionsViewBuilt then return end
     parentFrame._conditionsViewBuilt = true

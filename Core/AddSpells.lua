@@ -288,15 +288,25 @@ function AddSpells:RenderAddSpellsView(parent)
 
     local State = SpellStyler.State
     for _, spell in ipairs(spells) do
-        -- Skip spells that are already tracked in any tracker type.
+        -- Skip spells that are already tracked AND enabled in any tracker type.
         -- DB entries are keyed by GetBaseSpell(), so the duplicate check must use
         -- the same key; using the raw spellbook ID would miss override spells.
         local baseID = C_Spell.GetBaseSpell(spell.spellID)
-        local alreadyTracked = State:CheckIsAlreadyTracker(baseID, "buffs")
-            or State:CheckIsAlreadyTracker(baseID, "essential")
-            or State:CheckIsAlreadyTracker(baseID, "utility")
-            or State:CheckIsAlreadyTracker(baseID, "spells")
-        if not alreadyTracked then
+        
+        -- Helper function to check if spell is tracked and enabled
+        local function isTrackedAndEnabled(spellID, trackerType)
+            if not State:CheckIsAlreadyTracker(spellID, trackerType) then
+                return false
+            end
+            local config = State:GetSpecificTrackerValue(spellID, trackerType)
+            return config and config.isEnabled ~= false
+        end
+        
+        local alreadyTrackedAndEnabled = isTrackedAndEnabled(baseID, "buffs")
+            or isTrackedAndEnabled(baseID, "essential")
+            or isTrackedAndEnabled(baseID, "utility")
+            or isTrackedAndEnabled(baseID, "spells")
+        if not alreadyTrackedAndEnabled then
         local capturedSpell = spell
         local btn = CreateFrame("Button", nil, gridChild)
         btn:EnableMouse(true)

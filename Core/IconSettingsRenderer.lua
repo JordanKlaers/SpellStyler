@@ -4,6 +4,7 @@ local IconSettingsRenderer = SpellStyler.IconSettingsRenderer
 local State = SpellStyler.State
 
 local controlsPanel
+local settingsScrollChild  -- Reference to the scroll child so we can update its height
 local settingsMenuIconList = {}
 local _lastSelectedIcon = nil  -- { uniqueID, trackerType } persists across menu open/close
 -- Persisted expand/collapse state for individual Special Visibility Condition entries
@@ -72,7 +73,15 @@ end
 function IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
     -- Update selection state and render the config panel
     _lastSelectedIcon = { uniqueID = uniqueID, trackerType = trackerType }
-    self:RenderConfigControlsForSpecificIcon({ uniqueID = uniqueID, trackerType = trackerType })
+    self:RenderConfigControlsForSpecificIcon({ 
+        uniqueID = uniqueID, 
+        trackerType = trackerType,
+        onHeightUpdated = function(newHeight)
+            if settingsScrollChild then
+                settingsScrollChild:SetHeight(math.max(newHeight, 600))
+            end
+        end
+    })
 
     -- Briefly highlight the frame in the game world so the user can locate it
     self:BrieflyHighlightFrame(uniqueID, trackerType)
@@ -317,9 +326,9 @@ end
 local function CreatePositionInputs(parent, config, anchor, isBarPosition)
     config = config or {}
     
-    -- Container frame
+    -- Container frame (increased height to account for hint text below)
     local container = CreateFrame("Frame", nil, parent)
-    container:SetSize(290, 50)
+    container:SetSize(290, 65)
     container:SetPoint(config.anchorPoint or "TOPLEFT", anchor, config.relativePoint or "BOTTOMLEFT", config.offsetX or 0, config.offsetY or 0)
     
     -- Main label - vertically centered, left-aligned
@@ -467,6 +476,238 @@ end
 -- CONFIG INPUT DEFINITIONS
 -- ============================================================================
 
+--- Creates status bar configuration inputs that can be reused for different bar types
+--- @param pathPrefix string The config path prefix (e.g., "statusBar" or "visualChargeBar")
+--- @param config table The config object with getValue/setValue methods
+--- @param options table Optional configuration: { includeMockCooldown: boolean, includeDisplayState: boolean, isBarPosition: boolean }
+--- @return table Array of input definitions
+local function CreateStatusBarInputs(pathPrefix, config, options)
+    options = options or {}
+    local includeMockCooldown = options.includeMockCooldown ~= false  -- default true
+    local includeDisplayState = options.includeDisplayState ~= false  -- default true
+    local isBarPosition = options.isBarPosition or false
+    
+    local RADIAL_DISPLAY_OPTIONS = {}
+    if config.trackerType == 'buffs' then
+        RADIAL_DISPLAY_OPTIONS = {
+            { label = "Show Always", value = "always" },
+            { label = "Show when active", value = "active" },
+            { label = "Show when inactive", value = "inactive" },
+            { label = "Show Never", value = "never" },
+        }
+    else
+        RADIAL_DISPLAY_OPTIONS = {
+            { label = "Show Always", value = "always" },
+            { label = "Show Only on Cooldown", value = "cooldown" },
+            { label = "Show Only when Available", value = "available" },
+            { label = "Show Never", value = "never" },
+        }
+    end
+    
+    local ANCHOR_OPTIONS = {
+        { label = "TOP", value = "TOP" },
+        { label = "BOTTOM", value = "BOTTOM" },
+        { label = "LEFT", value = "LEFT" },
+        { label = "RIGHT", value = "RIGHT" },
+        { label = "CENTER", value = "CENTER" },
+        { label = "TOPLEFT", value = "TOPLEFT" },
+        { label = "TOPRIGHT", value = "TOPRIGHT" },
+        { label = "BOTTOMLEFT", value = "BOTTOMLEFT" },
+        { label = "BOTTOMRIGHT", value = "BOTTOMRIGHT" },
+    }
+    
+    local inputs = {}
+    
+    -- Mock Cooldown button (only for statusBar)
+    if includeMockCooldown then
+        table.insert(inputs, {
+            type = "button",
+            buttonText = "Mock Cooldown",
+            width = 120,
+            offsetY = -15,
+            onClick = function(btn, btnFrame)
+                SpellStyler.IconSettingsRenderer:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
+                local isNowActive = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType][btn.uniqueID].meta.mockCooldownActive
+                btnFrame:SetText(isNowActive and "Stop Cooldown" or "Mock Cooldown")
+            end,
+            onStateGet = function(self)
+                local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(self.uniqueID, self.trackerType)
+                local isMockActive = trackerFrame and trackerFrame._spellStyler_mockCooldownActive or false
+                return isMockActive and "Stop Cooldown" or "Mock Cooldown"
+            end,
+        })
+    end
+    
+    -- Display State dropdown
+    if includeDisplayState then
+        table.insert(inputs, {
+            type = "dropdown",
+            label = "Bar Display State:",
+            options = RADIAL_DISPLAY_OPTIONS,
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".displayState") or "always" end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".displayState", value) end,
+        })
+    end
+    
+    -- Common status bar inputs
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Anchor Point on Self:",
+        options = ANCHOR_OPTIONS,
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".anchorSelf") or "LEFT" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".anchorSelf", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Anchor Point on Icon:",
+        options = ANCHOR_OPTIONS,
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".anchorParent") or "RIGHT" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".anchorParent", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "textinput",
+        label = "Custom Texture Path:",
+        width = 160,
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".customBarTexture") or "" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".customBarTexture", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "checkbox",
+        label = "Only Render Bar (no border/background):",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar") or false end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".onlyRenderBar", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Bar Orientation:",
+        options = {
+            { label = "Horizontal", value = "horizontal" },
+            { label = "Vertical",   value = "vertical" },
+        },
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".barOrientation") or "horizontal" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".barOrientation", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Fill or Empty:",
+        options = {
+            { label = "Fill", value = "regular" },
+            { label = "Empty", value = "inverse" },
+        },
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".fillOrEmpty") or "regular" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".fillOrEmpty", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Progress Direction:",
+        options = {
+            { label = "Standard", value = "standard" },
+            { label = "Reverse",  value = "reverse" },
+        },
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".progressDirection") or "standard" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".progressDirection", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Texture Rotation:",
+        options = {
+            { label = "0 degrees", value = 0 },
+            { label = "90 degrees",  value = math.pi / 2 },
+            { label = "180 degrees",  value = math.pi },
+            { label = "270 degrees",  value = (math.pi / 2) * 3 },
+        },
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".textureRotation") or 0 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".textureRotation", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "dropdown",
+        label = "Default Fill Value:",
+        options = {
+            { label = "Empty", value = "empty" },
+            { label = "Full",  value = "full" },
+        },
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".defaultFillValue") or "empty" end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".defaultFillValue", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "colorpicker",
+        label = "Bar Color:",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".color") or {r=1, g=1, b=1, a=1} end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".color", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "colorpicker",
+        label = "Background Color:",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".backgroundColor") or {r=0.2, g=0.2, b=0.2, a=0.6} end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".backgroundColor", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "colorpicker",
+        label = "Glow Color:",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".glowColor") or {r=0.5, g=0.8, b=1, a=0.4} end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".glowColor", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "colorpicker",
+        label = "Border Color:",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderColor") or {r=1, g=1, b=1, a=1} end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderColor", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "textinput",
+        label = "Scale:",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".scale") or 1.0 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".scale", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "textinput",
+        label = "Border Scale:",
+        numeric = true,
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderScale") or 1.0 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderScale", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "positionbuttons",
+        label = "Position:",
+        hintText = "You can also use shift + arrow keys",
+        isBarPosition = isBarPosition,
+        pathPrefix = pathPrefix,  -- Pass pathPrefix so RenderCountTextSection knows which config path to use
+    })
+    
+    table.insert(inputs, {
+        type = "textinput",
+        label = "Width:",
+        numeric = true,
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".width") or (config.getValue(self.uniqueID, "size")) or 20 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".width", value) end,
+    })
+    
+    table.insert(inputs, {
+        type = "textinput",
+        label = "Height:",
+        numeric = true,
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".height") or config.getValue(self.uniqueID, "size") or 20 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".height", value) end,
+    })
+    
+    return inputs
+end
+
 function IconSettingsRenderer:GetIconConfigInputs(config)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
@@ -605,169 +846,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             type = "header",
             text = "Bar Timer",
             state = 'collapsed',
-            section = {
-				{
-                    type = "button",
-                    buttonText = "Mock Cooldown",
-                    width = 120,
-                    offsetY = -15,
-                    onClick = function(btn, btnFrame)
-                        SpellStyler.IconSettingsRenderer:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
-                        -- Update button text based on new state
-                        
-                        local isNowActive = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType][btn.uniqueID].meta.mockCooldownActive
-                        btnFrame:SetText(isNowActive and "Stop Cooldown" or "Mock Cooldown")
-                    end,
-                    onStateGet = function(self)
-                        local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(self.uniqueID, self.trackerType)
-                        local isMockActive = trackerFrame and trackerFrame._spellStyler_mockCooldownActive or false
-                        return isMockActive and "Stop Cooldown" or "Mock Cooldown"
-                    end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Bar Display State:",
-                    options = RADIAL_DISPLAY_OPTIONS,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.displayState") or "always" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.displayState", value) end,
-                },
-				{
-                    type = "dropdown",
-                    label = "Anchor Point on Self:",
-                    options = ANCHOR_OPTIONS,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.anchorSelf") or "LEFT" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.anchorSelf", value) end,
-                },
-				{
-                    type = "dropdown",
-                    label = "Anchor Point on Icon:",
-                    options = ANCHOR_OPTIONS,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.anchorParent") or "RIGHT" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.anchorParent", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Custom Texture Path:",
-                    width = 160,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.customBarTexture") or "" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.customBarTexture", value) end,
-                },
-                {
-                    type = "checkbox",
-                    label = "Only Render Bar (no border/background):",
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.onlyRenderBar") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.onlyRenderBar", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Bar Orientation:",
-                    options = {
-                        { label = "Horizontal", value = "horizontal" },
-                        { label = "Vertical",   value = "vertical" },
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.barOrientation") or "horizontal" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.barOrientation", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Fill or Empty:",
-                    options = {
-                        { label = "Fill", value = "regular" },
-                        { label = "Empty", value = "inverse" },
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.fillOrEmpty") or "regular" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.fillOrEmpty", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Progress Direction:",
-                    options = {
-                        { label = "Standard", value = "standard" },
-                        { label = "Reverse",  value = "reverse" },
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.progressDirection") or "standard" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.progressDirection", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Texture Rotation:",
-                    options = {
-                        { label = "0 degrees", value = 0 },
-                        { label = "90 degrees",  value = math.pi / 2 },
-                        { label = "180 degrees",  value = math.pi },
-                        { label = "270 degrees",  value = (math.pi / 2) * 3 },
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.textureRotation") or 0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.textureRotation", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Default Fill Value:",
-                    options = {
-                        { label = "Empty", value = "empty" },
-                        { label = "Full",  value = "full" },
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.defaultFillValue") or "empty" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.defaultFillValue", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Bar Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.color") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.color", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Background Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.backgroundColor") or {r=0.2, g=0.2, b=0.2, a=0.6} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.backgroundColor", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Glow Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.glowColor") or {r=0.5, g=0.8, b=1, a=0.4} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.glowColor", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Border Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.borderColor") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.borderColor", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Scale:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.scale") or 1.0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.scale", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Border Scale:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.borderScale") or 1.0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.borderScale", value) end,
-                },
-                {
-                    type = "positionbuttons",
-                    label = "Position:",
-                    hintText = "You can also use shift + arrow keys",
-                    isBarPosition = true,
-                },
-                {
-                    type = "textinput",
-                    label = "Width:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.width") or (config.getValue(self.uniqueID, "size") * 4) end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.width", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Height:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.height") or config.getValue(self.uniqueID, "size") end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.height", value) end,
-                },
-            }
+            section = CreateStatusBarInputs("statusBar", config, { includeMockCooldown = true, includeDisplayState = true, isBarPosition = true })
         },
         {
             type = "header",
@@ -777,7 +856,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 {
                     type = "customRender",
                     render = function(container, lastControl, uid, tType, rerender)
-                        return IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastControl, uid, tType, rerender)
                     end
                 }
             }
@@ -905,47 +984,26 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             state = 'collapsed',
             section = {
                 {
-                    type = "checkbox",
-                    label = "Display Charge/Count Text",
-                    getValue = function(self) return config.getValue(self.uniqueID, "countText.display") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.display", value) end,
-                },
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderCountTextSection(container, lastControl, uid, tType, rerender, config)
+                    end
+                }
+            }
+        },
+        
+        -- Count/Charge Bar
+        {
+            type = "header",
+            text = "Count/Charge Bar",
+            state = 'collapsed',
+            section = {
                 {
-                    type = "checkbox",
-                    label = "Replace with Spell Display Count",
-                    tooltip = "This will render the display count for the spell. This is different than charges and stacks. An example is Expel Harm showing the count of healing Spheres. The value is pulled from the action bar and the spell must be on the bar for it to work.",
-                    getValue = function(self) return config.getValue(self.uniqueID, "countText.useSpellDisplayCount") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.useSpellDisplayCount", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Size:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "countText.size") or 14 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.size", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "countText.color") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.color", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Offset X:",
-                    numeric = true,
-                    min = -5000,
-                    getValue = function(self) return config.getValue(self.uniqueID, "countText.x") or 0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.x", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Offset Y:",
-                    numeric = true,
-                    min = -5000,
-                    getValue = function(self) return config.getValue(self.uniqueID, "countText.y") or 0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "countText.y", value) end,
-                },
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uid, tType, rerender, config)
+                    end
+                }
             }
         },
         
@@ -1056,7 +1114,186 @@ for _, def in ipairs(PROPERTY_DEFS) do _PROP_DEF_BY_PATH[def.path] = def end
 
 local PLUS_ICON_PATH_SVC = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\PlusIcon.tga"
 
-function IconSettingsRenderer:RenderSpecialVisibilityConditionsContent(container, lastControl, uniqueID, trackerType, rerender)
+-- ============================================================================
+-- COUNT/CHARGE TEXT SECTION RENDERER
+-- Called from the customRender control inside the "Count/Charge Text" header.
+-- Renders text-based count/charge display settings.
+-- ============================================================================
+
+function IconSettingsRenderer:RenderCountTextSection(container, lastControl, uniqueID, trackerType, rerender, config)
+    -- Build section inputs array for text display
+    local sectionInputs = {
+        {
+            type = "checkbox",
+            label = "Display Charge/Count Text",
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.display") or false end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.display", value) end,
+        },
+        {
+            type = "checkbox",
+            label = "Replace with Spell Display Count",
+            tooltip = "This will render the display count for the spell. This is different than charges and stacks. An example is Expel Harm showing the count of healing Spheres. The value is pulled from the action bar and the spell must be on the bar for it to work.",
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.useSpellDisplayCount") or false end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.useSpellDisplayCount", value) end,
+        },
+        {
+            type = "textinput",
+            label = "Size:",
+            numeric = true,
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.size") or 14 end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.size", value) end,
+        },
+        {
+            type = "colorpicker",
+            label = "Color:",
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.color") or {r=1, g=1, b=1, a=1} end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.color", value) end,
+        },
+        {
+            type = "textinput",
+            label = "Offset X:",
+            numeric = true,
+            min = -5000,
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.x") or 0 end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.x", value) end,
+        },
+        {
+            type = "textinput",
+            label = "Offset Y:",
+            numeric = true,
+            min = -5000,
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.y") or 0 end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.y", value) end,
+        },
+    }
+    
+    -- Now render all the inputs using the existing rendering logic
+    local currentAnchor = lastControl
+    for _, inputDef in ipairs(sectionInputs) do
+        -- Set uniqueID and trackerType on the input definition so getValue/setValue can access them
+        inputDef.uniqueID = uniqueID
+        inputDef.trackerType = trackerType
+        
+        if inputDef.type == "checkbox" then
+            currentAnchor = CreateCheckbox(container, inputDef, currentAnchor)
+        elseif inputDef.type == "textinput" then
+            currentAnchor = CreateTextInput(container, inputDef, currentAnchor)
+        elseif inputDef.type == "colorpicker" then
+            currentAnchor = CreateColorPicker(container, inputDef, currentAnchor)
+        elseif inputDef.type == "dropdown" then
+            currentAnchor = self:CreateDropdown(container, inputDef, currentAnchor)
+        elseif inputDef.type == "positionbuttons" then
+            -- Set up getX/setX/getY/setY methods based on pathPrefix
+            local pathPrefix = inputDef.pathPrefix or (inputDef.isBarPosition and "statusBar" or "position")
+            inputDef.getX = function(self)
+                return config.getValue(self.uniqueID, pathPrefix .. ".x") or 0
+            end
+            inputDef.getY = function(self)
+                return config.getValue(self.uniqueID, pathPrefix .. ".y") or 0
+            end
+            inputDef.setX = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".x", value)
+            end
+            inputDef.setY = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".y", value)
+            end
+            currentAnchor = CreatePositionInputs(container, inputDef, currentAnchor, inputDef.isBarPosition)
+        end
+    end
+    
+    return currentAnchor
+end
+
+-- ============================================================================
+-- COUNT/CHARGE BAR SECTION RENDERER
+-- Called from the customRender control inside the "Count/Charge Bar" header.
+-- Renders status bar display settings for charge/count visualization.
+-- ============================================================================
+
+function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
+    -- Build section inputs array for bar display
+    local sectionInputs = {
+        {
+            type = "checkbox",
+            label = "Enable Charge/Count Bar",
+            getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.enabled") or false end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.enabled", value) end,
+        },
+    }
+    
+    -- Add bar configuration inputs
+    local barInputs = CreateStatusBarInputs("visualChargeBar", config, { 
+        includeMockCooldown = false, 
+        includeDisplayState = false,
+        isBarPosition = false 
+    })
+    for _, input in ipairs(barInputs) do
+        table.insert(sectionInputs, input)
+    end
+    
+    -- Add min/max value inputs for bar range configuration
+    table.insert(sectionInputs, {
+        type = "textinput",
+        label = "Min Value:",
+        numeric = true,
+        min = 0,
+        getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.minValue") or 0 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.minValue", value) end,
+    })
+    table.insert(sectionInputs, {
+        type = "textinput",
+        label = "Max Value:",
+        numeric = true,
+        min = 1,
+        getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.maxValue") or 5 end,
+        setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.maxValue", value) end,
+    })
+    
+    -- Now render all the inputs using the existing rendering logic
+    local currentAnchor = lastControl
+    for _, inputDef in ipairs(sectionInputs) do
+        -- Set uniqueID and trackerType on the input definition so getValue/setValue can access them
+        inputDef.uniqueID = uniqueID
+        inputDef.trackerType = trackerType
+        
+        if inputDef.type == "checkbox" then
+            currentAnchor = CreateCheckbox(container, inputDef, currentAnchor)
+        elseif inputDef.type == "textinput" then
+            currentAnchor = CreateTextInput(container, inputDef, currentAnchor)
+        elseif inputDef.type == "colorpicker" then
+            currentAnchor = CreateColorPicker(container, inputDef, currentAnchor)
+        elseif inputDef.type == "dropdown" then
+            currentAnchor = self:CreateDropdown(container, inputDef, currentAnchor)
+        elseif inputDef.type == "positionbuttons" then
+            -- Set up getX/setX/getY/setY methods based on pathPrefix
+            local pathPrefix = inputDef.pathPrefix or (inputDef.isBarPosition and "statusBar" or "position")
+            inputDef.getX = function(self)
+                return config.getValue(self.uniqueID, pathPrefix .. ".x") or 0
+            end
+            inputDef.getY = function(self)
+                return config.getValue(self.uniqueID, pathPrefix .. ".y") or 0
+            end
+            inputDef.setX = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".x", value)
+            end
+            inputDef.setY = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".y", value)
+            end
+            currentAnchor = CreatePositionInputs(container, inputDef, currentAnchor, inputDef.isBarPosition)
+        end
+    end
+    
+    return currentAnchor
+end
+
+-- ============================================================================
+-- PROPERTY OVERRIDE CREATOR
+-- Called from the customRender control inside the "Property Overrides"
+-- header section.  Returns the last frame created so the outer layout loop can
+-- chain subsequent controls from it.
+-- ============================================================================
+
+function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastControl, uniqueID, trackerType, rerender)
     local conditions = SpellStyler.State:GetSpecialVisibilityConditions(uniqueID, trackerType)
 
     -- ── "Add" row ──────────────────────────────────────────────────────────
@@ -1605,6 +1842,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     end
     
     -- Loop through config inputs and render sections
+    DevTool:AddData(config.configInputs, "Right befor creating each section")
     local sectionIndex = 0
     for i, inputDef in ipairs(config.configInputs) do
         if inputDef.type == "header" then
@@ -1648,6 +1886,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             -- Click handler to toggle section
             headerBtn:SetScript("OnClick", function()
                 options.sectionStates[capturedSectionIndex] = (options.sectionStates[capturedSectionIndex] == "expanded") and "collapsed" or "expanded"
+                DevTool:AddData(options, "clicked header")
                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             end)
             
@@ -1825,29 +2064,36 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     EnsureKeyboardFrame()
     IconSettingsRenderer.keyboardFrame:EnableKeyboard(true)
 
-    -- Set panel height dynamically based on last control
-    if lastControl and lastControl.GetBottom then
-        local panelTop = parent:GetTop()
-        local lastControlBottom = lastControl:GetBottom()
-        if panelTop and lastControlBottom then
-            local contentHeight = panelTop - lastControlBottom + 40
-            local finalHeight = math.max(contentHeight, 400)
-            parent:SetHeight(finalHeight)
+    -- Set panel height dynamically based on actual rendered bounds
+    -- Use C_Timer to defer until layout is complete, then get true bounds
+    DevTool:AddData({uniqueID = uniqueID}, "Setting up height timer")
+    C_Timer.After(0, function()
+        DevTool:AddData({}, "Height timer fired")
+        if not container:IsShown() then 
+            DevTool:AddData({}, "Container not shown - exiting")
+            return 
+        end
+        local _, _, _, h = container:GetBoundsRect()
+        DevTool:AddData({height = h}, "GetBoundsRect result")
+        if h and h > 0 then
+            local finalHeight = math.max(h + 60, 400)
+            container:SetHeight(finalHeight)
+            DevTool:AddData({finalHeight = finalHeight}, "Set container height")
             if options.onHeightUpdated then
+                DevTool:AddData({finalHeight = finalHeight}, "Calling onHeightUpdated")
                 options.onHeightUpdated(finalHeight)
+            else
+                DevTool:AddData({}, "No onHeightUpdated callback")
             end
         else
-            parent:SetHeight(900)
+            -- Fallback if bounds not available
+            DevTool:AddData({}, "Using fallback height 900")
+            container:SetHeight(900)
             if options.onHeightUpdated then
                 options.onHeightUpdated(900)
             end
         end
-    else
-        parent:SetHeight(900)
-        if options.onHeightUpdated then
-            options.onHeightUpdated(900)
-        end
-    end
+    end)
 end
 
 -- ============================================================================
@@ -2286,7 +2532,13 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                     _lastSelectedIcon = { uniqueID = entry.uniqueID, trackerType = entry.trackerType }
                     IconSettingsRenderer:RenderConfigControlsForSpecificIcon({
                         uniqueID = entry.uniqueID,
-                        trackerType = entry.trackerType
+                        trackerType = entry.trackerType,
+                        onHeightUpdated = function(newHeight)
+                            -- Update scroll child height to match content
+                            if settingsScrollChild then
+                                settingsScrollChild:SetHeight(math.max(newHeight, 600))
+                            end
+                        end
                     })
                     -- When clicking an icon in the settings list, briefly show the
                     -- glow on the actual tracker frame for 2 seconds so the user
@@ -2319,6 +2571,9 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
     scrollChild:SetSize(settingsPanel:GetWidth() - 20, settingsPanel:GetHeight() - 20)
     settingsPanelScrollFrame:SetScrollChild(scrollChild)
     
+    -- Store reference for height updates
+    settingsScrollChild = scrollChild
+    
     -- Controls panel (no backdrop, just a container inside scrollChild)
     controlsPanel = CreateFrame("Frame", nil, scrollChild)
     controlsPanel:SetPoint("TOPLEFT", 0, 0)
@@ -2343,6 +2598,12 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 		IconSettingsRenderer:RenderConfigControlsForSpecificIcon({
 			uniqueID    = _lastSelectedIcon.uniqueID,
 			trackerType = _lastSelectedIcon.trackerType,
+			onHeightUpdated = function(newHeight)
+				-- Update scroll child height to match content
+				if settingsScrollChild then
+					settingsScrollChild:SetHeight(math.max(newHeight, 600))
+				end
+			end
 		})
 	end
 end

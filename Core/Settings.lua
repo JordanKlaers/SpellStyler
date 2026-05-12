@@ -392,7 +392,7 @@ local function ShowBorderDemo()
         SpellStyler.HelpContentRenderer:RenderHelpView(helpContentFrame)
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
         SpellStyler.ContainerSettingsRenderer:RenderContainerView(containerContentFrame)
-        SpellStyler.ConditionsRenderer:RenderConditionsView(conditionsContentFrame)
+        SpellStyler.ConditionalCreator:RenderConditionsView(conditionsContentFrame)
 
         RegisterView("icons",      settingsContentFrame)
         RegisterView("help",       helpContentFrame)
