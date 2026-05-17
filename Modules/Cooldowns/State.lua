@@ -67,6 +67,7 @@ local function DeepMergeDefaults(target, defaults)
 end
 
 local function AddNewTrackerValueConfig(data)
+    local iconSize = 48  -- Default icon size
     return {
 		isEnabled = true,
 		overrideSpellID = data.overrideSpellID,
@@ -206,7 +207,31 @@ local function AddNewTrackerValueConfig(data)
             anchorParent = "RIGHT",
             anchorSelf = "LEFT"
         },
-        showProcGlow = true,  -- Show spell activation glow
+        visualChargeBar = {
+            displayState = "never",  -- "always", "never", "available" (show when >= 1)
+            defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
+            customBarTexture = "",
+            onlyRenderBar = false,
+            barOrientation = "horizontal",
+            fillOrEmpty = "regular",
+            progressDirection = "standard",
+            textureRotation = 0,
+            defaultFillValue = "empty",
+            color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
+            backgroundColor = { r = 0, g = 0, b = 0, a = 0.65 },
+            glowColor = { r = 1, g = 1, b = 1, a = 0.25 },
+            borderColor = { r = 0, g = 0, b = 0, a = 1 },
+            borderScale = 0.5,
+            scale = 1,
+            x = 0,
+            y = 0,
+            width = iconSize * 5,
+            height = iconSize / 2,
+            anchorParent = "RIGHT",
+            anchorSelf = "LEFT",
+            minValue = 0,
+            maxValue = 5
+        },
 		specialVisibilityConditions = {},
         devNotes = {
 
@@ -373,6 +398,25 @@ function State:MigrateDatabase()
                     trackerValue.statusBar.barFillDirection = nil
                 end
 
+                -- Legacy: countText.renderAsStatusBar -> visualChargeBar.displayState
+                -- This migration ensures users who had the old checkbox get proper displayState values
+                if trackerValue.countText and trackerValue.countText.renderAsStatusBar ~= nil then
+                    -- Initialize visualChargeBar if it doesn't exist
+                    if not trackerValue.visualChargeBar then
+                        trackerValue.visualChargeBar = {}
+                    end
+                    -- Only migrate if displayState hasn't been set yet
+                    if not trackerValue.visualChargeBar.displayState then
+                        if trackerValue.countText.renderAsStatusBar == true then
+                            trackerValue.visualChargeBar.displayState = "always"
+                        else
+                            trackerValue.visualChargeBar.displayState = "never"
+                        end
+                    end
+                    -- Clean up the old field
+                    trackerValue.countText.renderAsStatusBar = nil
+                end
+
                 local defaults = AddNewTrackerValueConfig({
                     baseSpellID            = baseSpellID,
                     trackerType            = trackerType,
@@ -447,16 +491,7 @@ function State:ResetTrackerValueConfig(baseSpellID, trackerType)
         if SpellStyler.ConditionalEngine then
             SpellStyler.ConditionalEngine:EvaluateAll()
         end
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_copyCharges({
-            customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID],
-            config = existing,
-            baseSpellID = baseSpellID,
-            trackerType = trackerType
-        })
-        
-        -- Re-evaluate conditionals
+        FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
     end
 end
 
@@ -507,9 +542,7 @@ function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, val
     accessNestedValue(db[trackerType][baseSpellID], path, value, "set")
     local trackerValue = db[trackerType][baseSpellID]
     if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
-        -- Rebuild charge infrastructure (variant frame + charge bars)
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+        FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
         
         -- Re-evaluate conditionals so variant frame gets proper overrides
         if SpellStyler.ConditionalEngine then
@@ -523,15 +556,17 @@ function State:GetTrackerValueConfigProperty(baseSpellID, trackerType, path)
     return accessNestedValue(db[trackerType][baseSpellID], path, nil, "get")
 end
 
---- Ensures visualChargeBar config has all required defaults
+--- Minimal safety net for visualChargeBar config.
+--- Only used as a fallback; primary defaults are set via DeepMergeDefaults in MigrateDatabase.
 --- @param trackerValue table The tracker configuration
 function State:EnsureVisualChargeBarDefaults(trackerValue)
-    -- Check if visualChargeBar doesn't exist OR if it's missing critical fields (empty object or incomplete)
-    if not trackerValue.visualChargeBar or not trackerValue.visualChargeBar.width or not trackerValue.visualChargeBar.displayState then
+    -- This should rarely trigger since MigrateDatabase handles defaults via DeepMergeDefaults.
+    -- Only acts as a safety net if visualChargeBar is completely missing.
+    if not trackerValue.visualChargeBar then
         local iconSize = (trackerValue.iconSettings and trackerValue.iconSettings.width) or 
                        (trackerValue.iconSettings and trackerValue.iconSettings.size) or 48
         trackerValue.visualChargeBar = {
-            displayState = "always",
+            displayState = "never",
             defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
             customBarTexture = "",
             onlyRenderBar = false,
@@ -675,17 +710,12 @@ function State:AddSpecialVisibilityCondition(baseSpellID, trackerType, customNam
         entry.specialVisibilityConditions = {}
     end
     table.insert(entry.specialVisibilityConditions, NewSpecialVisibilityCondition(customName))
-    
-    -- Rebuild charge infrastructure since conditionals affect variant frame lifecycle
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    end
-    
+
     -- Re-evaluate conditionals
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
     
     return #entry.specialVisibilityConditions
 end
@@ -697,16 +727,11 @@ function State:RemoveSpecialVisibilityCondition(baseSpellID, trackerType, index)
     if not entry or not entry.specialVisibilityConditions then return end
     table.remove(entry.specialVisibilityConditions, index)
     
-    -- Rebuild charge infrastructure since removing conditionals affects variant frame lifecycle
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    end
-    
     -- Re-evaluate conditionals
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
 end
 
 function State:GetSpecialVisibilityConditions(baseSpellID, trackerType)
@@ -722,17 +747,12 @@ function State:SetSpecialVisibilityConditionProperty(baseSpellID, trackerType, i
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[index] then return end
     accessNestedValue(entry.specialVisibilityConditions[index], path, value, "set")
-    
-    -- Rebuild charge infrastructure since condition properties may affect evaluation
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    end
-    
+
     -- Re-evaluate conditionals
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
 end
 
 function State:GetSpecialVisibilityConditionProperty(baseSpellID, trackerType, index, path)
@@ -760,17 +780,11 @@ function State:AddPropertyOverride(baseSpellID, trackerType, condIndex)
     cond.propertyOverrides = cond.propertyOverrides or {}
     table.insert(cond.propertyOverrides, { property = "", value = "" })
     
-    -- Rebuild charge infrastructure since property overrides may affect frame properties
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    end
-    
     -- Trigger live evaluation update
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
-    
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
     return #cond.propertyOverrides
 end
 
@@ -785,16 +799,11 @@ function State:RemovePropertyOverride(baseSpellID, trackerType, condIndex, overr
     -- Remove the property override from state
     table.remove(cond.propertyOverrides, overrideIndex)
     
-    -- Rebuild charge infrastructure since removing property overrides affects frame properties
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    end
-    
     -- Re-evaluate conditionals
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
 end
 
 function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, overrideIndex, field, value)
@@ -804,18 +813,47 @@ function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, ove
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
     local cond = entry.specialVisibilityConditions[condIndex]
     if not cond.propertyOverrides or not cond.propertyOverrides[overrideIndex] then return end
+    
+    -- Update database (persistent storage)
     cond.propertyOverrides[overrideIndex][field] = value
-    
-    -- Rebuild charge infrastructure since property override fields affect frame properties
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+
+    -- ALSO update runtime cache if it exists (meaning conditional is currently true)
+    -- This avoids needing to re-run EvaluateAll just to sync cache with database changes
+    if SpellStyler.ConditionalEngine and field == "value" then
+        local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+            and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+        
+        if frame then
+            -- Derive conditionalKey using same logic as EvaluateAll
+            local conditionalKey = cond.customName
+            if not conditionalKey or conditionalKey == "" then
+                conditionalKey = cond.conditionalName
+            end
+            if not conditionalKey or conditionalKey == "" then
+                conditionalKey = "Condition " .. tostring(condIndex)
+            end
+            
+            local propertyPath = cond.propertyOverrides[overrideIndex].property
+            
+            -- Update cache for base frame if it exists
+            if SpellStyler.ConditionalEngine._framePropertyOverrides[frame]
+                and SpellStyler.ConditionalEngine._framePropertyOverrides[frame][conditionalKey]
+                and propertyPath then
+                SpellStyler.ConditionalEngine._framePropertyOverrides[frame][conditionalKey][propertyPath] = value
+            end
+            
+            -- Update cache for variant frame if it exists
+            if frame.variantFrame 
+                and SpellStyler.ConditionalEngine._framePropertyOverrides[frame.variantFrame]
+                and SpellStyler.ConditionalEngine._framePropertyOverrides[frame.variantFrame][conditionalKey]
+                and propertyPath then
+                SpellStyler.ConditionalEngine._framePropertyOverrides[frame.variantFrame][conditionalKey][propertyPath] = value
+            end
+        end
     end
-    
-    -- Trigger live evaluation update
-    if SpellStyler.ConditionalEngine then
-        SpellStyler.ConditionalEngine:EvaluateAll()
-    end
+
+    -- Trigger frame update to apply the new value
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
 end
 
 function State:SetSpecialVisibilityConditionConditionalName(baseSpellID, trackerType, condIndex, conditionalName)
@@ -825,16 +863,11 @@ function State:SetSpecialVisibilityConditionConditionalName(baseSpellID, tracker
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
     entry.specialVisibilityConditions[condIndex].conditionalName = conditionalName
     
-    -- Rebuild charge infrastructure since changing conditional affects everything
-    if FrameTrackerManager and FrameTrackerManager.CreateChargeAnchorBarInfrastructure then
-        FrameTrackerManager:CreateChargeAnchorBarInfrastructure(baseSpellID, trackerType)
-        FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
-    end
-    
     -- Trigger live evaluation update
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
+    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
 end
 
 function State:GetGlobalSettings()
@@ -877,7 +910,7 @@ function State:OverrideAllIconsVisible(shouldOverride)
     -- The ApplyVisibility.Icon function already checks the global setting
     for trackerType, _ in pairs(FrameTrackerManager.SpellStyler_frames) do
         for baseSpellID, frame in pairs(FrameTrackerManager.SpellStyler_frames[trackerType]) do
-            FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+            FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
         end
     end
 end

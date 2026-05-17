@@ -3,7 +3,6 @@ SpellStyler.IconSettingsRenderer = SpellStyler.IconSettingsRenderer or {}
 local IconSettingsRenderer = SpellStyler.IconSettingsRenderer
 local State = SpellStyler.State
 
-local controlsPanel
 local settingsScrollChild  -- Reference to the scroll child so we can update its height
 local settingsMenuIconList = {}
 local _lastSelectedIcon = nil  -- { uniqueID, trackerType } persists across menu open/close
@@ -868,7 +867,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             section = {
                 {
                     type = "checkbox",
-                    label = "Enabled charge based display",
+                    label = "Enable charge based display",
                     getValue = function(self) return config.getValue(self.uniqueID, "chargeBasedDisplay.enabled") or false end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "chargeBasedDisplay.enabled", value) end,
                 },
@@ -1214,10 +1213,20 @@ function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uni
     -- Build section inputs array for bar display
     local sectionInputs = {
         {
-            type = "checkbox",
-            label = "Enable Charge/Count Bar",
-            getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.enabled") or false end,
-            setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.enabled", value) end,
+            type = "dropdown",
+            label = "Charge Bar Display:",
+            options = {
+                { label = "Always", value = "always" },
+                { label = "Only when >= 1", value = "available" },
+                { label = "Never", value = "never" },
+            },
+            getValue = function(self) 
+                local val = config.getValue(self.uniqueID, "visualChargeBar.displayState")
+                return val or "never"
+            end,
+            setValue = function(self, value) 
+                config.setValue(self.uniqueID, "visualChargeBar.displayState", value) 
+            end,
         },
     }
     
@@ -1316,10 +1325,6 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
         local name = nameInput:GetText()
         if name and name ~= "" then
             SpellStyler.State:AddSpecialVisibilityCondition(uniqueID, trackerType, name)
-            -- Refresh charge bars since conditionals may affect charge-based behavior
-            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.RefreshChargeAnchorBars then
-                SpellStyler.FrameTrackerManager:RefreshChargeAnchorBars(uniqueID, trackerType)
-            end
             rerender()
         end
     end)
@@ -1381,11 +1386,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
             if customFrame and SpellStyler.ConditionalEngine then
                 SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
                 if SpellStyler.FrameTrackerManager then
-                    -- Refresh charge bars since conditional removal may affect charge-based behavior
-                    if SpellStyler.FrameTrackerManager.RefreshChargeAnchorBars then
-                        SpellStyler.FrameTrackerManager:RefreshChargeAnchorBars(uniqueID, trackerType)
-                    end
-                    SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
+                    SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
                 end
             end
             
@@ -1446,10 +1447,8 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     -- Explicitly clear this conditional's cached overrides and update the frame
                     if customFrame and SpellStyler.ConditionalEngine then
                         SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
-                        if SpellStyler.FrameTrackerManager then
-                            SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(uniqueID, trackerType)
-                        end
                         SpellStyler.ConditionalEngine:EvaluateAll()
+                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
                     end
                     
                     -- Now rerender the UI to show the deletion
@@ -1519,25 +1518,22 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
-                                if SpellStyler.ConditionalEngine then
-                                    SpellStyler.ConditionalEngine:EvaluateAll()
-                                end
+                                -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
+                                -- No need to call EvaluateAll again during dragging
                             end,
                             opacityFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
-                                if SpellStyler.ConditionalEngine then
-                                    SpellStyler.ConditionalEngine:EvaluateAll()
-                                end
+                                -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
+                                -- No need to call EvaluateAll again during dragging
                             end,
                             cancelFunc = function(prev)
                                 colorBtn:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
                                 SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 })
-                                if SpellStyler.ConditionalEngine then
-                                    SpellStyler.ConditionalEngine:EvaluateAll()
-                                end
+                                -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
+                                -- No need to call EvaluateAll again during cancel
                             end,
                             hasOpacity = 1,
                             opacity    = cur.a or 1,
@@ -1556,9 +1552,8 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     textInput:SetText(tostring(override.value or ""))
                     textInput:SetScript("OnTextChanged", function(self)
                         SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", self:GetText())
-                        if SpellStyler.ConditionalEngine then
-                            SpellStyler.ConditionalEngine:EvaluateAll()
-                        end
+                        -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
+                        -- No need to call EvaluateAll again during typing
                     end)
                 end
 
@@ -1581,9 +1576,8 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     local text = self:GetText()
                     local duration = (text and text ~= "") and tonumber(text) or nil
                     SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "duration", duration)
-                    if SpellStyler.ConditionalEngine then
-                        SpellStyler.ConditionalEngine:EvaluateAll()
-                    end
+                    -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
+                    -- No need to call EvaluateAll again during typing
                 end)
 
                 currentAnchor = overrideBox
@@ -1697,7 +1691,8 @@ end
 	}
 ]]
 function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
-    local parent = options.parentFrame or controlsPanel
+    -- Render directly into scrollChild (YELLOW) instead of nested containers
+    local parent = options.parentFrame or settingsScrollChild
 	if not parent then return end
 	local uniqueID = options.uniqueID
 	local trackerType = options.trackerType or IconSettingsRenderer:getTrackerTypeForID(uniqueID)
@@ -1714,14 +1709,8 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         if _iconPositionInputs[axis] then
             _iconPositionInputs[axis]:SetText(tostring(newValue))
         end
-        
-        -- If frame has charge anchor bars, refresh them at new position
-        -- Skip visibility updates to avoid visual artifacts during arrow key movement
-        local frame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uniqueID, trackerType)
-        if frame and (frame.chargeAnchorBarA or frame.chargeAnchorBarB or 
-                     (frame.variantFrame and (frame.variantFrame.chargeAnchorBarA or frame.variantFrame.chargeAnchorBarB))) then
-            SpellStyler.FrameTrackerManager:RefreshChargeAnchorBars(uniqueID, trackerType, true)
-        end
+
+        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
     end
     _shiftBarPosition = function(axis, delta)
         local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.x") or 0
@@ -1735,12 +1724,35 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     end
     if IconSettingsRenderer.keyboardFrame then IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
     
-    -- Destroy old controls container
-    if parent.currentControlsContainer then
-        parent.currentControlsContainer:Hide()
-        parent.currentControlsContainer:SetParent(nil)
-        parent.currentControlsContainer = nil
+    -- Clear all old controls from scroll child
+    -- Collect all children and regions first to avoid iteration issues during removal
+    local childrenToRemove = {}
+    for _, child in ipairs({parent:GetChildren()}) do
+        table.insert(childrenToRemove, child)
     end
+    
+    local regionsToRemove = {}
+    for _, region in ipairs({parent:GetRegions()}) do
+        if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
+            table.insert(regionsToRemove, region)
+        end
+    end
+    
+    -- Now remove all children
+    for _, child in ipairs(childrenToRemove) do
+        child:Hide()
+        child:SetParent(nil)
+    end
+    
+    -- And clear all regions
+    for _, region in ipairs(regionsToRemove) do
+        region:Hide()
+        if region:IsObjectType("FontString") then
+            region:SetText("")
+        end
+    end
+    
+    parent.currentControlsContainer = nil
     
     -- Clear any stale button references from the tracker frame
     local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uniqueID, trackerType)
@@ -1767,12 +1779,14 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         return
     end
     
-    -- Create fresh controls container
-    local container = CreateFrame("Frame", nil, parent)
-    container:SetAllPoints()
-    parent.currentControlsContainer = container
+    -- Render controls directly into scroll child (no intermediate container)
+    -- Track a dummy frame to maintain cleanup compatibility
+    local dummyTracker = CreateFrame("Frame", nil, parent)
+    dummyTracker:SetSize(1, 1)
+    dummyTracker:Hide()
+    parent.currentControlsContainer = dummyTracker
     
-    -- Build controls
+    -- Build controls directly into parent
     local lastControl = nil
     
     -- Render main header with icon name
@@ -1783,15 +1797,15 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         local activeSpellID = (trackerFrame and trackerFrame.meta and trackerFrame.meta.activeSpellID) or trackedValue.overrideSpellID or uniqueID
         local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
         local displayName = (spellInfo and spellInfo.name) or trackedValue.name or tostring(uniqueID)
-        local header = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         header:SetPoint("TOPLEFT", 0, -10)
         header:SetText(displayName .. " - (" .. trackerType .. ")")
         header:SetTextColor(1, 0.82, 0)
-		local icon = CreateIconButton(container, trackedValue.defaultIconTexturePath, displayName, uniqueID, trackedValue.trackerType, 30, trackedValue.devNotes)
+		local icon = CreateIconButton(parent, trackedValue.defaultIconTexturePath, displayName, uniqueID, trackedValue.trackerType, 30, trackedValue.devNotes)
 		icon:SetPoint("LEFT", header, "RIGHT", 10, 0)
 
 		-- Reset to Defaults button
-		local resetBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+		local resetBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
 		resetBtn:SetSize(120, 22)
 		resetBtn:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -10)
 		resetBtn:SetText("Reset to Defaults")
@@ -1802,7 +1816,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 
 		-- Disable button (non-buffs only)
 		if trackerType ~= "buffs" then
-			local disableBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+			local disableBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
 			disableBtn:SetSize(80, 22)
 			disableBtn:SetPoint("LEFT", resetBtn, "RIGHT", 8, 0)
 			disableBtn:SetText("Disable")
@@ -1842,7 +1856,6 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     end
     
     -- Loop through config inputs and render sections
-    DevTool:AddData(config.configInputs, "Right befor creating each section")
     local sectionIndex = 0
     for i, inputDef in ipairs(config.configInputs) do
         if inputDef.type == "header" then
@@ -1857,7 +1870,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             local sectionContent = inputDef.section or inputDef.sectionContent or {}
             
             -- Create header background frame with texture
-            local headerFrameBg = CreateFrame("Frame", nil, container, "BackdropTemplate")
+            local headerFrameBg = CreateFrame("Frame", nil, parent, "BackdropTemplate")
             if lastControl then
                 headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -20)
             else
@@ -1886,7 +1899,6 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             -- Click handler to toggle section
             headerBtn:SetScript("OnClick", function()
                 options.sectionStates[capturedSectionIndex] = (options.sectionStates[capturedSectionIndex] == "expanded") and "collapsed" or "expanded"
-                DevTool:AddData(options, "clicked header")
                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             end)
             
@@ -1990,43 +2002,40 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         controlDef.options = controlDef:getOptions()
                     end
                     
-                    -- Render control based on type
+                    -- Render control based on type (directly into parent)
                     local controlFrame = nil
                     if controlDef.type == "dropdown" then
-                        local label, dropdown = IconSettingsRenderer:CreateDropdown(container, controlDef, lastControl)
+                        local label, dropdown = IconSettingsRenderer:CreateDropdown(parent, controlDef, lastControl)
                         controlFrame = label
                     elseif controlDef.type == "textinput" then
-                        local label, input = CreateTextInput(container, controlDef, lastControl)
+                        local label, input = CreateTextInput(parent, controlDef, lastControl)
                         controlFrame = label
                     elseif controlDef.type == "colorpicker" then
-                        local label, btn = CreateColorPicker(container, controlDef, lastControl)
+                        local label, btn = CreateColorPicker(parent, controlDef, lastControl)
                         controlFrame = label
                     elseif controlDef.type == "checkbox" then
-                        local checkbox, label = CreateCheckbox(container, controlDef, lastControl)
+                        local checkbox, label = CreateCheckbox(parent, controlDef, lastControl)
                         controlFrame = checkbox
                     elseif controlDef.type == "positionbuttons" then
-                        -- Determine if this is for bar position or icon position based on context
+                        -- Set up getX/setX/getY/setY methods based on pathPrefix (if provided) or isBarPosition
+                        local pathPrefix = controlDef.pathPrefix or (controlDef.isBarPosition and "statusBar" or "position")
                         local isBarPosition = controlDef.isBarPosition or false
                         controlDef.getX = function(self)
-                            local path = isBarPosition and "statusBar.x" or "position.x"
-                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, path) or 0
+                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".x") or 0
                         end
                         controlDef.getY = function(self)
-                            local path = isBarPosition and "statusBar.y" or "position.y"
-                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, path) or 0
+                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".y") or 0
                         end
                         controlDef.setX = function(self, value)
-                            local path = isBarPosition and "statusBar.x" or "position.x"
-                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value)
+                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".x", value)
                         end
                         controlDef.setY = function(self, value)
-                            local path = isBarPosition and "statusBar.y" or "position.y"
-                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value)
+                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".y", value)
                         end
-                        local row, inputs = CreatePositionInputs(container, controlDef, lastControl, isBarPosition)
+                        local row, inputs = CreatePositionInputs(parent, controlDef, lastControl, isBarPosition)
                         controlFrame = row
                     elseif controlDef.type == "button" then
-                        local btn = CreateButton(container, controlDef, lastControl)
+                        local btn = CreateButton(parent, controlDef, lastControl)
                         -- Store context on button for onClick callback
                         btn.uniqueID = uniqueID
                         btn.trackerType = trackerType
@@ -2041,11 +2050,11 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         end
                         controlFrame = btn
                     elseif controlDef.type == "label" then
-                        local label, valueLabel = CreateLabel(container, controlDef, lastControl)
+                        local label, valueLabel = CreateLabel(parent, controlDef, lastControl)
                         controlFrame = label
                     elseif controlDef.type == "customRender" then
                         if controlDef.render then
-                            local result = controlDef.render(container, lastControl, uniqueID, trackerType, function()
+                            local result = controlDef.render(parent, lastControl, uniqueID, trackerType, function()
                                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                             end)
                             if result then controlFrame = result end
@@ -2064,34 +2073,26 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     EnsureKeyboardFrame()
     IconSettingsRenderer.keyboardFrame:EnableKeyboard(true)
 
-    -- Set panel height dynamically based on actual rendered bounds
-    -- Use C_Timer to defer until layout is complete, then get true bounds
-    DevTool:AddData({uniqueID = uniqueID}, "Setting up height timer")
+    -- Set scroll child height dynamically based on last control's position
+    -- Use C_Timer to defer until layout is complete
     C_Timer.After(0, function()
-        DevTool:AddData({}, "Height timer fired")
-        if not container:IsShown() then 
-            DevTool:AddData({}, "Container not shown - exiting")
+        if not parent:IsShown() then 
             return 
         end
-        local _, _, _, h = container:GetBoundsRect()
-        DevTool:AddData({height = h}, "GetBoundsRect result")
-        if h and h > 0 then
-            local finalHeight = math.max(h + 60, 400)
-            container:SetHeight(finalHeight)
-            DevTool:AddData({finalHeight = finalHeight}, "Set container height")
-            if options.onHeightUpdated then
-                DevTool:AddData({finalHeight = finalHeight}, "Calling onHeightUpdated")
-                options.onHeightUpdated(finalHeight)
-            else
-                DevTool:AddData({}, "No onHeightUpdated callback")
-            end
-        else
-            -- Fallback if bounds not available
-            DevTool:AddData({}, "Using fallback height 900")
-            container:SetHeight(900)
-            if options.onHeightUpdated then
-                options.onHeightUpdated(900)
-            end
+        
+        -- Calculate height based on where lastControl ended up
+        local contentHeight = 100  -- default minimum
+        if lastControl then
+            local parentTop = parent:GetTop() or 0
+            local lastControlBottom = lastControl:GetBottom() or 0
+            contentHeight = math.abs(parentTop - lastControlBottom)
+        end
+        
+        local finalHeight = math.max(contentHeight + 60, 400)
+        
+        -- Update scroll child (parent) height directly
+        if options.onHeightUpdated then
+            options.onHeightUpdated(finalHeight)
         end
     end)
 end
@@ -2120,8 +2121,19 @@ local _multiSectionStates   = {}
 local _multiSelectedIconIDs = {}   -- key = "uid_trackerType" -> { uniqueID, trackerType }
 local _multiValues          = {}   -- key = dot-path -> value, acts as the "current" state for the multi panel
 
-function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
-    if not parentFrame then return end
+function IconSettingsRenderer:RenderMultiIconSettingsView(options)
+    -- Support both old signature (parentFrame) and new signature (options table)
+    if type(options) ~= "table" or options.GetObjectType then
+        -- Called with parentFrame directly (old style) - wrap it in options table
+        options = { parentFrame = options }
+    end
+    
+    -- Render directly into scrollChild (YELLOW) instead of nested containers
+    local parent = options.parentFrame or settingsScrollChild
+    if not parent then return end
+    
+    -- Initialize section states if not already present
+    options.sectionStates = options.sectionStates or _multiSectionStates
 
     -- Disable arrow-key shifting (not applicable in multi mode)
     if IconSettingsRenderer.keyboardFrame then
@@ -2129,35 +2141,54 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
     end
     _lastSelectedIcon = nil
 
-    -- Destroy old controls container
-    if parentFrame.currentControlsContainer then
-        parentFrame.currentControlsContainer:Hide()
-        parentFrame.currentControlsContainer:SetParent(nil)
-        parentFrame.currentControlsContainer = nil
+    -- Clear all old controls from scroll child
+    -- Collect all children and regions first to avoid iteration issues during removal
+    local childrenToRemove = {}
+    for _, child in ipairs({parent:GetChildren()}) do
+        table.insert(childrenToRemove, child)
     end
-
-    local container = CreateFrame("Frame", nil, parentFrame)
-    container:SetAllPoints()
-    parentFrame.currentControlsContainer = container
+    
+    local regionsToRemove = {}
+    for _, region in ipairs({parent:GetRegions()}) do
+        if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
+            table.insert(regionsToRemove, region)
+        end
+    end
+    
+    -- Now remove all children
+    for _, child in ipairs(childrenToRemove) do
+        child:Hide()
+        child:SetParent(nil)
+    end
+    
+    -- And clear all regions
+    for _, region in ipairs(regionsToRemove) do
+        region:Hide()
+        if region:IsObjectType("FontString") then
+            region:SetText("")
+        end
+    end
+    
+    parent.currentControlsContainer = nil
 
     -- ── Header ──────────────────────────────────────────────────────────────
-    local header = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    header:SetPoint("TOPLEFT", 10, -12)
+   local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    header:SetPoint("TOPLEFT", 0, -12)
     header:SetText("Multi Icon Settings")
     header:SetTextColor(1, 0.82, 0)
 
-    local subtitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local subtitle = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     subtitle:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
     subtitle:SetText("Changes apply to all selected icons below")
     subtitle:SetTextColor(0.6, 0.6, 0.6)
 
     -- ── Multi-select icon picker ─────────────────────────────────────────────
-    local dropLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local dropLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     dropLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -12)
     dropLabel:SetText("Apply to Icons:")
     dropLabel:SetTextColor(0.8, 0.8, 0.8)
 
-    local dropBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+    local dropBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     dropBtn:SetPoint("TOPLEFT", dropLabel, "BOTTOMLEFT", 0, -4)
     dropBtn:SetSize(220, 22)
 
@@ -2282,8 +2313,8 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
         end
     end)
 
-    -- Hide the dropdown panel when the container is hidden
-    container:SetScript("OnHide", function() dropPanel:Hide() end)
+    -- Hide the dropdown panel when the scroll child is hidden
+    parent:SetScript("OnHide", function() dropPanel:Hide() end)
 
     -- ── Config for multi-icon control rendering ─────────────────────────────
     -- getValue reads from the shared _multiValues scratch table so controls
@@ -2314,13 +2345,13 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
     for _, inputDef in ipairs(config.configInputs) do
         if inputDef.type == "header" then
             sectionIndex = sectionIndex + 1
-            if _multiSectionStates[sectionIndex] == nil then
-                _multiSectionStates[sectionIndex] = inputDef.state or "collapsed"
+            if options.sectionStates[sectionIndex] == nil then
+                options.sectionStates[sectionIndex] = inputDef.state or "collapsed"
             end
-            local isExpanded = (_multiSectionStates[sectionIndex] == "expanded")
+            local isExpanded = (options.sectionStates[sectionIndex] == "expanded")
             local sectionContent = inputDef.section or inputDef.sectionContent or {}
 
-            local headerFrameBg = CreateFrame("Frame", nil, container, "BackdropTemplate")
+            local headerFrameBg = CreateFrame("Frame", nil, parent, "BackdropTemplate")
             headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -20)
             headerFrameBg:SetSize(290, 25)
             local headerTexture = headerFrameBg:CreateTexture(nil, "BACKGROUND")
@@ -2338,8 +2369,8 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
 
             local capturedIdx = sectionIndex
             headerBtn:SetScript("OnClick", function()
-                _multiSectionStates[capturedIdx] = (_multiSectionStates[capturedIdx] == "expanded") and "collapsed" or "expanded"
-                IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
+                options.sectionStates[capturedIdx] = (options.sectionStates[capturedIdx] == "expanded") and "collapsed" or "expanded"
+                IconSettingsRenderer:RenderMultiIconSettingsView(options)
             end)
             headerBtn:SetScript("OnEnter", function() headerText:SetTextColor(1, 1, 0.5) end)
             headerBtn:SetScript("OnLeave", function() headerText:SetTextColor(1, 0.82, 0) end)
@@ -2348,30 +2379,55 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
 
             if isExpanded then
                 for _, controlDef in ipairs(sectionContent) do
-                    -- Skip "Mock Cooldown" button — not meaningful in multi mode
-                    if controlDef.type == "button" then
+                    -- Skip "Mock Cooldown" button and custom renders (not meaningful in multi mode)
+                    if controlDef.type == "button" or controlDef.type == "customRender" then
+                        -- Show a message for customRender sections explaining they're not available in multi-mode
+                        if controlDef.type == "customRender" then
+                            local msg = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                            msg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -10)
+                            msg:SetText("|cFF888888This section is not available in multi-icon mode|r")
+                            msg:SetTextColor(0.5, 0.5, 0.5)
+                            lastControl = msg
+                        end
                         -- intentionally skipped
                     else
                         controlDef.uniqueID = nil  -- no single uniqueID in multi mode
 
                         local controlFrame = nil
                         if controlDef.type == "dropdown" then
-                            local row = IconSettingsRenderer:CreateDropdown(container, controlDef, lastControl)
+                            local row = IconSettingsRenderer:CreateDropdown(parent, controlDef, lastControl)
                             controlFrame = row
                         elseif controlDef.type == "textinput" then
-                            local row = CreateTextInput(container, controlDef, lastControl)
+                            local row = CreateTextInput(parent, controlDef, lastControl)
                             controlFrame = row
                         elseif controlDef.type == "colorpicker" then
-                            local row = CreateColorPicker(container, controlDef, lastControl)
+                            local row = CreateColorPicker(parent, controlDef, lastControl)
                             controlFrame = row
                         elseif controlDef.type == "checkbox" then
-                            local checkbox = CreateCheckbox(container, controlDef, lastControl)
+                            local checkbox = CreateCheckbox(parent, controlDef, lastControl)
                             controlFrame = checkbox
                         elseif controlDef.type == "positionbuttons" then
-                            local row = CreatePositionHint(container, controlDef, lastControl, controlDef.hintText)
+                            -- Set up getX/setX/getY/setY methods based on pathPrefix (if provided) or isBarPosition
+                            local pathPrefix = controlDef.pathPrefix or (controlDef.isBarPosition and "statusBar" or "position")
+                            local isBarPosition = controlDef.isBarPosition or false
+                            controlDef.getX = function(self) return _multiValues[pathPrefix .. ".x"] or 0 end
+                            controlDef.getY = function(self) return _multiValues[pathPrefix .. ".y"] or 0 end
+                            controlDef.setX = function(self, value)
+                                _multiValues[pathPrefix .. ".x"] = value
+                                for _, iconEntry in pairs(_multiSelectedIconIDs) do
+                                    SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".x", value)
+                                end
+                            end
+                            controlDef.setY = function(self, value)
+                                _multiValues[pathPrefix .. ".y"] = value
+                                for _, iconEntry in pairs(_multiSelectedIconIDs) do
+                                    SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".y", value)
+                                end
+                            end
+                            local row = CreatePositionInputs(parent, controlDef, lastControl, isBarPosition)
                             controlFrame = row
                         elseif controlDef.type == "label" then
-                            local label = CreateLabel(container, controlDef, lastControl)
+                            local label = CreateLabel(parent, controlDef, lastControl)
                             controlFrame = label
                         end
 
@@ -2384,18 +2440,27 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(parentFrame)
         end
     end
 
-    -- Dynamic panel height
-    if lastControl and lastControl.GetBottom then
-        local panelTop  = parentFrame:GetTop()
-        local lastBottom = lastControl:GetBottom()
-        if panelTop and lastBottom then
-            parentFrame:SetHeight(math.max(panelTop - lastBottom + 40, 400))
-        else
-            parentFrame:SetHeight(900)
+    -- Dynamic panel height based on last control position
+    C_Timer.After(0, function()
+        if not parent:IsShown() then 
+            return 
         end
-    else
-        parentFrame:SetHeight(900)
-    end
+        
+        -- Calculate height based on where lastControl ended up
+        local contentHeight = 100  -- default minimum
+        if lastControl then
+            local parentTop = parent:GetTop() or 0
+            local lastControlBottom = lastControl:GetBottom() or 0
+            contentHeight = math.abs(parentTop - lastControlBottom)
+        end
+        
+        local finalHeight = math.max(contentHeight + 60, 400)
+        
+        -- Update scroll child height directly
+        if options.onHeightUpdated then
+            options.onHeightUpdated(finalHeight)
+        end
+    end)
 end
 
 
@@ -2416,7 +2481,6 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 		containerFrame._ssSettingsPanel = nil
 	end
 	settingsMenuIconList = {}
-	controlsPanel = nil
 
 	-- Create a scroll frame for the icon column, with hidden scrollbar and left padding for icons
 	local iconScrollFrame = CreateFrame("ScrollFrame", nil, containerFrame, "UIPanelScrollFrameTemplate")
@@ -2452,7 +2516,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 		edgeSize = 1,
 	})
 	settingsPanel:SetBackdropColor(0.08, 0.08, 0.08, 0.8)
-	settingsPanel:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+	settingsPanel:SetBackdropBorderColor(1, 0, 0, 1)  -- RED border for debugging
 	
 	
 	
@@ -2482,7 +2546,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
             plusBtn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, -iconPadding)
             plusBtn:SetScript("OnClick", function()
                 _lastSelectedIcon = nil
-                SpellStyler.AddSpells:RenderAddSpellsView(controlsPanel)
+                SpellStyler.AddSpells:RenderAddSpellsView(settingsScrollChild)
             end)
         end
 
@@ -2502,7 +2566,14 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
         multiBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
         multiBtn:SetScript("OnClick", function()
             _lastSelectedIcon = nil
-            IconSettingsRenderer:RenderMultiIconSettingsView(controlsPanel)
+            IconSettingsRenderer:RenderMultiIconSettingsView({
+                parentFrame = settingsScrollChild,
+                onHeightUpdated = function(newHeight)
+                    if settingsScrollChild then
+                        settingsScrollChild:SetHeight(newHeight)
+                    end
+                end
+            })
         end)
 
         -- Separator line between toolbar buttons and spell list
@@ -2536,7 +2607,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                         onHeightUpdated = function(newHeight)
                             -- Update scroll child height to match content
                             if settingsScrollChild then
-                                settingsScrollChild:SetHeight(math.max(newHeight, 600))
+                                settingsScrollChild:SetHeight(newHeight)
                             end
                         end
                     })
@@ -2556,6 +2627,12 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
     local settingsPanelScrollFrame = CreateFrame("ScrollFrame", nil, settingsPanel, "UIPanelScrollFrameTemplate")
     settingsPanelScrollFrame:SetPoint("TOPLEFT", 10, -10)
     settingsPanelScrollFrame:SetPoint("BOTTOMRIGHT", -10, 10)
+    -- ORANGE border for debugging (ScrollFrame doesn't support SetBackdrop, so create a child frame)
+    -- local scrollFrameBorder = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
+    -- scrollFrameBorder:SetAllPoints(settingsPanelScrollFrame)
+    -- scrollFrameBorder:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
+    -- scrollFrameBorder:SetBackdropBorderColor(1, 0.5, 0, 1)
+    -- scrollFrameBorder:SetFrameLevel(settingsPanelScrollFrame:GetFrameLevel() + 10)  -- Ensure it's on top
     if SpellStyler and SpellStyler.Cooldowns and type(IconSettingsRenderer.SetConsistentScrollingBehavior) == "function" then
         IconSettingsRenderer:SetConsistentScrollingBehavior(settingsPanelScrollFrame)
     end
@@ -2567,27 +2644,24 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 		scrollBar.Show = function() end -- prevent it from being shown by template code
 	end
 
-    local scrollChild = CreateFrame("Frame", nil, settingsPanelScrollFrame)
+    local scrollChild = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
     scrollChild:SetSize(settingsPanel:GetWidth() - 20, settingsPanel:GetHeight() - 20)
     settingsPanelScrollFrame:SetScrollChild(scrollChild)
+    -- YELLOW border for debugging
+    scrollChild:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
+    scrollChild:SetBackdropBorderColor(1, 1, 0, 1)
     
-    -- Store reference for height updates
+    -- Store reference for height updates and content rendering
     settingsScrollChild = scrollChild
     
-    -- Controls panel (no backdrop, just a container inside scrollChild)
-    controlsPanel = CreateFrame("Frame", nil, scrollChild)
-    controlsPanel:SetPoint("TOPLEFT", 0, 0)
-    controlsPanel:SetPoint("BOTTOMRIGHT", 0, 0)
-    -- controlsPanel:SetHeight(100)  -- Will be updated dynamically
-    
-    -- "No Selection" label
-    local noSelectionLabel = controlsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    noSelectionLabel:SetPoint("CENTER", controlsPanel, "CENTER", 0, 0)
+    -- "No Selection" label rendered directly into scroll child
+    local noSelectionLabel = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    noSelectionLabel:SetPoint("CENTER", scrollChild, "CENTER", 0, 0)
     noSelectionLabel:SetText("Select an icon to configure")
     noSelectionLabel:SetTextColor(0.5, 0.5, 0.5)
 
-	-- associating the "no selection" to the parent so it can be removed when an icon is clicked
-	controlsPanel.currentControlsContainer = noSelectionLabel
+	-- Track the no selection label so it can be removed when an icon is clicked
+	scrollChild.currentControlsContainer = noSelectionLabel
 
 	-- Store references for cleanup on re-render
 	containerFrame._ssIconScrollFrame = iconScrollFrame
@@ -2601,7 +2675,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 			onHeightUpdated = function(newHeight)
 				-- Update scroll child height to match content
 				if settingsScrollChild then
-					settingsScrollChild:SetHeight(math.max(newHeight, 600))
+					settingsScrollChild:SetHeight(newHeight)
 				end
 			end
 		})
@@ -2656,7 +2730,7 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
                     
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position", positionData)
                     
-                    -- State setter automatically calls CreateChargeAnchorBarInfrastructure + UpdateFrame_ConfigurationChanges
+                    -- State setter automatically calls ApplyStaticFrameProperties (handles charge infrastructure internally)
                     -- This will reposition both base and variant frames and recreate charge bars at new position
                     -- Variant frame is REUSED (preserving ConditionalEngine cache)
                 end)

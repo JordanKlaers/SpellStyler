@@ -270,6 +270,25 @@ function ConditionalEngine:SpecialVisibilityUsesCharges(specialVisibilityConditi
     return self:ConditionalUsesCharges(specialVisibilityCondition.conditionalName)
 end
 
+--- Checks if a trackerConfig has any conditionals that use charges.
+--- Used by FrameTrackerManager to determine if a variant frame is needed.
+--- @param trackerConfig table The tracker configuration to check
+--- @return boolean True if any conditional uses charges
+function ConditionalEngine:TrackerHasChargesConditionals(trackerConfig)
+    if not trackerConfig or not trackerConfig.specialVisibilityConditions then
+        return false
+    end
+    
+    -- Check each conditional to see if any use charges
+    for _, condition in ipairs(trackerConfig.specialVisibilityConditions) do
+        if condition.conditionalName and self:ConditionalUsesCharges(condition.conditionalName) then
+            return true
+        end
+    end
+    
+    return false
+end
+
 -- ============================================================================
 -- PROPERTY-OVERRIDE APPLICATION
 -- ============================================================================
@@ -445,7 +464,7 @@ end
 
 --- Applies property overrides from a special visibility condition to a tracker frame.
 --- Routes overrides to variant frame only if conditional uses Charges, otherwise to both frames.
---- Caches overrides and triggers the unified update path via UpdateFrame_ConfigurationChanges.
+--- Caches overrides and triggers the unified update path via ApplyStaticFrameProperties.
 --- @param frame table The tracker frame (base frame)
 --- @param conditionalKey string The unique key for this conditional (name or index-based)
 --- @param propertyOverrides table Array of property override definitions
@@ -478,7 +497,7 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
     -- Trigger the unified update path via FrameTrackerManager
     -- Note: Always use base frame for state lookups
     if SpellStyler.FrameTrackerManager then
-        SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(
+        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(
             frame.meta.baseSpellID,
             frame.meta.trackerType
         )
@@ -610,7 +629,7 @@ function ConditionalEngine:EvaluateAll()
                                                     -- Still true, safe to remove this property
                                                     self._framePropertyOverrides[customFrame][conditionalKey][override.property] = nil
                                                     -- Trigger update
-                                                    FrameTrackerManager:UpdateFrame_ConfigurationChanges(baseSpellID, trackerType)
+                                                    FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
                                                 end
                                                 -- Otherwise conditional went false already, cache was cleared, do nothing
                                             end)
@@ -621,7 +640,7 @@ function ConditionalEngine:EvaluateAll()
                                     self:ClearFramePropertyOverrides(customFrame, conditionalKey)
                                     -- Trigger unified update path to revert to state values
                                     if SpellStyler.FrameTrackerManager then
-                                        SpellStyler.FrameTrackerManager:UpdateFrame_ConfigurationChanges(
+                                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(
                                             baseSpellID,
                                             trackerType
                                         )

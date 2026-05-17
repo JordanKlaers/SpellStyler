@@ -145,7 +145,7 @@ function Containers:DetachIconsFromContainer(uniqueIDs)
             local f = FTM:GetTrackerFrame(uniqueID, tType)
             if f then
                 f._inContainer = nil
-                FTM:UpdateFrame_ConfigurationChanges(uniqueID, tType)
+                FTM:ApplyStaticFrameProperties(uniqueID, tType)
                 break
             end
         end

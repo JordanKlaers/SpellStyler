@@ -49,7 +49,7 @@ Two module-local variables track live state that does **not** need to be saved:
 The settings UI adds the icon's `uniqueID` to `config.associatedIcons`, then calls `LayoutContainer` to physically reposition and lock the frame. `LayoutContainer` also sets `frame._inContainer = true` on the tracker frame and strips its drag scripts so it can't be moved independently.
 
 ### Detaching icons — `DetachIconsFromContainer(uniqueIDs)`
-Accepts a list of `uniqueID` strings. For each one it finds the corresponding tracker frame across all tracker types (`buffs`, `essential`, `utility`), clears `_inContainer`, calls `UpdateFrame_ConfigurationChanges` to restore its visual state, then calls `EnableDraggingForAllFrames` once at the end so all now-free icons regain drag scripts. Called both on individual removal (the settings UI drag/click) and when an entire container is deleted.
+Accepts a list of `uniqueID` strings. For each one it finds the corresponding tracker frame across all tracker types (`buffs`, `essential`, `utility`), clears `_inContainer`, calls `ApplyStaticFrameProperties` to restore its visual state, then calls `EnableDraggingForAllFrames` once at the end so all now-free icons regain drag scripts. Called both on individual removal (the settings UI drag/click) and when an entire container is deleted.
 
 ---
 

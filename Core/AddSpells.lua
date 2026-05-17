@@ -96,11 +96,35 @@ local ICONS_PER_ROW = 6
 function AddSpells:RenderAddSpellsView(parent)
     if not parent then return end
 
-    if parent.currentControlsContainer then
-        parent.currentControlsContainer:Hide()
-        parent.currentControlsContainer:SetParent(nil)
-        parent.currentControlsContainer = nil
+    -- Clear all old controls from scroll child
+    -- Collect all children and regions first to avoid iteration issues during removal
+    local childrenToRemove = {}
+    for _, child in ipairs({parent:GetChildren()}) do
+        table.insert(childrenToRemove, child)
     end
+    
+    local regionsToRemove = {}
+    for _, region in ipairs({parent:GetRegions()}) do
+        if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
+            table.insert(regionsToRemove, region)
+        end
+    end
+    
+    -- Now remove all children
+    for _, child in ipairs(childrenToRemove) do
+        child:Hide()
+        child:SetParent(nil)
+    end
+    
+    -- And clear all regions
+    for _, region in ipairs(regionsToRemove) do
+        region:Hide()
+        if region:IsObjectType("FontString") then
+            region:SetText("")
+        end
+    end
+    
+    parent.currentControlsContainer = nil
 
     local container = CreateFrame("Frame", nil, parent)
     container:SetAllPoints()
@@ -224,7 +248,7 @@ function AddSpells:RenderAddSpellsView(parent)
         
         -- CreateFrameMiddleware creates base frame, variant frame (if needed),
         -- sets up charge infrastructure, and drives updates
-        FTM:CreateFrameMiddleware(baseSpellID, trackerConfig, "spells")
+        FTM:CreateCompleteFrame(baseSpellID, trackerConfig, "spells")
 
         -- 3. Remove from the grid so it can't be added twice
         local addedID = selectedSpell.spellID
