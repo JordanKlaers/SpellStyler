@@ -74,6 +74,7 @@ local function AddNewTrackerValueConfig(data)
         trackerType = data.trackerType, -- essential, utility, buffs
         name = data.name,
         defaultIconTexturePath = data.defaultIconTexturePath,
+        isItem = data.isItem or false,  -- Flag to identify item trackers (for icon lookup)
         position = {
             anchorPoint = "center",
             relativeToFrame = nil,
@@ -298,15 +299,18 @@ end
 function State:SetCorrectOverride(specDB)
 	-- make sure the default Icon Texture Path and overrideSpellID match the current spell override when loading in
 	for baseSpellID, trackerValue in pairs(specDB.spells) do
-		pcall(function()
-			local overrideID = baseSpellID
-			pcall(function() overrideID = C_Spell.GetOverrideSpell(baseSpellID) end)
-			local defaultIconTexturePath = overrideID
-			local overrideInfo = C_Spell.GetSpellInfo(overrideID)
-			if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
-			specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
-			specDB.spells[baseSpellID].overrideSpellID = overrideID
-		end)
+		-- Skip items - they don't have spell overrides and their texture is already correct
+		if not trackerValue.isItem then
+			pcall(function()
+				local overrideID = baseSpellID
+				pcall(function() overrideID = C_Spell.GetOverrideSpell(baseSpellID) end)
+				local defaultIconTexturePath = overrideID
+				local overrideInfo = C_Spell.GetSpellInfo(overrideID)
+				if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
+				specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
+				specDB.spells[baseSpellID].overrideSpellID = overrideID
+			end)
+		end
 	end
 end
 
@@ -438,10 +442,13 @@ function State:MigrateDatabase()
             -- Remap spells stored under a non-base spell ID to their base ID.
             local spellRemaps = {}
             for uniqueID, trackerValue in pairs(specDB.spells) do
-                local baseID = nil
-                pcall(function() baseID = C_Spell.GetBaseSpell(uniqueID) end)
-                if baseID and baseID ~= uniqueID then
-                    table.insert(spellRemaps, { oldID = uniqueID, newID = baseID, entry = trackerValue })
+                -- Skip items - they don't need spell ID remapping
+                if not trackerValue.isItem then
+                    local baseID = nil
+                    pcall(function() baseID = C_Spell.GetBaseSpell(uniqueID) end)
+                    if baseID and baseID ~= uniqueID then
+                        table.insert(spellRemaps, { oldID = uniqueID, newID = baseID, entry = trackerValue })
+                    end
                 end
             end
             for _, remap in ipairs(spellRemaps) do
@@ -484,6 +491,7 @@ function State:ResetTrackerValueConfig(baseSpellID, trackerType)
         name = existing.name,
         defaultIconTexturePath = existing.defaultIconTexturePath,
         overrideSpellID = existing.overrideSpellID,
+        isItem = existing.isItem,
     })
     db[trackerType][baseSpellID] = defaults
     -- Refresh the live frame if it exists
@@ -630,27 +638,66 @@ function State:getTrackerValuesListForSettings()
         end
     end
 
-    -- Manually-added spells (no viewer frame required)
+    -- Manually-added spells and items (no viewer frame required)
     local spellsValues = State:GetAllTrackerValues("spells")
+    local itemsGroup = {}
     local spellsGroup = {}
     for baseSpellID, trackerValue in pairs(spellsValues or {}) do
         State:EnsureVisualChargeBarDefaults(trackerValue)
-        if trackerValue.isEnabled ~= false and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerValue.overrideSpellID)) then
+        
+        -- Include if enabled and either: it's an item, OR it's a known spell
+        local shouldInclude = trackerValue.isEnabled ~= false
+        if shouldInclude then
+            if trackerValue.isItem then
+                -- Item - no spell check needed
+                shouldInclude = true
+            else
+                -- Spell - verify it's known
+                shouldInclude = C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerValue.overrideSpellID)
+            end
+        end
+        
+        if shouldInclude then
             local frame = FrameTrackerManager.SpellStyler_frames["spells"] and FrameTrackerManager.SpellStyler_frames["spells"][baseSpellID]
             local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
-            local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
-            local displayName = (spellInfo and spellInfo.name) or trackerValue.name
-            table.insert(spellsGroup, {
+            
+            -- For items, use item info; for spells, use spell info
+            local displayName = trackerValue.name
+            local iconTexture = trackerValue.defaultIconTexturePath
+            
+            if not trackerValue.isItem then
+                local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
+                displayName = (spellInfo and spellInfo.name) or trackerValue.name
+            end
+            
+            local entry = {
                 uniqueID = baseSpellID,
                 baseSpellID = baseSpellID,
                 activeSpellID = activeSpellID,
                 trackerType = "spells",
                 name = displayName,
-                defaultIconTexturePath = trackerValue.defaultIconTexturePath,
+                defaultIconTexturePath = iconTexture,
                 devNotes = trackerValue.devNotes
-            })
+            }
+            
+            -- Separate items from spells
+            if trackerValue.isItem then
+                table.insert(itemsGroup, entry)
+            else
+                table.insert(spellsGroup, entry)
+            end
         end
     end
+    
+    -- Add Items section (after Buffs, before Spells)
+    if #itemsGroup > 0 then
+        table.insert(listTrackerValues, { isHeader = true, label = "Items" })
+        for _, entry in ipairs(itemsGroup) do
+            table.insert(listTrackerValues, entry)
+        end
+    end
+    
+    -- Add Spells section (after Items)
     if #spellsGroup > 0 then
         table.insert(listTrackerValues, { isHeader = true, label = "Spells" })
         for _, entry in ipairs(spellsGroup) do

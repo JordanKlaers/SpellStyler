@@ -199,3 +199,12 @@ Version 1.3.0
 Version 1.2.0
 	- Adds condition for "Is buff present"
 	- Adds ability to display spell/buff charges as a bar not just a number
+
+Version 1.3.0
+	- Adds charge based display and charge based property overrides
+
+Version 1.4.0
+	- Adds condition for buff present and statusBar display for spell/buff charges
+
+Version 1.5.0
+	- Adds ITEMS to tracking

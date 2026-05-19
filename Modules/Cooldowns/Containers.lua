@@ -141,7 +141,7 @@ function Containers:DetachIconsFromContainer(uniqueIDs)
     local FTM = SpellStyler.FrameTrackerManager
     if not FTM then return end
     for _, uniqueID in ipairs(uniqueIDs) do
-        for _, tType in ipairs({"buffs", "essential", "utility"}) do
+        for _, tType in ipairs({"buffs", "essential", "utility", "spells"}) do
             local f = FTM:GetTrackerFrame(uniqueID, tType)
             if f then
                 f._inContainer = nil
@@ -218,7 +218,7 @@ function Containers:LayoutContainer(name)
 
     local PADDING = 5  -- padding around the icon grid on all sides
 
-    local trackerTypes = { "buffs", "essential", "utility" }
+    local trackerTypes = { "buffs", "essential", "utility", "spells" }
     -- Use the container's configured icon size; fall back to DEFAULT_ICON_SIZE.
     local containerIconW = (type(config.iconWidth)  == "number" and config.iconWidth  > 0) and config.iconWidth  or DEFAULT_ICON_SIZE
     local containerIconH = (type(config.iconHeight) == "number" and config.iconHeight > 0) and config.iconHeight or DEFAULT_ICON_SIZE
@@ -333,7 +333,7 @@ function Containers:CollapseLayout(name)
     local FTM = SpellStyler.FrameTrackerManager
     if not FTM then return end
 
-    local trackerTypes   = { "buffs", "essential", "utility" }
+    local trackerTypes   = { "buffs", "essential", "utility", "spells" }
     local vertical       = (config.orientation == "vertical")
     local containerIconW = (type(config.iconWidth)  == "number" and config.iconWidth  > 0) and config.iconWidth  or DEFAULT_ICON_SIZE
     local containerIconH = (type(config.iconHeight) == "number" and config.iconHeight > 0) and config.iconHeight or DEFAULT_ICON_SIZE

@@ -60,6 +60,100 @@ function AddSpells:GetCurrentSpecSpells()
     return spells
 end
 
+--- Scans the player's bags and equipped items, returning a flat list of usable items
+--- with cooldowns. Each entry: { itemID, name, iconID, isEquipped }
+function AddSpells:GetPlayerItems()
+    local items = {}
+    local seen = {}  -- deduplicate by itemID
+    
+    -- Helper to check if item has an actual cooldown when used
+    local function itemHasCooldown(itemID)
+        -- Check if item has a spell (on-use effect)
+        local spellName, spellID = C_Item.GetItemSpell(itemID)
+        if not spellID then
+            return false  -- No on-use effect
+        end
+        -- Check if the spell has a cooldown
+        local cooldownMS = GetSpellBaseCooldown(spellID)
+        if cooldownMS and cooldownMS > 1500 then  -- More than 1.5s GCD
+            return true
+        end
+        
+        -- Also check current cooldown state (catches items currently on cooldown)
+        local start, duration = C_Container.GetItemCooldown(itemID)
+        if duration and duration > 1.5 then  -- Active cooldown greater than GCD
+            return true
+        end
+        
+        return false
+    end
+    
+    -- Scan equipped items (inventory slots 1-19)
+    for slotID = 1, 19 do
+        local itemID = GetInventoryItemID("player", slotID)
+        if itemID and not seen[itemID] then
+            -- Use C_Item.GetItemIconByID for icon (modern API)
+            local itemIcon = C_Item.GetItemIconByID(itemID)
+            local itemName = C_Item.GetItemNameByID(itemID)
+            
+            -- Only include if item is usable and has a real cooldown
+            local isUsable = C_Item.IsUsableItem(itemID)
+            local hasCooldown = itemHasCooldown(itemID)
+            
+            if itemName and itemIcon and isUsable and hasCooldown then
+                seen[itemID] = true
+                table.insert(items, {
+                    itemID = itemID,
+                    name = itemName,
+                    iconID = itemIcon,
+                    isEquipped = true,
+                })
+            end
+        end
+    end
+    
+    -- Scan bags (0 = backpack, 1-4 = bag slots)
+    for bagID = 0, 6 do
+        local numSlots = C_Container.GetContainerNumSlots(bagID)
+        if numSlots then
+            for slotID = 1, numSlots do
+                local itemInfo = C_Container.GetContainerItemInfo(bagID, slotID)
+                if itemInfo and itemInfo.itemID then
+                    local itemID = itemInfo.itemID
+                    if not seen[itemID] then
+                        local itemName = itemInfo.itemName
+                        local itemIcon = itemInfo.iconFileID
+                        
+                        -- Get additional info if needed using modern API
+                        if not itemName then
+                            itemName = C_Item.GetItemNameByID(itemID)
+                        end
+                        if not itemIcon then
+                            itemIcon = C_Item.GetItemIconByID(itemID)
+                        end
+                        
+                        -- Only include if item is usable and has a real cooldown
+                        local isUsable = C_Item.IsUsableItem(itemID)
+                        local hasCooldown = itemHasCooldown(itemID)
+                        
+                        if itemName and itemIcon and isUsable and hasCooldown then
+                            seen[itemID] = true
+                            table.insert(items, {
+                                itemID = itemID,
+                                name = itemName,
+                                iconID = itemIcon,
+                                isEquipped = false,
+                            })
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return items
+end
+
 -- ============================================================================
 -- Plus button (icon column entry)
 -- ============================================================================
@@ -175,7 +269,7 @@ function AddSpells:RenderAddSpellsView(parent)
 
     local subtitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Showing class and current spec spells.")
+    subtitle:SetText("Showing class spells and items with cooldowns.")
     subtitle:SetTextColor(0.7, 0.7, 0.7)
 
     -- Search / spell-ID input
@@ -225,45 +319,64 @@ function AddSpells:RenderAddSpellsView(parent)
         if not selectedSpell then return end
         local FTM   = SpellStyler.FrameTrackerManager
         local State = SpellStyler.State
-
-        -- 1. Persist to DB
-        local trackerConfig = State:AddTrackerValue({
-            baseSpellID             = C_Spell.GetBaseSpell(selectedSpell.spellID),
-			overrideSpellID			= C_Spell.GetOverrideSpell(selectedSpell.spellID),
-            trackerType		        = "spells",
-            name            		= selectedSpell.name,
-            defaultIconTexturePath  = selectedSpell.iconID,
-        })
+        
+        -- Determine if selected item is a spell or an item
+        local isItem = selectedSpell.itemID ~= nil
+        local trackingID, trackerConfig
+        
+        if isItem then
+            -- Track item by itemID as the database key
+            trackingID = selectedSpell.itemID
+            
+            -- Convert itemID to icon texture path immediately
+            local itemIconTexture = C_Item.GetItemIconByID(trackingID)
+            
+            trackerConfig = State:AddTrackerValue({
+                baseSpellID             = trackingID,   -- Use itemID as the key
+                overrideSpellID         = trackingID,   -- Same as base for items
+                trackerType             = "spells",
+                name                    = selectedSpell.name,
+                defaultIconTexturePath  = itemIconTexture or trackingID,  -- Store texture path, not itemID
+                isItem                  = true,         -- Flag to identify this as an item tracker
+            })
+        else
+            -- Track spell by baseSpellID
+            trackingID = C_Spell.GetBaseSpell(selectedSpell.spellID)
+            trackerConfig = State:AddTrackerValue({
+                baseSpellID             = trackingID,
+                overrideSpellID         = C_Spell.GetOverrideSpell(selectedSpell.spellID),
+                trackerType             = "spells",
+                name                    = selectedSpell.name,
+                defaultIconTexturePath  = selectedSpell.iconID,
+            })
+        end
+        
         if not trackerConfig then return end
 
-        -- 2. Create the live tracker frame.
-        -- Use the same key that AddTrackerValue used (GetBaseSpell), NOT selectedSpell.spellID.
-        -- The spellbook may return a talent-override spell ID; using GetBaseSpell here ensures
-        -- SpellStyler_frames["spells"] is keyed identically to the DB entry so that
-        -- OnDragStop position saves land on the correct record.
-        
         -- Wipe devNotes before creating frame (fresh start for error tracking)
-        local baseSpellID = C_Spell.GetBaseSpell(selectedSpell.spellID)
-        SpellStyler.State:SetTrackerValueConfigProperty(baseSpellID, "spells", "devNotes", {})
+        SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "spells", "devNotes", {})
         
         -- CreateFrameMiddleware creates base frame, variant frame (if needed),
         -- sets up charge infrastructure, and drives updates
-        FTM:CreateCompleteFrame(baseSpellID, trackerConfig, "spells")
+        FTM:CreateCompleteFrame(trackingID, trackerConfig, "spells")
 
-        -- 3. Remove from the grid so it can't be added twice
-        local addedID = selectedSpell.spellID
+        -- Remove from the grid so it can't be added twice
+        local addedID = isItem and selectedSpell.itemID or selectedSpell.spellID
         for i = #gridButtons, 1, -1 do
-            if gridButtons[i].spell.spellID == addedID then
+            local entryID = gridButtons[i].type == "item" 
+                and gridButtons[i].data.itemID 
+                or gridButtons[i].data.spellID
+            if entryID == addedID then
                 gridButtons[i].btn:Hide()
                 table.remove(gridButtons, i)
             end
         end
         FilterAndLayoutSafe(lastFilter, gridSF:GetWidth())
 
-        -- 4. Clear selection
+        -- Clear selection
         Deselect()
 
-        -- 5. Refresh the icon list in the settings panel so the new spell appears
+        -- Refresh the icon list in the settings panel so the new spell/item appears
         if SpellStyler.settingsContentFrame then
             SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
             local ISR = SpellStyler.IconSettingsRenderer
@@ -305,59 +418,97 @@ function AddSpells:RenderAddSpellsView(parent)
     local gridChild = CreateFrame("Frame", nil, gridSF)
     gridSF:SetScrollChild(gridChild)
 
-    -- ── Build buttons for every spell ─────────────────────────────────
+    -- ── Build buttons for every spell and item ────────────────────────
     local spells = AddSpells:GetCurrentSpecSpells()
-    -- Each entry: { btn = Frame, spell = spellEntry }
+    local items = AddSpells:GetPlayerItems()
+    -- Each entry: { btn = Frame, data = spellEntry or itemEntry, type = "spell" or "item" }
     gridButtons = {}
 
     local State = SpellStyler.State
+    
+    -- Helper function to check if spell/item is tracked and enabled
+    local function isTrackedAndEnabled(spellID, trackerType)
+        if not State:CheckIsAlreadyTracker(spellID, trackerType) then
+            return false
+        end
+        local config = State:GetSpecificTrackerValue(spellID, trackerType)
+        return config and config.isEnabled ~= false
+    end
+    
+    -- Add spells
     for _, spell in ipairs(spells) do
         -- Skip spells that are already tracked AND enabled in any tracker type.
         -- DB entries are keyed by GetBaseSpell(), so the duplicate check must use
         -- the same key; using the raw spellbook ID would miss override spells.
         local baseID = C_Spell.GetBaseSpell(spell.spellID)
         
-        -- Helper function to check if spell is tracked and enabled
-        local function isTrackedAndEnabled(spellID, trackerType)
-            if not State:CheckIsAlreadyTracker(spellID, trackerType) then
-                return false
-            end
-            local config = State:GetSpecificTrackerValue(spellID, trackerType)
-            return config and config.isEnabled ~= false
-        end
-        
         local alreadyTrackedAndEnabled = isTrackedAndEnabled(baseID, "buffs")
             or isTrackedAndEnabled(baseID, "essential")
             or isTrackedAndEnabled(baseID, "utility")
             or isTrackedAndEnabled(baseID, "spells")
+        
         if not alreadyTrackedAndEnabled then
-        local capturedSpell = spell
-        local btn = CreateFrame("Button", nil, gridChild)
-        btn:EnableMouse(true)
-        btn:RegisterForClicks("LeftButtonUp")
+            local capturedSpell = spell
+            local btn = CreateFrame("Button", nil, gridChild)
+            btn:EnableMouse(true)
+            btn:RegisterForClicks("LeftButtonUp")
 
-        local tex = btn:CreateTexture(nil, "ARTWORK")
-        tex:SetAllPoints()
-        tex:SetTexture(spell.iconID)
-        tex:SetTexCoord(0, 1, 0, 1)
+            local tex = btn:CreateTexture(nil, "ARTWORK")
+            tex:SetAllPoints()
+            tex:SetTexture(spell.iconID)
+            tex:SetTexCoord(0, 1, 0, 1)
 
-        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-        hl:SetAllPoints()
-        hl:SetColorTexture(1, 1, 1, 0.25)
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.25)
 
-        btn:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetSpellByID(capturedSpell.spellID)
-            GameTooltip:Show()
-        end)
-        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        btn:SetScript("OnClick", function(self)
-            SelectSpell(capturedSpell, self)
-        end)
+            btn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetSpellByID(capturedSpell.spellID)
+                GameTooltip:Show()
+            end)
+            btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            btn:SetScript("OnClick", function(self)
+                SelectSpell(capturedSpell, self)
+            end)
 
-        table.insert(gridButtons, { btn = btn, spell = capturedSpell })
-        end  -- if not alreadyTracked
-    end  -- for _, spell
+            table.insert(gridButtons, { btn = btn, data = capturedSpell, type = "spell" })
+        end
+    end
+    
+    -- Add items
+    for _, item in ipairs(items) do
+        -- Check if item is already tracked (items use itemID as the key)
+        local alreadyTrackedAndEnabled = isTrackedAndEnabled(item.itemID, "spells")
+        
+        if not alreadyTrackedAndEnabled or true then
+            local capturedItem = item
+            local btn = CreateFrame("Button", nil, gridChild)
+            btn:EnableMouse(true)
+            btn:RegisterForClicks("LeftButtonUp")
+
+            local tex = btn:CreateTexture(nil, "ARTWORK")
+            tex:SetAllPoints()
+            tex:SetTexture(item.iconID)
+            tex:SetTexCoord(0, 1, 0, 1)
+
+            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints()
+            hl:SetColorTexture(1, 1, 1, 0.25)
+
+            btn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetItemByID(capturedItem.itemID)
+                GameTooltip:Show()
+            end)
+            btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            btn:SetScript("OnClick", function(self)
+                SelectSpell(capturedItem, self)
+            end)
+
+            table.insert(gridButtons, { btn = btn, data = capturedItem, type = "item" })
+        end
+    end
 
     -- ── Layout / search filter ─────────────────────────────────────────
     local currentIconSize = 36
@@ -380,33 +531,71 @@ function AddSpells:RenderAddSpellsView(parent)
         currentIconSize = iconSize
         gridChild:SetWidth(availableWidth)
 
-        local matchCount = 0
+        local spellCount = 0
+        local itemCount = 0
+        
+        -- First pass: layout spells
         for _, entry in ipairs(gridButtons) do
-            local btn = entry.btn
-            local matches = (filterText == "")
-                or entry.spell.name:lower():find(lower, 1, true)
-            if matches then
-                btn:SetSize(iconSize, iconSize)
-                btn:ClearAllPoints()
-                -- Offset by GLOW_PAD so icons align visually with the separator
-                btn:SetPoint("TOPLEFT", gridChild, "TOPLEFT",
-                    GLOW_PAD + col * (iconSize + GRID_GAP),
-                    -(GLOW_PAD + row * (iconSize + GRID_GAP))
-                )
-                btn:Show()
-                col = col + 1
-                if col >= ICONS_PER_ROW_GRID then col = 0; row = row + 1 end
-                matchCount = matchCount + 1
-            else
-                btn:Hide()
+            if entry.type == "spell" then
+                local btn = entry.btn
+                local matches = (filterText == "")
+                    or entry.data.name:lower():find(lower, 1, true)
+                if matches then
+                    btn:SetSize(iconSize, iconSize)
+                    btn:ClearAllPoints()
+                    btn:SetPoint("TOPLEFT", gridChild, "TOPLEFT",
+                        GLOW_PAD + col * (iconSize + GRID_GAP),
+                        -(GLOW_PAD + row * (iconSize + GRID_GAP))
+                    )
+                    btn:Show()
+                    col = col + 1
+                    if col >= ICONS_PER_ROW_GRID then col = 0; row = row + 1 end
+                    spellCount = spellCount + 1
+                else
+                    btn:Hide()
+                end
+            end
+        end
+        
+        -- Add gap between spells and items (skip to next row + add extra spacing)
+        if spellCount > 0 and col > 0 then
+            col = 0
+            row = row + 1
+        end
+        local gapRows = 0.5  -- Half row gap
+        if spellCount > 0 then
+            row = row + gapRows
+        end
+        
+        -- Second pass: layout items
+        for _, entry in ipairs(gridButtons) do
+            if entry.type == "item" then
+                local btn = entry.btn
+                local matches = (filterText == "")
+                    or entry.data.name:lower():find(lower, 1, true)
+                if matches then
+                    btn:SetSize(iconSize, iconSize)
+                    btn:ClearAllPoints()
+                    btn:SetPoint("TOPLEFT", gridChild, "TOPLEFT",
+                        GLOW_PAD + col * (iconSize + GRID_GAP),
+                        -(GLOW_PAD + row * (iconSize + GRID_GAP))
+                    )
+                    btn:Show()
+                    col = col + 1
+                    if col >= ICONS_PER_ROW_GRID then col = 0; row = row + 1 end
+                    itemCount = itemCount + 1
+                else
+                    btn:Hide()
+                end
             end
         end
 
-        local totalRows = math.ceil(matchCount / ICONS_PER_ROW_GRID)
-        gridChild:SetHeight(math.max(GLOW_PAD + totalRows * (iconSize + GRID_GAP), 1))
+        local totalCount = spellCount + itemCount
+        local totalRows = math.ceil(row) + (col > 0 and 1 or 0)
+        gridChild:SetHeight(math.max(GLOW_PAD + totalRows * (iconSize + GRID_GAP) + 20, 1))
     end
 
-    -- ── Lookup icon update (direct spell-ID or name lookup) ────────────
+    -- ── Lookup icon update (direct spell-ID/item-ID or name lookup) ──────
     local function UpdateLookupIcon(text)
         if not text or text == "" then
             previewBtn:Hide()
@@ -415,17 +604,54 @@ function AddSpells:RenderAddSpellsView(parent)
             if selectedBtn == previewBtn then Deselect() end
             return
         end
-        local sid = tonumber(text)
-        local si  = sid and C_Spell.GetSpellInfo(sid)
-        if not si then
-            -- try name lookup
-            si = C_Spell.GetSpellInfo(text)
-            if si then sid = si.spellID end
+        
+        local id = tonumber(text)
+        local foundSpell, foundItem = false, false
+        
+        -- Try spell lookup first
+        if id then
+            local si = C_Spell.GetSpellInfo(id)
+            if si then
+                previewSpell = { spellID = id, name = si.name, iconID = si.iconID }
+                foundSpell = true
+            end
+        else
+            -- Try spell name lookup
+            local si = C_Spell.GetSpellInfo(text)
+            if si then
+                previewSpell = { spellID = si.spellID, name = si.name, iconID = si.iconID }
+                foundSpell = true
+            end
         end
-        if si and sid then
-            previewSpell = { spellID = sid, name = si.name, iconID = si.iconID }
-            previewTex:SetTexture(si.iconID)
+        
+        -- If spell not found, try item lookup
+        if not foundSpell and id then
+            local itemName = C_Item.GetItemNameByID(id)
+            local itemIcon = C_Item.GetItemIconByID(id)
+            
+            if itemName and itemIcon then
+                previewSpell = { itemID = id, name = itemName, iconID = itemIcon }
+                foundItem = true
+            end
+        end
+        
+        if foundSpell or foundItem then
+            previewTex:SetTexture(previewSpell.iconID)
             previewBtn:Show()
+            
+            -- Update tooltip handler based on type
+            previewBtn:SetScript("OnEnter", function(self)
+                if previewSpell then
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    if previewSpell.itemID then
+                        GameTooltip:SetItemByID(previewSpell.itemID)
+                    else
+                        GameTooltip:SetSpellByID(previewSpell.spellID)
+                    end
+                    GameTooltip:Show()
+                end
+            end)
+            
             -- If the previously glow-selected btn was this preview icon,
             -- re-apply glow since SetupAnts was called on it before Show
             if selectedBtn == previewBtn then

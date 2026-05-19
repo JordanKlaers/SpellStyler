@@ -161,7 +161,6 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             if trackerConfig then
                 -- Wipe devNotes before creating frame (fresh start for error tracking)
                 State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
-
                 FrameTrackerManager:CreateCompleteFrame(spellID, trackerConfig, trackerType)
             end
         end
@@ -181,14 +180,25 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
         if trackerValues then
             for baseSpellID, trackerConfig in pairs(trackerValues) do
                 -- Skip orphan entries: real entries always have trackerType set by AddTrackerValue.
-                if not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                -- For items, skip the spell known check since items use itemID instead
+                local shouldCreate = not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                     and trackerConfig.trackerType ~= nil
                     and trackerConfig.isEnabled ~= false
-                    and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerConfig.overrideSpellID))
-                then
+                
+                -- If it's a spell, verify it's known; if it's an item, allow it through
+                if shouldCreate then
+                    if trackerConfig.isItem then
+                        -- Item tracker - no spell check needed, items use itemID directly
+                        shouldCreate = true
+                    else
+                        -- Spell tracker - verify spell is known
+                        shouldCreate = C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerConfig.overrideSpellID)
+                    end
+                end
+                
+                if shouldCreate then
                     -- Wipe devNotes before creating frame (fresh start for error tracking)
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
-
                     FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, trackerType)
                 end
             end
@@ -1094,6 +1104,8 @@ FrameTrackerManager.FrameBuilder = {
         data.frame.icon:SetAllPoints(data.frame.iconContainer)
         local zoom = data.trackerConfig.iconSettings.zoom and (data.trackerConfig.iconSettings.zoom / 100) or 0
         data.frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
+        
+        -- Get icon texture
         local iconTexture = data.frame.meta.customTexture or data.trackerConfig.defaultIconTexturePath
         data.frame.icon:SetTexture(iconTexture)
         
@@ -1859,6 +1871,11 @@ end
 --- @param trackerType string The tracker type
 --- @return table baseFrame The created base frame
 function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, trackerType)
+    -- Guard: Don't create duplicate frames for the same baseSpellID
+    if FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        return FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    end
+    
     local BuildFrame = function(frameMeta)
         local Frame = FrameTrackerManager.FrameBuilder.Base(frameMeta)
         frameMeta.frame = Frame
@@ -1882,7 +1899,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
     end
     local spellInfo = C_Spell.GetSpellInfo(baseSpellID)
     local dataBaseFrame = {
-        frameName = "SpellStyler_" .. spellInfo.name,
+        frameName = "SpellStyler_" .. spellInfo.name .. "_" .. baseSpellID .. "_" .. trackerType,
         baseSpellID = baseSpellID,
         trackerType = trackerType,
         isVariantFrame = false,
@@ -2196,10 +2213,21 @@ local hasPlayerEnetedWorld = false
 function FrameTrackerManager:TeardownSpecFrames()
     for _, tType in ipairs({"buffs", "essential", "utility", "spells"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
-            for _, frame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+            for donk, frame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 if frame and frame.Hide then
                     frame:Hide()
                     frame:ClearAllPoints()
+                    frame:SetSize(0, 0)
+                    frame:SetParent(nil)
+                    
+                    -- Also hide variant frame if it exists
+                    if frame.variantFrame then
+                        frame.variantFrame:Hide()
+                        frame.variantFrame:ClearAllPoints()
+                        frame.variantFrame:SetSize(0, 0)
+                        frame.variantFrame:SetParent(nil)
+                    end
+                    FrameTrackerManager.SpellStyler_frames[tType][donk] = 'cleared  ' .. donk
                 end
             end
         end
@@ -2408,6 +2436,7 @@ end
 function FrameTrackerManager:GetFrameStateAlphas(frame)
     local trackerType = frame.meta.trackerType
     local activeSpellID = frame.meta.activeSpellID
+    local config = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
     
     -- Handle mock cooldown override
     if frame.meta.mockCooldownActive then
@@ -2418,6 +2447,34 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     if trackerType == 'buffs' then
         local hasAura = frame.meta.currentAuraInstanceID and frame.meta.currentAuraInstanceID ~= 0
         return hasAura and 0 or 1, hasAura and 1 or 0, hasAura and 1 or 0, hasAura and 0 or 1
+    end
+    
+    -- Items: build duration object on the fly and check cooldown state
+    if config and config.isItem then
+        local durationObj = nil
+        pcall(function()
+            local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(frame.meta.baseSpellID)
+            durationObj = C_DurationUtil.CreateDuration()
+            durationObj:SetTimeFromStart(startTimeSeconds, durationSeconds)
+        end)
+        
+        local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
+        
+        if durationObj and not durationObj:IsZero() then
+            -- Item is on cooldown
+            whenAvailableToCast = 0
+            whenOnCooldown = 1
+            progressBar = 1--durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve(true)) or 1
+            fullBar = 0
+        else
+            -- Item is available
+            whenAvailableToCast = 1
+            whenOnCooldown = 0
+            progressBar = 0
+            fullBar = 1
+        end
+        
+        return whenAvailableToCast, whenOnCooldown, progressBar, fullBar
     end
     
     -- Spells: use secret-safe charge count or duration curves
@@ -2809,19 +2866,33 @@ FrameTrackerManager.ApplyVisibility = {
                 context.customFrame.cooldown:SetAlpha(1)    
             else
                 --TODO: See if this actually works - just set display to true and see if it ignores the GCD swipe
-                local durationEqualToGCD    = SpellStyler.Util:IsValidCooldownCurve(true)
-                local maxSpellCharges = 1
-                local spellChargeInfo = C_Spell.GetSpellCharges(context.customFrame.meta.activeSpellID)
-                if spellChargeInfo and spellChargeInfo.maxCharges then
-                    maxSpellCharges = spellChargeInfo.maxCharges
-                end
+                local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
                 local durationObject
-                if maxSpellCharges > 1 then
-                    durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID, true)
+                
+                -- Check if this is an item tracker
+                local config = State:GetSpecificTrackerValue(context.customFrame.meta.baseSpellID, context.customFrame.meta.trackerType)
+                if config and config.isItem then
+                    -- Item: create duration object using C_DurationUtil
+                    local success, error = pcall(function()
+                        local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(context.customFrame.meta.baseSpellID)
+                        durationObject = C_DurationUtil.CreateDuration()
+                        durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
+                    end)
                 else
-                    durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
+                    -- Spell tracker: get duration from spell API
+                    local maxSpellCharges = 1
+                    local spellChargeInfo = C_Spell.GetSpellCharges(context.customFrame.meta.activeSpellID)
+                    if spellChargeInfo and spellChargeInfo.maxCharges then
+                        maxSpellCharges = spellChargeInfo.maxCharges
+                    end
+                    if maxSpellCharges > 1 then
+                        durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID, true)
+                    else
+                        durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
+                    end
                 end
-                local alpha =  durationObject:EvaluateRemainingDuration(durationEqualToGCD)            
+                
+                local alpha = durationObject and durationObject:EvaluateRemainingDuration(durationEqualToGCD) or 0
                 context.customFrame.cooldown:SetAlpha(alpha)
             end
         end
@@ -2909,6 +2980,13 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
                     end
                 end)
             end
+        elseif data.config and data.config.isItem then
+            -- Items: create duration object using C_DurationUtil and C_Item.GetItemCooldown
+            s, e = pcall(function()
+                local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(data.baseSpellID)
+                durationObject = C_DurationUtil.CreateDuration()
+                durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
+            end)
         else
             s, e = pcall(function()
                 -- try to get spell charge duration first

@@ -1209,8 +1209,9 @@ end
 -- Renders status bar display settings for charge/count visualization.
 -- ============================================================================
 
-function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
-    -- Build section inputs array for bar display
+-- Helper function to build charge bar input definitions
+-- Used by both single-icon and multi-icon renderers
+local function GetChargeBarInputDefinitions(config)
     local sectionInputs = {
         {
             type = "dropdown",
@@ -1257,6 +1258,13 @@ function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uni
         getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.maxValue") or 5 end,
         setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.maxValue", value) end,
     })
+    
+    return sectionInputs
+end
+
+function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
+    -- Build section inputs array for bar display
+    local sectionInputs = GetChargeBarInputDefinitions(config)
     
     -- Now render all the inputs using the existing rendering logic
     local currentAnchor = lastControl
@@ -1792,11 +1800,16 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     -- Render main header with icon name
     local trackedValue = SpellStyler.State:GetSpecificTrackerValue(uniqueID, trackerType)
     if trackedValue then
-        -- Derive the current spell name from the live frame's activeSpellID when available
-        local trackerFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
-        local activeSpellID = (trackerFrame and trackerFrame.meta and trackerFrame.meta.activeSpellID) or trackedValue.overrideSpellID or uniqueID
-        local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
-        local displayName = (spellInfo and spellInfo.name) or trackedValue.name or tostring(uniqueID)
+        -- Derive the current name: for items use stored name, for spells use spell info
+        local displayName
+        if trackedValue.isItem then
+            displayName = trackedValue.name or tostring(uniqueID)
+        else
+            local trackerFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
+            local activeSpellID = (trackerFrame and trackerFrame.meta and trackerFrame.meta.activeSpellID) or trackedValue.overrideSpellID or uniqueID
+            local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
+            displayName = (spellInfo and spellInfo.name) or trackedValue.name or tostring(uniqueID)
+        end
         local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         header:SetPoint("TOPLEFT", 0, -10)
         header:SetText(displayName .. " - (" .. trackerType .. ")")
@@ -1840,6 +1853,34 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 				if SpellStyler.FrameTrackerManager then
 					SpellStyler.FrameTrackerManager:DestroyTrackerFrame(uniqueID, trackerType)
 				end
+				
+				-- Clear the selected icon state
+				_lastSelectedIcon = nil
+				
+				-- Clear the settings panel and show default message
+				if settingsScrollChild then
+					-- Clear all controls
+					for _, child in ipairs({settingsScrollChild:GetChildren()}) do
+						child:Hide()
+						child:SetParent(nil)
+					end
+					for _, region in ipairs({settingsScrollChild:GetRegions()}) do
+						if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
+							region:Hide()
+							if region:IsObjectType("FontString") then
+								region:SetText("")
+							end
+						end
+					end
+					
+					-- Show the default "Select an icon to configure" message
+					local noSelectionLabel = settingsScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+					noSelectionLabel:SetPoint("CENTER", settingsScrollChild, "CENTER", 0, 0)
+					noSelectionLabel:SetText("Select an icon to configure")
+					noSelectionLabel:SetTextColor(0.5, 0.5, 0.5)
+					settingsScrollChild.currentControlsContainer = noSelectionLabel
+				end
+				
 				-- Re-render the icon list so the entry disappears
 				if SpellStyler.settingsContentFrame then
 					IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
@@ -2379,17 +2420,69 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(options)
 
             if isExpanded then
                 for _, controlDef in ipairs(sectionContent) do
-                    -- Skip "Mock Cooldown" button and custom renders (not meaningful in multi mode)
-                    if controlDef.type == "button" or controlDef.type == "customRender" then
-                        -- Show a message for customRender sections explaining they're not available in multi-mode
-                        if controlDef.type == "customRender" then
+                    -- Handle custom renders
+                    if controlDef.type == "customRender" then
+                        -- Check if this is the Charge Bar section (by checking the header text)
+                        if inputDef.text == "Count/Charge Bar" then
+                            -- Build the charge bar inputs using the helper function
+                            local chargeBarInputs = GetChargeBarInputDefinitions(config)
+                            
+                            -- Render each input using the multi-icon control rendering logic
+                            for _, chargeInputDef in ipairs(chargeBarInputs) do
+                                chargeInputDef.uniqueID = nil  -- no single uniqueID in multi mode
+                                
+                                local controlFrame = nil
+                                if chargeInputDef.type == "dropdown" then
+                                    local row = IconSettingsRenderer:CreateDropdown(parent, chargeInputDef, lastControl)
+                                    controlFrame = row
+                                elseif chargeInputDef.type == "textinput" then
+                                    local row = CreateTextInput(parent, chargeInputDef, lastControl)
+                                    controlFrame = row
+                                elseif chargeInputDef.type == "colorpicker" then
+                                    local row = CreateColorPicker(parent, chargeInputDef, lastControl)
+                                    controlFrame = row
+                                elseif chargeInputDef.type == "checkbox" then
+                                    local checkbox = CreateCheckbox(parent, chargeInputDef, lastControl)
+                                    controlFrame = checkbox
+                                elseif chargeInputDef.type == "positionbuttons" then
+                                    -- Set up getX/setX/getY/setY methods based on pathPrefix
+                                    local pathPrefix = chargeInputDef.pathPrefix or (chargeInputDef.isBarPosition and "statusBar" or "position")
+                                    local isBarPosition = chargeInputDef.isBarPosition or false
+                                    chargeInputDef.getX = function(self) return _multiValues[pathPrefix .. ".x"] or 0 end
+                                    chargeInputDef.getY = function(self) return _multiValues[pathPrefix .. ".y"] or 0 end
+                                    chargeInputDef.setX = function(self, value)
+                                        _multiValues[pathPrefix .. ".x"] = value
+                                        for _, iconEntry in pairs(_multiSelectedIconIDs) do
+                                            SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".x", value)
+                                        end
+                                    end
+                                    chargeInputDef.setY = function(self, value)
+                                        _multiValues[pathPrefix .. ".y"] = value
+                                        for _, iconEntry in pairs(_multiSelectedIconIDs) do
+                                            SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".y", value)
+                                        end
+                                    end
+                                    local row = CreatePositionInputs(parent, chargeInputDef, lastControl, isBarPosition)
+                                    controlFrame = row
+                                elseif chargeInputDef.type == "label" then
+                                    local label = CreateLabel(parent, chargeInputDef, lastControl)
+                                    controlFrame = label
+                                end
+                                
+                                if controlFrame then
+                                    lastControl = controlFrame
+                                end
+                            end
+                        else
+                            -- Other custom renders are not available in multi-mode
                             local msg = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                             msg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -10)
                             msg:SetText("|cFF888888This section is not available in multi-icon mode|r")
                             msg:SetTextColor(0.5, 0.5, 0.5)
                             lastControl = msg
                         end
-                        -- intentionally skipped
+                    elseif controlDef.type == "button" then
+                        -- Skip buttons (like Mock Cooldown) - not meaningful in multi mode
                     else
                         controlDef.uniqueID = nil  -- no single uniqueID in multi mode
 
