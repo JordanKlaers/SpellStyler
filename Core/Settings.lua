@@ -386,8 +386,199 @@ local function ShowBorderDemo()
             end
         end)
 
+        -- Font Settings
+        local fontLabel = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fontLabel:SetPoint("TOPLEFT", showAllInSettingsCB, "BOTTOMLEFT", 0, -16)
+        fontLabel:SetText("Global Font:")
+        fontLabel:SetTextColor(0.9, 0.9, 0.9)
+
+        local fontDropdown = CreateFrame("Frame", nil, utilityContentFrame, "UIDropDownMenuTemplate")
+        fontDropdown:SetPoint("LEFT", fontLabel, "RIGHT", -10, -2)
+        UIDropDownMenu_SetWidth(fontDropdown, 180)
+
+        local function RefreshFontDropdown()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                local currentFont = gs and gs.fontSettings and gs.fontSettings.globalFont or "Friz Quadrata TT"
+                UIDropDownMenu_SetText(fontDropdown, currentFont)
+            end
+        end
+
+        UIDropDownMenu_Initialize(fontDropdown, function(self, level)
+            local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+            if not LSM then return end
+            
+            local fonts = LSM:List("font")
+            local gs = State:GetGlobalSettings()
+            local currentFont = gs and gs.fontSettings and gs.fontSettings.globalFont or "Friz Quadrata TT"
+            
+            for _, fontName in ipairs(fonts) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = fontName
+                info.value = fontName
+                info.func = function()
+                    if State.GetGlobalSettings then
+                        local gs = State:GetGlobalSettings()
+                        if gs and gs.fontSettings then
+                            gs.fontSettings.globalFont = fontName
+                            UIDropDownMenu_SetText(fontDropdown, fontName)
+                            -- Force refresh all frames
+                            if SpellStyler.FrameTrackerManager then
+                                for trackerType, frames in pairs(SpellStyler.FrameTrackerManager.SpellStyler_frames) do
+                                    for baseSpellID, _ in pairs(frames) do
+                                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                info.checked = (fontName == currentFont)
+                
+                -- Apply font preview to each option
+                local fontPath = LSM:Fetch("font", fontName)
+                if fontPath then
+                    local customFont = CreateFont("SpellStyler_GlobalFontPreview_" .. fontName:gsub("[^%w]", ""))
+                    customFont:SetFont(fontPath, 12, "OUTLINE")
+                    info.fontObject = customFont
+                end
+                
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+
+        local overrideFontCB = CreateFrame("CheckButton", nil, utilityContentFrame, "UICheckButtonTemplate")
+        overrideFontCB:SetSize(26, 26)
+        overrideFontCB:SetPoint("TOPLEFT", fontLabel, "BOTTOMLEFT", 0, -6)
+        overrideFontCB:SetFrameLevel(utilityContentFrame:GetFrameLevel() + 1)
+
+        local overrideFontLbl = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        overrideFontLbl:SetPoint("LEFT", overrideFontCB, "RIGHT", 4, 0)
+        overrideFontLbl:SetText("Override all font selections with global font")
+        overrideFontLbl:SetTextColor(0.9, 0.9, 0.9)
+
+        local function RefreshOverrideFontCheckbox()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                overrideFontCB:SetChecked(
+                    gs and gs.fontSettings and gs.fontSettings.overrideAllFonts or false
+                )
+            end
+        end
+
+        overrideFontCB:SetScript("OnClick", function(self)
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                if gs and gs.fontSettings then
+                    gs.fontSettings.overrideAllFonts = self:GetChecked()
+                    -- Force refresh all frames
+                    if SpellStyler.FrameTrackerManager then
+                        for trackerType, frames in pairs(SpellStyler.FrameTrackerManager.SpellStyler_frames) do
+                            for baseSpellID, _ in pairs(frames) do
+                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        -- Font Flags Checkboxes
+        local fontFlagsLabel = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fontFlagsLabel:SetPoint("TOPLEFT", overrideFontCB, "BOTTOMLEFT", 0, -6)
+        fontFlagsLabel:SetText("Global Font Flags:")
+        fontFlagsLabel:SetTextColor(0.9, 0.9, 0.9)
+        
+        -- Helper to parse flags string into table
+        local function ParseFlags(flagsStr)
+            if not flagsStr or flagsStr == "" then
+                return {}
+            end
+            local flags = {}
+            for flag in string.gmatch(flagsStr, "[^,]+") do
+                local trimmed = flag:match("^%s*(.-)%s*$")  -- trim whitespace
+                flags[trimmed] = true
+            end
+            return flags
+        end
+        
+        -- Helper to build flags string from checkboxes
+        local function BuildFlagsFromCheckboxes(outlineCB, thickOutlineCB, monochromeCB)
+            local parts = {}
+            if outlineCB:GetChecked() then table.insert(parts, "OUTLINE") end
+            if thickOutlineCB:GetChecked() then table.insert(parts, "THICKOUTLINE") end
+            if monochromeCB:GetChecked() then table.insert(parts, "MONOCHROME") end
+            if #parts == 0 then return "" end
+            return table.concat(parts, ",")
+        end
+        
+        local outlineFlagCB = CreateFrame("CheckButton", nil, utilityContentFrame, "UICheckButtonTemplate")
+        outlineFlagCB:SetSize(26, 26)
+        outlineFlagCB:SetPoint("TOPLEFT", fontFlagsLabel, "BOTTOMLEFT", 20, -3)
+        outlineFlagCB:SetFrameLevel(utilityContentFrame:GetFrameLevel() + 1)
+        
+        local outlineFlagLbl = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        outlineFlagLbl:SetPoint("LEFT", outlineFlagCB, "RIGHT", 4, 0)
+        outlineFlagLbl:SetText("Outline")
+        outlineFlagLbl:SetTextColor(0.7, 0.7, 0.7)
+        
+        local thickOutlineFlagCB = CreateFrame("CheckButton", nil, utilityContentFrame, "UICheckButtonTemplate")
+        thickOutlineFlagCB:SetSize(26, 26)
+        thickOutlineFlagCB:SetPoint("TOPLEFT", outlineFlagCB, "BOTTOMLEFT", 0, -2)
+        thickOutlineFlagCB:SetFrameLevel(utilityContentFrame:GetFrameLevel() + 1)
+        
+        local thickOutlineFlagLbl = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        thickOutlineFlagLbl:SetPoint("LEFT", thickOutlineFlagCB, "RIGHT", 4, 0)
+        thickOutlineFlagLbl:SetText("Thick Outline")
+        thickOutlineFlagLbl:SetTextColor(0.7, 0.7, 0.7)
+        
+        local monochromeFlagCB = CreateFrame("CheckButton", nil, utilityContentFrame, "UICheckButtonTemplate")
+        monochromeFlagCB:SetSize(26, 26)
+        monochromeFlagCB:SetPoint("TOPLEFT", thickOutlineFlagCB, "BOTTOMLEFT", 0, -2)
+        monochromeFlagCB:SetFrameLevel(utilityContentFrame:GetFrameLevel() + 1)
+        
+        local monochromeFlagLbl = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        monochromeFlagLbl:SetPoint("LEFT", monochromeFlagCB, "RIGHT", 4, 0)
+        monochromeFlagLbl:SetText("Monochrome")
+        monochromeFlagLbl:SetTextColor(0.7, 0.7, 0.7)
+        
+        local function RefreshFontFlagsCheckboxes()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                local currentFlags = gs and gs.fontSettings and gs.fontSettings.globalFontFlags or "OUTLINE"
+                local flagsTable = ParseFlags(currentFlags)
+                outlineFlagCB:SetChecked(flagsTable.OUTLINE == true)
+                thickOutlineFlagCB:SetChecked(flagsTable.THICKOUTLINE == true)
+                monochromeFlagCB:SetChecked(flagsTable.MONOCHROME == true)
+            end
+        end
+        
+        local function OnFontFlagChanged()
+            if State.GetGlobalSettings then
+                local gs = State:GetGlobalSettings()
+                if gs and gs.fontSettings then
+                    gs.fontSettings.globalFontFlags = BuildFlagsFromCheckboxes(outlineFlagCB, thickOutlineFlagCB, monochromeFlagCB)
+                    -- Force refresh all frames
+                    if SpellStyler.FrameTrackerManager then
+                        for trackerType, frames in pairs(SpellStyler.FrameTrackerManager.SpellStyler_frames) do
+                            for baseSpellID, _ in pairs(frames) do
+                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        outlineFlagCB:SetScript("OnClick", OnFontFlagChanged)
+        thickOutlineFlagCB:SetScript("OnClick", OnFontFlagChanged)
+        monochromeFlagCB:SetScript("OnClick", OnFontFlagChanged)
+
         utilityContentFrame:HookScript("OnShow", RefreshGlobalVisCheckbox)
         utilityContentFrame:HookScript("OnShow", RefreshShowAllInSettingsCheckbox)
+        utilityContentFrame:HookScript("OnShow", RefreshFontDropdown)
+        utilityContentFrame:HookScript("OnShow", RefreshOverrideFontCheckbox)
+        utilityContentFrame:HookScript("OnShow", RefreshFontFlagsCheckboxes)
 
         SpellStyler.HelpContentRenderer:RenderHelpView(helpContentFrame)
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)

@@ -99,6 +99,7 @@ local function AddNewTrackerValueConfig(data)
             height = 48,
             opacity = 1,
             hideDefaultSweep = false,
+            hideCooldownBling = false,
             isSpellOffGCD = false,
             insufficientPower = false,
             insufficientPowerIconColor = {
@@ -108,7 +109,8 @@ local function AddNewTrackerValueConfig(data)
                 a = 1,
             },
             frameStrataLevel = "MEDIUM", -- BACKGROUND LOW MEDIUM HIGH DIALOG FULLSCREEN FULLSCREEN_DIALOG TOOLTIP
-            frameStrataValue = 100
+            frameStrataValue = 100,
+            zoom = 0
         },
         chargeBasedDisplay = {
             enabled = false,
@@ -133,6 +135,8 @@ local function AddNewTrackerValueConfig(data)
             size = 10,
             x = 0,
             y = 0,
+            font = "default",  -- Font selection: "default" = use global, or specific font name
+            fontFlags = "default",  -- Font flags: "default" = use global, or flags string like "OUTLINE,MONOCHROME"
             color = {
                 r = 1,
                 g = 1,
@@ -143,6 +147,8 @@ local function AddNewTrackerValueConfig(data)
         cooldownText = {
             display = true,
             size = 14,
+            font = "default",  -- Font selection: "default" = use global, or specific font name
+            fontFlags = "default",  -- Font flags: "default" = use global, or flags string like "OUTLINE,MONOCHROME"
             color = {
                 r = 1,
                 g = 1,
@@ -155,6 +161,8 @@ local function AddNewTrackerValueConfig(data)
         countText = {
             display = true,
             size = 12,
+            font = "default",  -- Font selection: "default" = use global, or specific font name
+            fontFlags = "default",  -- Font flags: "default" = use global, or flags string like "OUTLINE,MONOCHROME"
             color = {
                 r = 1,
                 g = 1,
@@ -276,11 +284,21 @@ function State:GetDataBase_V2()
     specDB.globalSettings = specDB.globalSettings or {
         visibilitySettings = {
             hideWhenOutOfCombat = false,
+        },
+        fontSettings = {
+            globalFont = "Friz Quadrata TT",  -- Default WoW font
+            globalFontFlags = "OUTLINE",  -- Default font flags
+            overrideAllFonts = false,
         }
     }
     -- Ensure nested tables always exist for older saved data
     specDB.globalSettings.visibilitySettings = specDB.globalSettings.visibilitySettings or {
         hideWhenOutOfCombat = false,
+    }
+    specDB.globalSettings.fontSettings = specDB.globalSettings.fontSettings or {
+        globalFont = "Friz Quadrata TT",
+        globalFontFlags = "OUTLINE",
+        overrideAllFonts = false,
     }
 
     return specDB
@@ -369,7 +387,6 @@ function State:MigrateDatabase()
     if not SpellStyler_CharDB or not SpellStyler_CharDB.classSpecializations then return end
 
     local currentSpecID = State:GetCurrentSpecID()
-
     for specID, specDB in pairs(SpellStyler_CharDB.classSpecializations) do
         -- Ensure destination tables exist
         specDB.spells    = specDB.spells    or {}
@@ -922,8 +939,88 @@ function State:GetGlobalSettings()
     return db.globalSettings
 end
 
---- Applies the globalSettings.visibilitySettings to all tracker frames.
---- Called on PLAYER_REGEN_ENABLED / PLAYER_REGEN_DISABLED.
+--- Resolves which font path to use based on priority:
+--- 1. Global override (if overrideAllFonts is enabled)
+--- 2. Global default (if specificFont is nil or "default")
+--- 3. Specific font selection
+--- 4. Fallback: current font if available, otherwise Friz Quadrata
+--- @param specificFont? string The font name from tracker config (cooldownText.font, countText.font, or customLabel.font)
+--- @param fallbackFontPath? string Optional fallback path from frame:GetFont() to preserve existing font
+--- @return string fontPath The resolved font file path
+function State:ResolveFontPath(specificFont, fallbackFontPath)
+    local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+    
+    -- Get global settings
+    local gs = State:GetGlobalSettings()
+    local fontSettings = gs and gs.fontSettings
+    
+    -- Priority 1: Global override is enabled
+    if fontSettings and fontSettings.overrideAllFonts and fontSettings.globalFont then
+        if LSM and LSM:IsValid("font", fontSettings.globalFont) then
+            return LSM:Fetch("font", fontSettings.globalFont)
+        end
+    end
+    
+    -- Priority 2: Specific font is "default" or nil, use global default
+    if not specificFont or specificFont == "default" then
+        if fontSettings and fontSettings.globalFont and LSM and LSM:IsValid("font", fontSettings.globalFont) then
+            return LSM:Fetch("font", fontSettings.globalFont)
+        end
+    end
+    
+    -- Priority 3: Use specific font selection
+    if specificFont and specificFont ~= "default" then
+        if LSM and LSM:IsValid("font", specificFont) then
+            return LSM:Fetch("font", specificFont)
+        end
+    end
+    
+    -- Priority 4: Fallback to current font or default WoW font
+    if fallbackFontPath then
+        return fallbackFontPath
+    end
+    -- Ultimate fallback: Friz Quadrata (default WoW font)
+    return "Fonts\\FRIZQT__.TTF"
+end
+
+--- Resolves which font flags to use based on priority:
+--- 1. Global override (if overrideAllFonts is enabled)
+--- 2. Global default (if specificFlags is nil or "default")
+--- 3. Specific flags selection
+--- 4. Fallback: current flags if available, otherwise "OUTLINE"
+--- @param specificFlags? string The font flags from tracker config (cooldownText.fontFlags, countText.fontFlags, or customLabel.fontFlags)
+--- @param fallbackFlags? string Optional fallback flags from frame:GetFont() to preserve existing flags
+--- @return string fontFlags The resolved font flags string
+function State:ResolveFontFlags(specificFlags, fallbackFlags)
+    -- Get global settings
+    local gs = State:GetGlobalSettings()
+    local fontSettings = gs and gs.fontSettings
+    
+    -- Priority 1: Global override is enabled
+    if fontSettings and fontSettings.overrideAllFonts and fontSettings.globalFontFlags then
+        return fontSettings.globalFontFlags
+    end
+    
+    -- Priority 2: Specific flags is "default" or nil, use global default
+    if not specificFlags or specificFlags == "default" then
+        if fontSettings and fontSettings.globalFontFlags then
+            return fontSettings.globalFontFlags
+        end
+    end
+    
+    -- Priority 3: Use specific flags selection
+    if specificFlags and specificFlags ~= "default" then
+        return specificFlags
+    end
+    
+    -- Priority 4: Fallback to current flags or default
+    if fallbackFlags and fallbackFlags ~= "" then
+        return fallbackFlags
+    end
+    
+    -- Ultimate fallback: OUTLINE (standard WoW default)
+    return "OUTLINE"
+end
 --- Uses SetAlpha so cooldown callbacks keep firing regardless of visibility.
 function State:ApplyGlobalVisibility()
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager

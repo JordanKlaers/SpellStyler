@@ -1202,9 +1202,9 @@ FrameTrackerManager.FrameBuilder = {
         data.frame.count:SetDrawLayer("OVERLAY", 7)
         if countCfg and countCfg.size then
             local _fontPath, _, _fontFlags = data.frame.count:GetFont()
-            if _fontPath then
-                data.frame.count:SetFont(_fontPath, countCfg.size, _fontFlags or "OUTLINE")
-            end
+            local fontPath = State:ResolveFontPath(countCfg.font, _fontPath)
+            local fontFlags = State:ResolveFontFlags(countCfg.fontFlags, _fontFlags)
+            data.frame.count:SetFont(fontPath, countCfg.size, fontFlags or "OUTLINE")
         end
         if countCfg and countCfg.color then
             data.frame.count:SetTextColor(
@@ -1261,7 +1261,9 @@ FrameTrackerManager.FrameBuilder = {
         -- Apply saved customLabel settings at creation
         local labelCfg = data.trackerConfig.customLabel
         local labelSize = (labelCfg and labelCfg.size) or 14
-        data.frame.customLabel:SetFont("Fonts\\FRIZQT__.TTF", labelSize, "OUTLINE")
+        local fontPath = State:ResolveFontPath(labelCfg and labelCfg.font, nil)
+        local fontFlags = State:ResolveFontFlags(labelCfg and labelCfg.fontFlags, nil)
+        data.frame.customLabel:SetFont(fontPath, labelSize, fontFlags or "OUTLINE")
         local labelX = (labelCfg and labelCfg.x) or 0
         local labelY = (labelCfg and labelCfg.y) or 0
         data.frame.customLabel:SetPoint("CENTER", data.frame, "CENTER", labelX, labelY)
@@ -1314,27 +1316,11 @@ FrameTrackerManager.FrameBuilder = {
 FrameTrackerManager.FrameUpdater = {
     Base = function(data)
         -- Apply frame-level properties (opacity, strata, position)
-        data.frame:SetAlpha(data.opacity)
-        data.frame:SetFrameStrata(data.frameStrata.level)
-        data.frame:SetFrameLevel(data.frameStrata.value)
-        
-        
-        -- Frame Anchoring is controlled in SetBarPropertiesAndFrameAnchor, where the conditional charge bar system determines where the frame should be anchored
-
-        -- local isVariantFrame = data.frame.meta.isVariantFrame
-        -- if data.position.useChargeAnchor then                    -- This flag needs to be updated, because its just based on the existance of the anchor (which in the current system, will always exist)
-        --     data.frame:ClearAllPoints()
-        --     data.frame:SetPoint("CENTER", data.frame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0 + (isVariantFrame and 100  or 0), 0)
-        -- elseif data.position.anchorPoint and not data.frame._inContainer then
-        --     data.frame:ClearAllPoints()
-        --     data.frame:SetPoint(
-        --         data.position.anchorPoint,
-        --         UIParent,
-        --         data.position.relativeAnchorPoint,
-        --         data.position.x + (isVariantFrame and 100  or 0),
-        --         data.position.y
-        --     )
-        -- end
+        pcall(function()
+            data.frame:SetAlpha(data.opacity)
+            data.frame:SetFrameStrata(data.frameStrata.level)
+            data.frame:SetFrameLevel(data.frameStrata.value)
+        end)
     end,
     Icon = function(data)
         if data.icon.displayState == 'never' then
@@ -1362,34 +1348,61 @@ FrameTrackerManager.FrameUpdater = {
         -- Re-attach the glow animation child with the latest glowNotification config
         ApplyGlowNotificationSetup(data.frame, data.trackerConfig)
     end,
-    CooldownText = function(data)
-        if data.cooldownText.display == false or not data.cooldownText then return end
+    Cooldown = function(data)
+        -- Apply icon desaturation setting
+        if data.frame.icon and data.cooldownText.desaturated ~= nil then
+            pcall(function()
+                data.frame.icon:SetDesaturated(data.cooldownText.desaturated)
+            end)
+        end
         
-        -- Find the cooldown text FontString
+        -- Apply cooldown swipe and bling settings
+        if data.cooldownText.hideDefaultSweep ~= nil then
+            pcall(function()
+                data.frame.cooldown:SetDrawSwipe(not data.cooldownText.hideDefaultSweep)
+            end)
+        end
+        
+        
+        if data.cooldownText.hideCooldownBling == true then
+            pcall(function()
+                data.frame.cooldown:SetEdgeScale(0)
+            end)
+        end
+        
+        -- Apply cooldown text positioning and font
         local cdText = data.frame.cooldown.Text or data.frame.cooldown.text
-        if not cdText then
-            for i = 1, data.frame.cooldown:GetNumRegions() do
-                local region = select(i, data.frame.cooldown:GetRegions())
-                if region and region:GetObjectType() == "FontString" then
-                    cdText = region
-                    break
+        if data.cooldownText.display == false then
+            if cdText then cdText:SetText("") end
+        else
+            -- Find the cooldown text FontString
+            if not cdText then
+                for i = 1, data.frame.cooldown:GetNumRegions() do
+                    local region = select(i, data.frame.cooldown:GetRegions())
+                    if region and region:GetObjectType() == "FontString" then
+                        cdText = region
+                        break
+                    end
                 end
+            end
+            
+            if cdText then
+                pcall(function()
+                    -- Apply font size from pre-computed value
+                    local fontPath, _, fontFlags = cdText:GetFont()
+                    if data.cooldownText.fontSize then
+                        local resolvedFontPath = State:ResolveFontPath(data.cooldownText.font, fontPath)
+                        local resolvedFontFlags = State:ResolveFontFlags(data.cooldownText.fontFlags, fontFlags)
+                        cdText:SetFont(resolvedFontPath, data.cooldownText.fontSize, resolvedFontFlags or "OUTLINE")
+                    end
+                    
+                    -- Apply position from pre-computed values
+                    cdText:ClearAllPoints()
+                    cdText:SetPoint("CENTER", data.frame.cooldown, "CENTER", data.cooldownText.x, data.cooldownText.y)
+                end)
             end
         end
         
-        if cdText then
-            pcall(function()
-                -- Apply font size from pre-computed value
-                local fontPath, _, fontFlags = cdText:GetFont()
-                if fontPath and data.cooldownText.fontSize then
-                    cdText:SetFont(fontPath, data.cooldownText.fontSize, fontFlags or "OUTLINE")
-                end
-                
-                -- Apply position from pre-computed values
-                cdText:ClearAllPoints()
-                cdText:SetPoint("CENTER", data.frame.cooldown, "CENTER", data.cooldownText.x, data.cooldownText.y)
-            end)
-        end
     end,
     
     DisplayCountTicker = function(data)
@@ -1434,7 +1447,9 @@ FrameTrackerManager.FrameUpdater = {
             
             -- Apply font size from pre-computed value
             if data.customLabel.fontSize then
-                data.frame.customLabel:SetFont("Fonts\\FRIZQT__.TTF", data.customLabel.fontSize, "OUTLINE")
+                local fontPath = State:ResolveFontPath(data.customLabel.font, nil)
+                local fontFlags = State:ResolveFontFlags(data.customLabel.fontFlags, nil)
+                data.frame.customLabel:SetFont(fontPath, data.customLabel.fontSize, fontFlags or "OUTLINE")
             end
             
             -- Apply color from pre-computed value
@@ -1730,7 +1745,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
                 local custom = override or (trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath) or nil
                 return custom or frame.updatedIconID or trackerConfig.defaultIconTexturePath
             end)(),
-            zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom / 100) or 0,
+            zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom) or 0,
             width = getOverride("iconSettings.width") or trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48,
             height = getOverride("iconSettings.height") or trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48,
             color = getOverride("iconColor") or trackerConfig.iconColor or {r=1, g=1, b=1, a=1}
@@ -1751,8 +1766,13 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
         cooldownText = {
             display = trackerConfig.cooldownText.display,
             fontSize = getOverride("cooldownText.size") or trackerConfig.cooldownText.size,
+            font = trackerConfig.cooldownText.font,
+            fontFlags = trackerConfig.cooldownText.fontFlags,
             x = getOverride("cooldownText.x") or trackerConfig.cooldownText.x or 0,
-            y = getOverride("cooldownText.y") or trackerConfig.cooldownText.y or 0
+            y = getOverride("cooldownText.y") or trackerConfig.cooldownText.y or 0,
+            hideDefaultSweep = trackerConfig.iconSettings.hideDefaultSweep,
+            hideCooldownBling = trackerConfig.iconSettings.hideCooldownBling,
+            desaturated = trackerConfig.iconSettings.desaturated
         },
         
         -- Display count ticker
@@ -1764,6 +1784,8 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             textOverride = getOverride("customLabel.text"),
             text = getOverride("customLabel.text") or trackerConfig.customLabel.text,
             fontSize = getOverride("customLabel.size") or trackerConfig.customLabel.size,
+            font = trackerConfig.customLabel.font,
+            fontFlags = trackerConfig.customLabel.fontFlags,
             color = getOverride("customLabel.color") or trackerConfig.customLabel.color,
             x = getOverride("customLabel.x") or trackerConfig.customLabel.x or 0,
             y = getOverride("customLabel.y") or trackerConfig.customLabel.y or 0
@@ -1841,7 +1863,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
     FrameTrackerManager.FrameUpdater.Base(data)
     FrameTrackerManager.FrameUpdater.Icon(data)
     FrameTrackerManager.FrameUpdater.Alerts(data)
-    FrameTrackerManager.FrameUpdater.CooldownText(data)
+    FrameTrackerManager.FrameUpdater.Cooldown(data)
     FrameTrackerManager.FrameUpdater.DisplayCountTicker(data)
     FrameTrackerManager.FrameUpdater.CustomLabel(data)
     FrameTrackerManager.FrameUpdater.StatusBar(data)
@@ -2528,8 +2550,10 @@ function FrameTrackerManager:renderUpdateChargesText(data)
             local sizeOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.size")
             local fontSize = sizeOverride or countCfg.size
             local fontPath, _, fontFlags = data.customFrame.count:GetFont()
-            if fontPath and fontSize then
-                data.customFrame.count:SetFont(fontPath, fontSize, fontFlags or "OUTLINE")
+            if fontSize then
+                local resolvedFontPath = State:ResolveFontPath(countCfg.font, fontPath)
+                local resolvedFontFlags = State:ResolveFontFlags(countCfg.fontFlags, fontFlags)
+                data.customFrame.count:SetFont(resolvedFontPath, fontSize, resolvedFontFlags or "OUTLINE")
             end
             
             -- Apply color: check override first, then state
@@ -3406,6 +3430,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
     end
     if event == "UNIT_POWER_UPDATE" then
+        -- This handles combo points AND mana ect. which are used by the IsSpellUsable conditional type
         local unitTarget, powerType = ...
         if unitTarget == "player" then
             SpellStyler.ConditionalEngine:EvaluateAll()

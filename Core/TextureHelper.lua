@@ -364,32 +364,12 @@ pcall(function()
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                --loomithars 1232721
-                
-                -- local SQUISH_CURVE_ID = 92181;
-                -- local function GetPostSquishItemLevel(preSquishItemLevel)
-                --     return C_CurveUtil.EvaluateGameCurve(SQUISH_CURVE_ID, preSquishItemLevel);
-                -- end
-                -- local item = 242393--250768
-                
-                -- local spellName, spellID = C_Item.GetItemSpell(item)
-                -- local durationObject = C_Spell.GetSpellCooldownDuration(spellID)
-                -- local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(item)
+                local spell = 107428
+                local cooldown = C_Spell.GetSpellCooldown(spell)
                 -- DevTool:AddData({
-                --     spec = SpellStyler.State:GetCurrentSpecID(),
-                --     SpellStyler_frames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
-                --     item = item,
-                --     durationObject = {
-                --         StartTime = durationObject:GetStartTime(),
-                --         Duration = durationObject:GetTotalDuration()
-                --     },
-                --     spellName = spellName,
-                --     spellID = spellID,
-                --     startTimeSeconds = startTimeSeconds,
-                --     durationSeconds = durationSeconds,
-                --     enableCooldownTimer = enableCooldownTimer
-                    
-                -- }, "state")
+                --     cooldown = cooldown,
+                --     health = UnitHealthPercent("target")
+                -- }, "can I see if its zero")
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool

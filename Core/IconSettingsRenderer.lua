@@ -150,6 +150,15 @@ local function CreateTextInput(parent, config, anchor)
 
     input:SetText(tostring(config:getValue()))
 
+    if config.tooltip then
+        input:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText((config.tooltip), 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        input:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+
     config.min = config.min or (config.allowNegative and -5000 or 0)
     config.max = config.max or 5000
     input:SetScript("OnEnterPressed", function(self)
@@ -200,6 +209,10 @@ function IconSettingsRenderer:CreateDropdown(parent, config, anchor)
     UIDropDownMenu_SetWidth(dropdown, config.width or 140)
 
     UIDropDownMenu_Initialize(dropdown, function(self, level)
+        -- Check if this is a font dropdown by looking for "Font:" label
+        local isFontDropdown = config.label and config.label:match("Font:")
+        local LSM = isFontDropdown and LibStub and LibStub("LibSharedMedia-3.0", true) or nil
+        
         for _, opt in ipairs(config.options) do
             local info = UIDropDownMenu_CreateInfo()
             info.text = opt.label
@@ -209,6 +222,18 @@ function IconSettingsRenderer:CreateDropdown(parent, config, anchor)
                 UIDropDownMenu_SetText(dropdown, opt.label)
             end
             info.checked = (config:getValue() == opt.value)
+            
+            -- Apply font preview if this is a font dropdown and not "Use Global Default"
+            if isFontDropdown and LSM and opt.value ~= "default" then
+                local fontPath = LSM:Fetch("font", opt.value)
+                if fontPath then
+                    -- Create a custom font string for this option
+                    local customFont = CreateFont("SpellStyler_FontPreview_" .. opt.value:gsub("[^%w]", ""))
+                    customFont:SetFont(fontPath, 12, "OUTLINE")
+                    info.fontObject = customFont
+                end
+            end
+            
             UIDropDownMenu_AddButton(info, level)
         end
     end)
@@ -474,6 +499,146 @@ end
 -- ============================================================================
 -- CONFIG INPUT DEFINITIONS
 -- ============================================================================
+
+--- Helper function to get available font options from LibSharedMedia
+--- @return table Array of font option tables for dropdowns
+local function GetFontOptions()
+    local LSM = LibStub and LibStub("LibSharedMedia-3.0", true)
+    local options = {{ label = "Use Global Default", value = "default" }}
+    
+    if LSM then
+        local fonts = LSM:List("font")
+        for _, fontName in ipairs(fonts) do
+            table.insert(options, { label = fontName, value = fontName })
+        end
+    end
+    
+    return options
+end
+
+--- Creates font flags checkboxes (multi-select)
+--- @param parent frame The parent frame
+--- @param config table Config object with getValue/setValue
+--- @param anchor frame The frame to anchor to
+--- @param configPath string The config path (e.g., "cooldownText.fontFlags")
+--- @param uniqueID number The unique tracker ID
+--- @param trackerType string The tracker type
+--- @return frame The last created checkbox frame
+local function CreateFontFlagsCheckboxes(parent, config, anchor, configPath, uniqueID, trackerType)
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetSize(290, 80)
+    container:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -5)
+    
+    local label = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetText("Font Flags:")
+    label:SetTextColor(0.8, 0.8, 0.8)
+    label:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+    
+    -- Helper to parse flags string into table
+    local function ParseFlags(flagsStr)
+        if not flagsStr or flagsStr == "" or flagsStr == "default" then
+            return {}
+        end
+        local flags = {}
+        for flag in string.gmatch(flagsStr, "[^,]+") do
+            local trimmed = flag:match("^%s*(.-)%s*$")  -- trim whitespace
+            flags[trimmed] = true
+        end
+        return flags
+    end
+    
+    -- Helper to build flags string from table
+    local function BuildFlags(flagsTable)
+        local parts = {}
+        if flagsTable.OUTLINE then table.insert(parts, "OUTLINE") end
+        if flagsTable.THICKOUTLINE then table.insert(parts, "THICKOUTLINE") end
+        if flagsTable.MONOCHROME then table.insert(parts, "MONOCHROME") end
+        if #parts == 0 then return "" end
+        return table.concat(parts, ",")
+    end
+    
+    -- Get current flags
+    local currentFlags = config.getValue(uniqueID, configPath) or "default"
+    local flagsTable = ParseFlags(currentFlags)
+    
+    -- Use Global Default checkbox
+    local useGlobalCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
+    useGlobalCB:SetSize(20, 20)
+    useGlobalCB:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -5)
+    useGlobalCB:SetChecked(currentFlags == "default")
+    
+    local useGlobalLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    useGlobalLabel:SetPoint("LEFT", useGlobalCB, "RIGHT", 2, 0)
+    useGlobalLabel:SetText("Use Global Default")
+    useGlobalLabel:SetTextColor(0.7, 0.7, 0.7)
+    
+    -- Flag checkboxes
+    local outlineCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
+    outlineCB:SetSize(20, 20)
+    outlineCB:SetPoint("TOPLEFT", useGlobalCB, "BOTTOMLEFT", 20, -5)
+    outlineCB:SetChecked(flagsTable.OUTLINE == true)
+    outlineCB:SetEnabled(currentFlags ~= "default")
+    
+    local outlineLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    outlineLabel:SetPoint("LEFT", outlineCB, "RIGHT", 2, 0)
+    outlineLabel:SetText("Outline")
+    outlineLabel:SetTextColor(currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7)
+    
+    local thickOutlineCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
+    thickOutlineCB:SetSize(20, 20)
+    thickOutlineCB:SetPoint("TOPLEFT", outlineCB, "BOTTOMLEFT", 0, -3)
+    thickOutlineCB:SetChecked(flagsTable.THICKOUTLINE == true)
+    thickOutlineCB:SetEnabled(currentFlags ~= "default")
+    
+    local thickOutlineLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    thickOutlineLabel:SetPoint("LEFT", thickOutlineCB, "RIGHT", 2, 0)
+    thickOutlineLabel:SetText("Thick Outline")
+    thickOutlineLabel:SetTextColor(currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7)
+    
+    local monochromeCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
+    monochromeCB:SetSize(20, 20)
+    monochromeCB:SetPoint("TOPLEFT", thickOutlineCB, "BOTTOMLEFT", 0, -3)
+    monochromeCB:SetChecked(flagsTable.MONOCHROME == true)
+    monochromeCB:SetEnabled(currentFlags ~= "default")
+    
+    local monochromeLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    monochromeLabel:SetPoint("LEFT", monochromeCB, "RIGHT", 2, 0)
+    monochromeLabel:SetText("Monochrome")
+    monochromeLabel:SetTextColor(currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7)
+    
+    -- Update function
+    local function UpdateFlags()
+        if useGlobalCB:GetChecked() then
+            config.setValue(uniqueID, configPath, "default")
+            outlineCB:SetEnabled(false)
+            thickOutlineCB:SetEnabled(false)
+            monochromeCB:SetEnabled(false)
+            outlineLabel:SetTextColor(0.5, 0.5, 0.5)
+            thickOutlineLabel:SetTextColor(0.5, 0.5, 0.5)
+            monochromeLabel:SetTextColor(0.5, 0.5, 0.5)
+        else
+            local flags = {
+                OUTLINE = outlineCB:GetChecked(),
+                THICKOUTLINE = thickOutlineCB:GetChecked(),
+                MONOCHROME = monochromeCB:GetChecked()
+            }
+            config.setValue(uniqueID, configPath, BuildFlags(flags))
+            outlineCB:SetEnabled(true)
+            thickOutlineCB:SetEnabled(true)
+            monochromeCB:SetEnabled(true)
+            outlineLabel:SetTextColor(0.7, 0.7, 0.7)
+            thickOutlineLabel:SetTextColor(0.7, 0.7, 0.7)
+            monochromeLabel:SetTextColor(0.7, 0.7, 0.7)
+        end
+    end
+    
+    useGlobalCB:SetScript("OnClick", UpdateFlags)
+    outlineCB:SetScript("OnClick", UpdateFlags)
+    thickOutlineCB:SetScript("OnClick", UpdateFlags)
+    monochromeCB:SetScript("OnClick", UpdateFlags)
+    
+    return container
+end
 
 --- Creates status bar configuration inputs that can be reused for different bar types
 --- @param pathPrefix string The config path prefix (e.g., "statusBar" or "visualChargeBar")
@@ -792,7 +957,19 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     tooltip = "Use values between 0 and 100",
                     numeric = true,
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.zoom") or 0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.zoom", value) end,
+                    setValue = function(self, value) 
+                        -- Validate and transform the zoom value
+                        local numValue = tonumber(value)
+                        if not numValue then
+                            numValue = 0
+                        else
+                            -- Clamp to 0-100 range
+                            numValue = math.max(0, math.min(100, numValue))
+                        end
+                        -- Transform: divide by 2, then divide by 100 (equivalent to dividing by 200)
+                        local transformedValue = numValue / 200
+                        config.setValue(self.uniqueID, "iconSettings.zoom", transformedValue)
+                    end,
                 },
                 {
                     type = "textinput",
@@ -837,7 +1014,15 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     label = "Hide default swipe animation",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
+                },
+                {
+                    type = "checkbox",
+                    label = "Hide cooldown bling",
+                    tooltip = "Enabling this will hide the leading gold slice on the cooldown animation swipe",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideCooldownBling") == true end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideCooldownBling", value) end,
                 }
+                
             }
         },
         -- Status bar
@@ -945,6 +1130,19 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.display", value) end,
                 },
                 {
+                    type = "dropdown",
+                    label = "Font:",
+                    options = GetFontOptions(),
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.font") or "default" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.font", value) end,
+                },
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType)
+                        return CreateFontFlagsCheckboxes(container, config, lastControl, "cooldownText.fontFlags", uid, tType)
+                    end
+                },
+                {
                     type = "textinput",
                     label = "Size:",
                     numeric = true,
@@ -1030,6 +1228,19 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     numeric = true,
                     getValue = function(self) return config.getValue(self.uniqueID, "customLabel.size") or 14 end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "customLabel.size", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Font:",
+                    options = GetFontOptions(),
+                    getValue = function(self) return config.getValue(self.uniqueID, "customLabel.font") or "default" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "customLabel.font", value) end,
+                },
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType)
+                        return CreateFontFlagsCheckboxes(container, config, lastControl, "customLabel.fontFlags", uid, tType)
+                    end
                 },
                 {
                     type = "colorpicker",
@@ -1141,6 +1352,19 @@ function IconSettingsRenderer:RenderCountTextSection(container, lastControl, uni
             numeric = true,
             getValue = function(self) return config.getValue(self.uniqueID, "countText.size") or 14 end,
             setValue = function(self, value) config.setValue(self.uniqueID, "countText.size", value) end,
+        },
+        {
+            type = "dropdown",
+            label = "Font:",
+            options = GetFontOptions(),
+            getValue = function(self) return config.getValue(self.uniqueID, "countText.font") or "default" end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "countText.font", value) end,
+        },
+        {
+            type = "customRender",
+            render = function(container, lastControl, uid, tType)
+                return CreateFontFlagsCheckboxes(container, config, lastControl, "countText.fontFlags", uid, tType)
+            end
         },
         {
             type = "colorpicker",

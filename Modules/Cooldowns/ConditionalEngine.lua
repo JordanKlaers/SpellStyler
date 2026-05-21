@@ -151,13 +151,18 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
 					-- Actual state: true if unable to cast due to insufficient power
                     local spellCharges = C_Spell.GetSpellCharges(context.spellID)
                     local canCast
-                    if spellCharges.maxCharges and spellCharges.maxCharges > 1 then
-                        canCast = isUsable and not C_Spell.GetSpellCharges(context.spellID).isActive
+                    local isActiveCooldown
+                    if spellCharges and spellCharges.maxCharges and spellCharges.maxCharges > 1 then
+                        isActiveCooldown = C_Spell.GetSpellCharges(context.spellID).isActive
+                        canCast = isUsable and not isActiveCooldown
                     else
-                        canCast = isUsable and not C_Spell.GetSpellCooldown(context.spellID).isActive
+                        isActiveCooldown = C_Spell.GetSpellCooldown(context.spellID).isActive
+                        canCast = isUsable and not isActiveCooldown
                     end
 					local targetValue = conditionStructure.IsSpellUsable.state
-					if targetValue == 'able' then
+                    if targetValue == 'cooldown' then
+                        table.insert(partiallyResolved, isActiveCooldown)
+					elseif targetValue == 'able' then
 						table.insert(partiallyResolved, canCast)
 					elseif targetValue == 'unable' then
 						table.insert(partiallyResolved, not canCast)

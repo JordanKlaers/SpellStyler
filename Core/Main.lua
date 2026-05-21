@@ -125,7 +125,8 @@ local ADDON_NAME, SpellStyler = ...
 
 -- Make SpellStyler accessible globally
 _G.SpellStyler = SpellStyler
-
+local LSM = LibStub("LibSharedMedia-3.0")
+SpellStyler.LSM = LSM
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("ADDON_LOADED")

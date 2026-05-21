@@ -653,7 +653,8 @@ ConditionalCreator.conditionalTypeRenderers = {
         -- Radio button options
         local options = {
             { value = "able", label = "Able to cast", tooltip = nil },
-            { value = "unable", label = "Unable to cast", tooltip = "This could be true due to a variety of reasons" },
+            { value = "unable", label = "Unable to cast", tooltip = "This could be true due to a variety of reasons, such as on cooldown, out of rage, no power ect." },
+            { value = "cooldown", label = "Spell On Cooldown", tooltip = "Slightly different than 'Unable to cast'. This is when the spell is activly on cooldown" },
             { value = "insufficientPower", label = "Unable to cast due to insufficient power (mana, rage, energy, etc.)", tooltip = nil },
         }
         

@@ -208,3 +208,6 @@ Version 1.4.0
 
 Version 1.5.0
 	- Adds ITEMS to tracking
+	- Adds font customization
+	- Adds an explicit "on cooldown" into the conditional for "IsSpellUsable"
+	- Adds ability to hide the trailing bilng on cooldown swipes
