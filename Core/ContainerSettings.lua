@@ -204,6 +204,16 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
                 local cfg = SpellStyler.Containers:GetActiveConfig()
                 if cfg then
                     cfg.orientation = btn.value
+                    -- Set default grow direction for new orientation before layout
+                    if cfg.collapsible then
+                        local isHoriz = cfg.orientation == "horizontal"
+                        local defaultDir = isHoriz and "right" or "down"
+                        if not cfg.growDirection or 
+                           (isHoriz and cfg.growDirection ~= "left" and cfg.growDirection ~= "right") or
+                           (not isHoriz and cfg.growDirection ~= "up" and cfg.growDirection ~= "down") then
+                            cfg.growDirection = defaultDir
+                        end
+                    end
                     SpellStyler.Containers:LayoutContainer(SpellStyler.Containers:GetActiveName())
                 end
                 RefreshOrientationDropdown()
@@ -303,7 +313,7 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
     end
 
     -- Forward declared so RefreshOrientationDropdown can reference them before they are created.
-    local iconWidthBox, iconHeightBox, collapsibleCheck
+    local iconWidthBox, iconHeightBox, collapsibleCheck, growDirectionLabel, growDirectionDropdown
 
     -- RefreshOrientationDropdown defined here so it closes over limit boxes + align dropdown
     RefreshOrientationDropdown = function()
@@ -341,8 +351,32 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
         if collapsibleCheck then
             if config then
                 collapsibleCheck:SetChecked(config.collapsible == true)
+                -- Update UI state for collapsible
+                local isHoriz = config.orientation == "horizontal"
+                local limitBox = isHoriz and colLimitBox or rowLimitBox
+                if config.collapsible then
+                    limitBox:SetText("1")
+                    limitBox:SetTextColor(0.5, 0.5, 0.5)
+                    limitBox:EnableMouse(false)
+                    if growDirectionLabel then growDirectionLabel:Show() end
+                    if growDirectionDropdown then 
+                        growDirectionDropdown:Show()
+                        -- Set grow direction dropdown value
+                        local defaultDir = isHoriz and "right" or "down"
+                        local growDir = config.growDirection or defaultDir
+                        UIDropDownMenu_SetSelectedValue(growDirectionDropdown, growDir)
+                        UIDropDownMenu_SetText(growDirectionDropdown, growDir:sub(1,1):upper() .. growDir:sub(2))
+                    end
+                else
+                    limitBox:SetTextColor(1, 1, 1)
+                    limitBox:EnableMouse(true)
+                    if growDirectionLabel then growDirectionLabel:Hide() end
+                    if growDirectionDropdown then growDirectionDropdown:Hide() end
+                end
             else
                 collapsibleCheck:SetChecked(false)
+                if growDirectionLabel then growDirectionLabel:Hide() end
+                if growDirectionDropdown then growDirectionDropdown:Hide() end
             end
         end
 
@@ -401,22 +435,149 @@ function ContainerSettingsRenderer:RenderContainerView(parentFrame)
     collapsibleCheck = CreateFrame("CheckButton", nil, contentFrame, "UICheckButtonTemplate")
     collapsibleCheck:SetSize(20, 20)
     collapsibleCheck:SetPoint("LEFT", collapsibleLbl, "RIGHT", 6, 0)
+    
+    local collapsibleTooltipLbl = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    collapsibleTooltipLbl:SetPoint("LEFT", collapsibleCheck, "RIGHT", 4, 0)
+    collapsibleTooltipLbl:SetText("|cFF888888Hide inactive icons|r")
+    
+    -- Add tooltips to label, checkbox, and tooltip text
+    local tooltipText = "This only supports 1 row/column"
+    collapsibleLbl:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(tooltipText, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    collapsibleLbl:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    
+    collapsibleCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(tooltipText, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    collapsibleCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    
+    collapsibleTooltipLbl:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(tooltipText, 1, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    collapsibleTooltipLbl:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    
+    local function UpdateCollapsibleState(isCollapsible, config)
+        -- Update row/column limit based on orientation
+        local isHoriz = config and config.orientation == "horizontal"
+        local limitBox = isHoriz and colLimitBox or rowLimitBox
+        
+        if isCollapsible then
+            -- Set to 1 and disable
+            limitBox:SetText("1")
+            limitBox:Enable()
+            limitBox:SetTextColor(0.5, 0.5, 0.5)
+            limitBox:EnableMouse(false)
+            if config then
+                if isHoriz then
+                    config.columnLimit = 1
+                else
+                    config.rowLimit = 1
+                end
+            end
+            -- Show grow direction dropdown
+            if growDirectionLabel then growDirectionLabel:Show() end
+            if growDirectionDropdown then growDirectionDropdown:Show() end
+        else
+            -- Re-enable
+            limitBox:Enable()
+            limitBox:SetTextColor(1, 1, 1)
+            limitBox:EnableMouse(true)
+            -- Restore previous value from config
+            if config then
+                limitBox:SetText(tostring((isHoriz and config.columnLimit or config.rowLimit) or 0))
+            end
+            -- Hide grow direction dropdown
+            if growDirectionLabel then growDirectionLabel:Hide() end
+            if growDirectionDropdown then growDirectionDropdown:Hide() end
+        end
+    end
+    
     collapsibleCheck:SetScript("OnClick", function(self)
         local cfg = SpellStyler.Containers:GetActiveConfig()
         if cfg then
             cfg.collapsible = self:GetChecked() == true
+            UpdateCollapsibleState(cfg.collapsible, cfg)
+            -- Re-layout the container to apply collapsible changes
+            SpellStyler.Containers:LayoutContainer(SpellStyler.Containers:GetActiveName())
         end
     end)
-
-    local collapsibleTooltipLbl = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    collapsibleTooltipLbl:SetPoint("LEFT", collapsibleCheck, "RIGHT", 4, 0)
-    collapsibleTooltipLbl:SetText("|cFF888888Hide inactive icons|r")
+    
+    -- ---- Grow Direction dropdown (only visible when collapsible) --------
+    growDirectionLabel = contentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    growDirectionLabel:SetPoint("TOPLEFT", collapsibleLbl, "BOTTOMLEFT", 0, -10)
+    growDirectionLabel:SetText("|cFFFFD700Grow Direction|r")
+    growDirectionLabel:SetTextColor(0.75, 0.75, 0.75)
+    growDirectionLabel:Hide()
+    
+    growDirectionDropdown = CreateFrame("Frame", "SpellStylerGrowDirectionDropdown", contentFrame, "UIDropDownMenuTemplate")
+    growDirectionDropdown:SetPoint("TOPLEFT", growDirectionLabel, "BOTTOMLEFT", -16, -2)
+    UIDropDownMenu_SetWidth(growDirectionDropdown, 100)
+    growDirectionDropdown:Hide()
+    
+    local function InitGrowDirectionDropdown(self, level)
+        local config = SpellStyler.Containers:GetActiveConfig()
+        if not config then return end
+        
+        local isHoriz = config.orientation == "horizontal"
+        local options = isHoriz and {"right", "left"} or {"down", "up"}
+        local current = config.growDirection or options[1]
+        
+        for _, opt in ipairs(options) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = opt:sub(1,1):upper() .. opt:sub(2)
+            info.value = opt
+            info.checked = (opt == current)
+            info.func = function(btn)
+                local cfg = SpellStyler.Containers:GetActiveConfig()
+                if cfg then
+                    cfg.growDirection = btn.value
+                    SpellStyler.Containers:LayoutContainer(SpellStyler.Containers:GetActiveName())
+                end
+                UIDropDownMenu_SetSelectedValue(growDirectionDropdown, btn.value)
+                UIDropDownMenu_SetText(growDirectionDropdown, btn.value:sub(1,1):upper() .. btn.value:sub(2))
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end
+    
+    UIDropDownMenu_Initialize(growDirectionDropdown, InitGrowDirectionDropdown)
+    
+    -- Update grow direction dropdown when orientation changes
+    local originalRefreshOrientation = RefreshOrientationDropdown
+    RefreshOrientationDropdown = function()
+        originalRefreshOrientation()
+        local config = SpellStyler.Containers:GetActiveConfig()
+        if config and config.collapsible then
+            -- Reset grow direction dropdown for new orientation
+            local isHoriz = config.orientation == "horizontal"
+            local defaultDir = isHoriz and "right" or "down"
+            if not config.growDirection or 
+               (isHoriz and config.growDirection ~= "left" and config.growDirection ~= "right") or
+               (not isHoriz and config.growDirection ~= "up" and config.growDirection ~= "down") then
+                config.growDirection = defaultDir
+            end
+            UIDropDownMenu_SetSelectedValue(growDirectionDropdown, config.growDirection)
+            UIDropDownMenu_SetText(growDirectionDropdown, config.growDirection:sub(1,1):upper() .. config.growDirection:sub(2))
+            CloseDropDownMenus()
+        end
+        -- Update collapsible state UI
+        if config then
+            UpdateCollapsibleState(config.collapsible, config)
+        end
+    end
 
     -- Separator between settings and icon lists
     local orientSep = contentFrame:CreateTexture(nil, "ARTWORK")
     orientSep:SetColorTexture(0.4, 0.4, 0.4, 0.4)
     orientSep:SetHeight(1)
-    orientSep:SetPoint("TOPLEFT",  orientLabel, "BOTTOMLEFT",  0, -120)
+    orientSep:SetPoint("TOPLEFT",  orientLabel, "BOTTOMLEFT",  0, -170)
     orientSep:SetPoint("RIGHT", contentFrame, "RIGHT", -16, 0)
 
     -- ---- Icon lists --------------------------------------------------------

@@ -2,7 +2,7 @@ local ADDON_NAME, SpellStyler = ...
 SpellStyler.State = SpellStyler.State or {}
 local State = SpellStyler.State
 local FrameTrackerManager  -- lazily resolved on first use (avoids load-order nil)
-local function accessNestedValue(tbl, path, value, action)
+function State:AccessNestedValue(tbl, path, value, action)
     local keys = {}
     for key in string.gmatch(path, "[^.]+") do
         table.insert(keys, key)
@@ -69,6 +69,7 @@ end
 local function AddNewTrackerValueConfig(data)
     local iconSize = 48  -- Default icon size
     return {
+        itemID = data.itemID,
 		isEnabled = true,
 		overrideSpellID = data.overrideSpellID,
         trackerType = data.trackerType, -- essential, utility, buffs
@@ -110,7 +111,14 @@ local function AddNewTrackerValueConfig(data)
             },
             frameStrataLevel = "MEDIUM", -- BACKGROUND LOW MEDIUM HIGH DIALOG FULLSCREEN FULLSCREEN_DIALOG TOOLTIP
             frameStrataValue = 100,
-            zoom = 0
+            zoom = 0,
+            borderSize = 0,
+            borderColor = {
+                r = 1,
+                g = 1,
+                b = 1,
+                a = 0,
+            }
         },
         chargeBasedDisplay = {
             enabled = false,
@@ -280,6 +288,7 @@ function State:GetDataBase_V2()
     specDB.essential = specDB.essential or {}
     specDB.utility = specDB.utility or {}
     specDB.spells = specDB.spells or {}
+    specDB.items = specDB.items or {}
     specDB.docks = specDB.docks or {}
     specDB.globalSettings = specDB.globalSettings or {
         visibilitySettings = {
@@ -317,18 +326,15 @@ end
 function State:SetCorrectOverride(specDB)
 	-- make sure the default Icon Texture Path and overrideSpellID match the current spell override when loading in
 	for baseSpellID, trackerValue in pairs(specDB.spells) do
-		-- Skip items - they don't have spell overrides and their texture is already correct
-		if not trackerValue.isItem then
-			pcall(function()
-				local overrideID = baseSpellID
-				pcall(function() overrideID = C_Spell.GetOverrideSpell(baseSpellID) end)
-				local defaultIconTexturePath = overrideID
-				local overrideInfo = C_Spell.GetSpellInfo(overrideID)
-				if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
-				specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
-				specDB.spells[baseSpellID].overrideSpellID = overrideID
-			end)
-		end
+		pcall(function()
+			local overrideID = baseSpellID
+			pcall(function() overrideID = C_Spell.GetOverrideSpell(baseSpellID) end)
+			local defaultIconTexturePath = overrideID
+			local overrideInfo = C_Spell.GetSpellInfo(overrideID)
+			if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
+			specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
+			specDB.spells[baseSpellID].overrideSpellID = overrideID
+		end)
 	end
 end
 
@@ -351,6 +357,11 @@ function State:HandleTalentChange()
         end
     end
 	FrameTrackerManager:CreateNonBuffTrackerFrames()
+	
+	-- Build dependency tree and create frames in correct order
+	local tree = FrameTrackerManager:BuildAnchorDependencyTree()
+	FrameTrackerManager:CreateFramesFromDependencyTree(tree)
+	
     -- Re-layout containers for the newly active spec
     if SpellStyler.Containers then
         local containers = SpellStyler.Containers:GetDB()
@@ -393,6 +404,7 @@ function State:MigrateDatabase()
         specDB.buffs     = specDB.buffs     or {}
         specDB.essential = specDB.essential or {}
         specDB.utility   = specDB.utility   or {}
+        specDB.items     = specDB.items     or {}
 
         -- ── Move utility & essential entries into spells ─────────────────
         -- Safe on all specs: pure table reshuffling, no spell API calls.
@@ -406,9 +418,22 @@ function State:MigrateDatabase()
             end
         end
 
+        -- ── Move items from spells to items table ────────────────────────
+        -- Safe on all specs: pure table reshuffling, no spell API calls.
+        -- Legacy: items were previously stored in spells table with isItem flag
+        for uniqueID, trackerValue in pairs(specDB.spells) do
+            if trackerValue.isItem then
+                if not specDB.items[uniqueID] then
+                    trackerValue.trackerType = "items"
+                    specDB.items[uniqueID] = trackerValue
+                end
+                specDB.spells[uniqueID] = nil
+            end
+        end
+
         -- ── Validate & backfill structure for every tracked entry ────────
         -- Safe on all specs: only reads existing values and fills missing keys.
-        for _, trackerType in ipairs({ "buffs", "spells" }) do
+        for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
             for baseSpellID, trackerValue in pairs(specDB[trackerType]) do
                 -- Legacy: barFillDirection -> fillOrEmpty
                 if trackerValue.statusBar
@@ -459,13 +484,10 @@ function State:MigrateDatabase()
             -- Remap spells stored under a non-base spell ID to their base ID.
             local spellRemaps = {}
             for uniqueID, trackerValue in pairs(specDB.spells) do
-                -- Skip items - they don't need spell ID remapping
-                if not trackerValue.isItem then
-                    local baseID = nil
-                    pcall(function() baseID = C_Spell.GetBaseSpell(uniqueID) end)
-                    if baseID and baseID ~= uniqueID then
-                        table.insert(spellRemaps, { oldID = uniqueID, newID = baseID, entry = trackerValue })
-                    end
+                local baseID = nil
+                pcall(function() baseID = C_Spell.GetBaseSpell(uniqueID) end)
+                if baseID and baseID ~= uniqueID then
+                    table.insert(spellRemaps, { oldID = uniqueID, newID = baseID, entry = trackerValue })
                 end
             end
             for _, remap in ipairs(spellRemaps) do
@@ -564,7 +586,7 @@ end
 function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, value)
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local db = State:GetDataBase_V2()
-    accessNestedValue(db[trackerType][baseSpellID], path, value, "set")
+    State:AccessNestedValue(db[trackerType][baseSpellID], path, value, "set")
     local trackerValue = db[trackerType][baseSpellID]
     if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
         FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
@@ -578,7 +600,7 @@ end
 
 function State:GetTrackerValueConfigProperty(baseSpellID, trackerType, path)
     local db = State:GetDataBase_V2()
-    return accessNestedValue(db[trackerType][baseSpellID], path, nil, "get")
+    return State:AccessNestedValue(db[trackerType][baseSpellID], path, nil, "get")
 end
 
 --- Minimal safety net for visualChargeBar config.
@@ -655,54 +677,58 @@ function State:getTrackerValuesListForSettings()
         end
     end
 
-    -- Manually-added spells and items (no viewer frame required)
+    -- Manually-added spells (no viewer frame required)
     local spellsValues = State:GetAllTrackerValues("spells")
-    local itemsGroup = {}
     local spellsGroup = {}
     for baseSpellID, trackerValue in pairs(spellsValues or {}) do
         State:EnsureVisualChargeBarDefaults(trackerValue)
         
-        -- Include if enabled and either: it's an item, OR it's a known spell
+        -- Only include enabled spells that are known
         local shouldInclude = trackerValue.isEnabled ~= false
-        if shouldInclude then
-            if trackerValue.isItem then
-                -- Item - no spell check needed
-                shouldInclude = true
-            else
-                -- Spell - verify it's known
-                shouldInclude = C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerValue.overrideSpellID)
-            end
-        end
+            and (C_SpellBook.IsSpellKnown(baseSpellID) or C_SpellBook.IsSpellKnown(trackerValue.overrideSpellID))
         
         if shouldInclude then
             local frame = FrameTrackerManager.SpellStyler_frames["spells"] and FrameTrackerManager.SpellStyler_frames["spells"][baseSpellID]
             local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
+            local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
+            local displayName = (spellInfo and spellInfo.name) or trackerValue.name
             
-            -- For items, use item info; for spells, use spell info
-            local displayName = trackerValue.name
-            local iconTexture = trackerValue.defaultIconTexturePath
-            
-            if not trackerValue.isItem then
-                local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
-                displayName = (spellInfo and spellInfo.name) or trackerValue.name
-            end
-            
-            local entry = {
+            table.insert(spellsGroup, {
                 uniqueID = baseSpellID,
                 baseSpellID = baseSpellID,
                 activeSpellID = activeSpellID,
                 trackerType = "spells",
                 name = displayName,
+                defaultIconTexturePath = trackerValue.defaultIconTexturePath,
+                devNotes = trackerValue.devNotes
+            })
+        end
+    end
+    
+    -- Manually-added items (no viewer frame required)
+    local itemsValues = State:GetAllTrackerValues("items")
+    local itemsGroup = {}
+    for baseSpellID, trackerValue in pairs(itemsValues or {}) do
+        State:EnsureVisualChargeBarDefaults(trackerValue)
+        
+        -- Only include enabled items
+        if trackerValue.isEnabled ~= false then
+            local frame = FrameTrackerManager.SpellStyler_frames["items"] and FrameTrackerManager.SpellStyler_frames["items"][baseSpellID]
+            local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
+            
+            -- For items, use stored name and icon texture
+            local displayName = trackerValue.name or "Unknown Item"
+            local iconTexture = trackerValue.defaultIconTexturePath
+            
+            table.insert(itemsGroup, {
+                uniqueID = baseSpellID,
+                baseSpellID = baseSpellID,
+                activeSpellID = activeSpellID,
+                trackerType = "items",
+                name = displayName,
                 defaultIconTexturePath = iconTexture,
                 devNotes = trackerValue.devNotes
-            }
-            
-            -- Separate items from spells
-            if trackerValue.isItem then
-                table.insert(itemsGroup, entry)
-            else
-                table.insert(spellsGroup, entry)
-            end
+            })
         end
     end
     
@@ -810,7 +836,7 @@ function State:SetSpecialVisibilityConditionProperty(baseSpellID, trackerType, i
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[index] then return end
-    accessNestedValue(entry.specialVisibilityConditions[index], path, value, "set")
+    State:AccessNestedValue(entry.specialVisibilityConditions[index], path, value, "set")
 
     -- Re-evaluate conditionals
     if SpellStyler.ConditionalEngine then
@@ -823,7 +849,7 @@ function State:GetSpecialVisibilityConditionProperty(baseSpellID, trackerType, i
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[index] then return nil end
-    return accessNestedValue(entry.specialVisibilityConditions[index], path, nil, "get")
+    return State:AccessNestedValue(entry.specialVisibilityConditions[index], path, nil, "get")
 end
 
 -- ─── Property-override helpers ───────────────────────────────────────────────

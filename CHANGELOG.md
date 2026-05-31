@@ -211,3 +211,13 @@ Version 1.5.0
 	- Adds font customization
 	- Adds an explicit "on cooldown" into the conditional for "IsSpellUsable"
 	- Adds ability to hide the trailing bilng on cooldown swipes
+
+Version 1.6.0
+	- Updates the way items are tracked to resolve issues with untracked durations
+	- Desaturates the glow animation to allow for proper color application
+	- Updates collapsible containers to actually collapse
+	- Adds anchor options, to allow for anchoring to other spells/items/buffs or the mouse
+	- Adds optional border that renders around the icon frame
+	- Updates so that icons and statusBars can properly apply the alpha values from their color selections when the element should be visible
+	- Adds conditional for unit health percentage (supports player, focus and target unit ids)
+	- Adds ability to hover the mouse over an icon and scroll to increase or decrease the icon size

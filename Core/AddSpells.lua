@@ -150,7 +150,6 @@ function AddSpells:GetPlayerItems()
             end
         end
     end
-    
     return items
 end
 
@@ -325,19 +324,23 @@ function AddSpells:RenderAddSpellsView(parent)
         local trackingID, trackerConfig
         
         if isItem then
-            -- Track item by itemID as the database key
-            trackingID = selectedSpell.itemID
+            -- Get the spell ID from the item (for event tracking and cooldown)
+            local spellName, spellID = C_Item.GetItemSpell(selectedSpell.itemID)
             
-            -- Convert itemID to icon texture path immediately
-            local itemIconTexture = C_Item.GetItemIconByID(trackingID)
+            -- Track item by spellID as the database key
+            trackingID = spellID
+            
+            -- Get the item icon texture path directly
+            local iconTexture = C_Item.GetItemIconByID(selectedSpell.itemID)
             
             trackerConfig = State:AddTrackerValue({
-                baseSpellID             = trackingID,   -- Use itemID as the key
-                overrideSpellID         = trackingID,   -- Same as base for items
-                trackerType             = "spells",
+                itemID                  = selectedSpell.itemID,       -- Store actual itemID
+                baseSpellID             = spellID,                    -- Use spellID as the key
+                overrideSpellID         = spellID,                    -- Also use spellID for activeSpellID
+                trackerType             = "items",                    -- Use dedicated "items" tracker type
                 name                    = selectedSpell.name,
-                defaultIconTexturePath  = itemIconTexture or trackingID,  -- Store texture path, not itemID
-                isItem                  = true,         -- Flag to identify this as an item tracker
+                defaultIconTexturePath  = iconTexture,                -- Store actual texture path, not itemID
+                isItem                  = true,                       -- Flag to identify this as an item tracker
             })
         else
             -- Track spell by baseSpellID
@@ -354,11 +357,12 @@ function AddSpells:RenderAddSpellsView(parent)
         if not trackerConfig then return end
 
         -- Wipe devNotes before creating frame (fresh start for error tracking)
-        SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "spells", "devNotes", {})
+        local trackerType = isItem and "items" or "spells"
+        SpellStyler.State:SetTrackerValueConfigProperty(trackingID, trackerType, "devNotes", {})
         
         -- CreateFrameMiddleware creates base frame, variant frame (if needed),
         -- sets up charge infrastructure, and drives updates
-        FTM:CreateCompleteFrame(trackingID, trackerConfig, "spells")
+        FTM:CreateCompleteFrame(trackingID, trackerConfig, trackerType)
 
         -- Remove from the grid so it can't be added twice
         local addedID = isItem and selectedSpell.itemID or selectedSpell.spellID
@@ -478,8 +482,11 @@ function AddSpells:RenderAddSpellsView(parent)
     
     -- Add items
     for _, item in ipairs(items) do
-        -- Check if item is already tracked (items use itemID as the key)
-        local alreadyTrackedAndEnabled = isTrackedAndEnabled(item.itemID, "spells")
+        -- Get spell ID from item for tracking
+        local spellName, spellID = C_Item.GetItemSpell(item.itemID)
+        
+        -- Check if item is already tracked (items use spellID as the key with "items" tracker type)
+        local alreadyTrackedAndEnabled = spellID and isTrackedAndEnabled(spellID, "items")
         
         if not alreadyTrackedAndEnabled or true then
             local capturedItem = item

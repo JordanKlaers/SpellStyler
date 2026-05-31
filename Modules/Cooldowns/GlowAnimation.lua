@@ -104,10 +104,11 @@ function GlowUtil:SetupProcGlow(frame, config)
     holder.ProcLoopFlipbook = tex
     tex:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
     tex:SetAllPoints(holder)
-    if config.desaturated then tex:SetDesaturated(true) end
-    if config.r then
-        tex:SetVertexColor(config.r, config.g or 1, config.b or 1, 1)
-    end
+    -- Desaturate by default so vertex color is applied against neutral grey,
+    -- not the yellow tones baked into the atlas art. Pass desaturated=false
+    -- explicitly if you want the raw atlas colour instead.
+    tex:SetDesaturated(true)
+    tex:SetVertexColor(config.r or 1, config.g or 1, config.b or 1, 1)
 
     local ag = tex:CreateAnimationGroup()
     ag:SetLooping("REPEAT")

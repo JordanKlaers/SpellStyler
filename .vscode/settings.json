@@ -47,7 +47,8 @@
 		"PixelUtil",
 		"StaticPopupDialogs",
 		"StaticPopup_Show",
-		"MAX_TOTEMS"
+		"MAX_TOTEMS",
+		"includes"
 	],
 	"Lua.type.weakUnionCheck": true
 }

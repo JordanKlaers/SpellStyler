@@ -32,11 +32,13 @@ FrameTrackerManager.cooldownIDToBaseSpellID = {}
 FrameTrackerManager.SpellStyler_frames = {
     buffs = {},
     spells = {},
+    items = {}
 }
 
 FrameTrackerManager._driveQueue     = {}
 FrameTrackerManager._processCDMQueue = {}
 FrameTrackerManager._totemLogQueue  = {}
+FrameTrackerManager._pendingFrameCreation = {}  -- Frames waiting to be created after dependency resolution
 
 local isInitialized = false
 
@@ -91,6 +93,28 @@ function FrameTrackerManager:SetMetaOnBaseAndVariant(frame, key, value)
     if otherFrame then
         otherFrame.meta[key] = value
     end
+end
+
+function FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(frame, key, value)
+    frame.previousProperties[key] = value
+    local otherFrame = (frame.variantFrame or frame.baseFrame)
+    if otherFrame then
+        otherFrame.previousProperties[key] = value
+    end
+end
+
+--- Updates collapsible containers when a frame's cooldown state changes.
+--- Only processes containers that are marked as collapsible.
+--- Uses the new statusBar-based positioning system for visibility and positioning.
+--- @param frame table The tracker frame whose state changed
+function FrameTrackerManager:UpdateCollapsibleContainers(frame)
+    if not frame or not frame._inContainer then return end
+    
+    local Containers = SpellStyler.Containers
+    if not Containers then return end
+    
+    -- Update visibility for this specific frame using the new statusBar system
+    Containers:UpdateContainerFrameVisibility(frame)
 end
 
 function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType)
@@ -156,12 +180,17 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
                 })
             end
 
-            -- ── Step 4: Create the custom SpellStyler frame ──
+            -- ── Step 4: Queue the custom SpellStyler frame for creation ──
             local trackerConfig = State:GetSpecificTrackerValue(spellID, trackerType)
             if trackerConfig then
                 -- Wipe devNotes before creating frame (fresh start for error tracking)
                 State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
-                FrameTrackerManager:CreateCompleteFrame(spellID, trackerConfig, trackerType)
+                -- Queue for creation instead of creating immediately
+                table.insert(FrameTrackerManager._pendingFrameCreation, {
+                    baseSpellID = spellID,
+                    trackerConfig = trackerConfig,
+                    trackerType = trackerType
+                })
             end
         end
     end
@@ -172,10 +201,144 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
     SpellStyler.Containers:ApplyViewerVisibility("utility")
 end
 
+--- Builds a tree structure organizing frames by their anchor dependencies
+--- Frames anchored to UIParent are roots, others are organized under their anchor targets
+--- @return table Tree structure with frames and their anchor children
+function FrameTrackerManager:BuildAnchorDependencyTree()
+    local pending = {}
+    local tree = {}
+    local processed = {}
+    
+    -- Copy pending frames to working list
+    for _, frameData in ipairs(self._pendingFrameCreation) do
+        table.insert(pending, frameData)
+    end
+    
+    -- Helper to get anchor target key from a frame's config
+    local function GetAnchorKey(frameData)
+        local pos = frameData.trackerConfig.position
+        if not pos or not pos.relativeToFrame then
+            return "UIParent"
+        end
+        
+        local relativeToFrame = pos.relativeToFrame
+        -- Handle numeric baseSpellID (new format)
+        if type(relativeToFrame) == "number" then
+            -- Look up the trackerType for this baseSpellID
+            -- Check all tracker types to find where this ID exists
+            for _, tType in ipairs({"buffs", "spells", "items"}) do
+                if SpellStyler.State then
+                    local trackerValue = SpellStyler.State:GetSpecificTrackerValue(relativeToFrame, tType)
+                    if trackerValue and trackerValue.trackerType then
+                        return tType .. ":" .. relativeToFrame
+                    end
+                end
+            end
+            -- If we can't find it, default to UIParent
+            return "UIParent"
+        elseif type(relativeToFrame) == "string" then
+            return relativeToFrame
+        elseif type(relativeToFrame) == "table" then
+            if relativeToFrame.uniqueID and relativeToFrame.trackerType then
+                return relativeToFrame.trackerType .. ":" .. relativeToFrame.uniqueID
+            end
+        end
+        return "UIParent"
+    end
+    
+    -- Helper to get frame key
+    local function GetFrameKey(frameData)
+        return frameData.trackerType .. ":" .. frameData.baseSpellID
+    end
+    
+    -- Helper to create tree node
+    local function CreateTreeNode(frameData)
+        return {
+            baseSpellID = frameData.baseSpellID,
+            trackerConfig = frameData.trackerConfig,
+            trackerType = frameData.trackerType,
+            anchorChildren = {}
+        }
+    end
+    
+    -- First pass: find all frames anchored to UIParent (roots)
+    local remainingFrames = {}
+    for _, frameData in ipairs(pending) do
+        local anchorKey = GetAnchorKey(frameData)
+        if anchorKey == "UIParent" or anchorKey == "Mouse" then
+            local node = CreateTreeNode(frameData)
+            table.insert(tree, node)
+            processed[GetFrameKey(frameData)] = node
+        else
+            table.insert(remainingFrames, frameData)
+        end
+    end
+    
+    -- Continue looping until all frames are assigned or we can't make progress
+    local maxIterations = 100  -- Prevent infinite loops
+    local iteration = 0
+    while #remainingFrames > 0 and iteration < maxIterations do
+        iteration = iteration + 1
+        local stillPending = {}
+        local madeProgress = false
+        
+        for _, frameData in ipairs(remainingFrames) do
+            local anchorKey = GetAnchorKey(frameData)
+            local parentNode = processed[anchorKey]
+            
+            if parentNode then
+                -- Found the parent, add as child
+                local node = CreateTreeNode(frameData)
+                table.insert(parentNode.anchorChildren, node)
+                processed[GetFrameKey(frameData)] = node
+                madeProgress = true
+            else
+                -- Parent not found yet, keep in pending
+                table.insert(stillPending, frameData)
+            end
+        end
+        
+        remainingFrames = stillPending
+        
+        -- If we didn't make progress, we have circular dependencies or invalid anchors
+        -- Create these frames as roots anchored to UIParent
+        if not madeProgress and #remainingFrames > 0 then
+            for _, frameData in ipairs(remainingFrames) do
+                local node = CreateTreeNode(frameData)
+                table.insert(tree, node)
+                processed[GetFrameKey(frameData)] = node
+            end
+            break
+        end
+    end
+    return tree
+end
 
+--- Recursively creates frames from the dependency tree
+--- Creates parent frames first, then their anchor children
+--- @param tree table The dependency tree structure
+function FrameTrackerManager:CreateFramesFromDependencyTree(tree)
+    local function CreateNodeAndChildren(node)
+        -- Create this frame
+        self:CreateCompleteFrame(node.baseSpellID, node.trackerConfig, node.trackerType)
+        
+        -- Recursively create all anchor children
+        for _, childNode in ipairs(node.anchorChildren) do
+            CreateNodeAndChildren(childNode)
+        end
+    end
+    
+    -- Create all root frames and their descendants
+    for _, rootNode in ipairs(tree) do
+        CreateNodeAndChildren(rootNode)
+    end
+    
+    -- Clear the pending list
+    wipe(self._pendingFrameCreation)
+end
 
 function FrameTrackerManager:CreateNonBuffTrackerFrames()
-    for _, trackerType in ipairs({ "spells" }) do
+    for _, trackerType in ipairs({ "spells", "items" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
         if trackerValues then
             for baseSpellID, trackerConfig in pairs(trackerValues) do
@@ -199,11 +362,106 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                 if shouldCreate then
                     -- Wipe devNotes before creating frame (fresh start for error tracking)
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
-                    FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, trackerType)
+                    -- Queue for creation instead of creating immediately
+                    table.insert(FrameTrackerManager._pendingFrameCreation, {
+                        baseSpellID = baseSpellID,
+                        trackerConfig = trackerConfig,
+                        trackerType = trackerType
+                    })
                 end
             end
         end
     end
+end
+
+
+--- Creates border frame with corners and edges for a status bar
+--- @param frame table The parent frame
+--- @param key string The field name on frame where the bar is stored
+--- @param config table Border configuration: { borderColor = {r,g,b,a}, borderScale = number }
+function FrameTrackerManager:CreateBorder(frame, key, config)
+    frame[key].border = CreateFrame("Frame", nil, frame[key])
+    frame[key].border:SetAllPoints(frame[key])
+    frame[key].border:SetFrameLevel(frame[key]:GetFrameLevel() + 10)
+
+    local cornerSize = 8
+    local edgeThickness = 8
+
+    -- Top-left corner
+    frame[key].borderCornerTL = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderCornerTL:SetSize(cornerSize, cornerSize)
+    frame[key].borderCornerTL:SetPoint("TOPLEFT", frame[key].border, "TOPLEFT", -1.5, 1.5)
+    frame[key].borderCornerTL:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
+    frame[key].borderCornerTL:SetRotation(0)
+    frame[key].borderCornerTL:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderCornerTL:SetScale(config.borderScale)
+
+    -- Top-right corner (rotated 270°)
+    frame[key].borderCornerTR = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderCornerTR:SetSize(cornerSize, cornerSize)
+    frame[key].borderCornerTR:SetPoint("TOPRIGHT", frame[key].border, "TOPRIGHT", 1.5, 1.5)
+    frame[key].borderCornerTR:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
+    frame[key].borderCornerTR:SetRotation(3 * math.pi / 2)
+    frame[key].borderCornerTR:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderCornerTR:SetScale(config.borderScale)
+
+    -- Bottom-right corner (rotated 180°)
+    frame[key].borderCornerBR = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderCornerBR:SetSize(cornerSize, cornerSize)
+    frame[key].borderCornerBR:SetPoint("BOTTOMRIGHT", frame[key].border, "BOTTOMRIGHT", 1.5, -1.5)
+    frame[key].borderCornerBR:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
+    frame[key].borderCornerBR:SetRotation(math.pi)
+    frame[key].borderCornerBR:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderCornerBR:SetScale(config.borderScale)
+
+    -- Bottom-left corner (rotated 90°)
+    frame[key].borderCornerBL = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderCornerBL:SetSize(cornerSize, cornerSize)
+    frame[key].borderCornerBL:SetPoint("BOTTOMLEFT", frame[key].border, "BOTTOMLEFT", -1.5, -1.5)
+    frame[key].borderCornerBL:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
+    frame[key].borderCornerBL:SetRotation(math.pi / 2)
+    frame[key].borderCornerBL:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderCornerBL:SetScale(config.borderScale)
+
+    -- Top edge
+    frame[key].borderEdgeTop = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderEdgeTop:SetHeight(edgeThickness)
+    frame[key].borderEdgeTop:SetPoint("TOPLEFT", frame[key].borderCornerTL, "TOPRIGHT", 0, 0)
+    frame[key].borderEdgeTop:SetPoint("TOPRIGHT", frame[key].borderCornerTR, "TOPLEFT", 0, 0)
+    frame[key].borderEdgeTop:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line.tga")
+    frame[key].borderEdgeTop:SetRotation(0)
+    frame[key].borderEdgeTop:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderEdgeTop:SetScale(config.borderScale)
+
+    -- Right edge (vertical)
+    frame[key].borderEdgeRight = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderEdgeRight:SetWidth(edgeThickness)
+    frame[key].borderEdgeRight:SetPoint("TOPRIGHT", frame[key].borderCornerTR, "BOTTOMRIGHT", 0, 0)
+    frame[key].borderEdgeRight:SetPoint("BOTTOMRIGHT", frame[key].borderCornerBR, "TOPRIGHT", 0, 0)
+    frame[key].borderEdgeRight:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line_vertical.tga")
+    frame[key].borderEdgeRight:SetRotation(math.pi)
+    frame[key].borderEdgeRight:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderEdgeRight:SetScale(config.borderScale)
+
+    -- Bottom edge (rotated 180°)
+    frame[key].borderEdgeBottom = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderEdgeBottom:SetHeight(edgeThickness)
+    frame[key].borderEdgeBottom:SetPoint("BOTTOMRIGHT", frame[key].borderCornerBR, "BOTTOMLEFT", 0, 0)
+    frame[key].borderEdgeBottom:SetPoint("BOTTOMLEFT", frame[key].borderCornerBL, "BOTTOMRIGHT", 0, 0)
+    frame[key].borderEdgeBottom:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line.tga")
+    frame[key].borderEdgeBottom:SetRotation(math.pi)
+    frame[key].borderEdgeBottom:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderEdgeBottom:SetScale(config.borderScale)
+
+    -- Left edge (vertical)
+    frame[key].borderEdgeLeft = frame[key].border:CreateTexture(nil, "ARTWORK")
+    frame[key].borderEdgeLeft:SetWidth(edgeThickness)
+    frame[key].borderEdgeLeft:SetPoint("BOTTOMLEFT", frame[key].borderCornerBL, "TOPLEFT", 0, 0)
+    frame[key].borderEdgeLeft:SetPoint("TOPLEFT", frame[key].borderCornerTL, "BOTTOMLEFT", 0, 0)
+    frame[key].borderEdgeLeft:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line_vertical.tga")
+    frame[key].borderEdgeLeft:SetRotation(0)
+    frame[key].borderEdgeLeft:SetVertexColor(config.borderColor.r, config.borderColor.g, config.borderColor.b, config.borderColor.a)
+    frame[key].borderEdgeLeft:SetScale(config.borderScale)
 end
 
 --- Creates a StatusBar on `frame`, assigned to `frame[key]`.
@@ -315,128 +573,15 @@ function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpel
     frame[key].glowTexture:SetDrawLayer("OVERLAY", 7)
 
     -- Layer 4: Border frame - above overlay (8 pieces: 4 corners + 4 edges)
-    frame[key].border = CreateFrame("Frame", nil, frame[key])
-    frame[key].border:SetAllPoints(frame[key])
-    frame[key].border:SetFrameLevel(frame[key]:GetFrameLevel() + 10)
-
-    local cornerSize = 8
-    local edgeThickness = 8
-
-    -- Top-left corner
-    frame[key].borderCornerTL = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderCornerTL:SetSize(cornerSize, cornerSize)
-    frame[key].borderCornerTL:SetPoint("TOPLEFT", frame[key].border, "TOPLEFT", -1.5, 1.5)
-    frame[key].borderCornerTL:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
-    frame[key].borderCornerTL:SetRotation(0)
-    frame[key].borderCornerTL:SetVertexColor(
-        barConfig.borderColor.r or 0,
-        barConfig.borderColor.g or 0,
-        barConfig.borderColor.b or 0,
-        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
-    )
-    frame[key].borderCornerTL:SetScale(barConfig.borderScale or 1)
-
-    -- Top-right corner (rotated 270°)
-    frame[key].borderCornerTR = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderCornerTR:SetSize(cornerSize, cornerSize)
-    frame[key].borderCornerTR:SetPoint("TOPRIGHT", frame[key].border, "TOPRIGHT", 1.5, 1.5)
-    frame[key].borderCornerTR:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
-    frame[key].borderCornerTR:SetRotation(3 * math.pi / 2)
-    frame[key].borderCornerTR:SetVertexColor(
-        barConfig.borderColor.r or 0,
-        barConfig.borderColor.g or 0,
-        barConfig.borderColor.b or 0,
-        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
-    )
-    frame[key].borderCornerTR:SetScale(barConfig.borderScale or 1)
-
-    -- Bottom-right corner (rotated 180°)
-    frame[key].borderCornerBR = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderCornerBR:SetSize(cornerSize, cornerSize)
-    frame[key].borderCornerBR:SetPoint("BOTTOMRIGHT", frame[key].border, "BOTTOMRIGHT", 1.5, -1.5)
-    frame[key].borderCornerBR:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
-    frame[key].borderCornerBR:SetRotation(math.pi)
-    frame[key].borderCornerBR:SetVertexColor(
-        barConfig.borderColor.r or 0,
-        barConfig.borderColor.g or 0,
-        barConfig.borderColor.b or 0,
-        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
-    )
-    frame[key].borderCornerBR:SetScale(barConfig.borderScale or 1)
-
-    -- Bottom-left corner (rotated 90°)
-    frame[key].borderCornerBL = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderCornerBL:SetSize(cornerSize, cornerSize)
-    frame[key].borderCornerBL:SetPoint("BOTTOMLEFT", frame[key].border, "BOTTOMLEFT", -1.5, -1.5)
-    frame[key].borderCornerBL:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_corner.tga")
-    frame[key].borderCornerBL:SetRotation(math.pi / 2)
-    frame[key].borderCornerBL:SetVertexColor(
-        barConfig.borderColor.r or 0,
-        barConfig.borderColor.g or 0,
-        barConfig.borderColor.b or 0,
-        forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
-    )
-    frame[key].borderCornerBL:SetScale(barConfig.borderScale or 1)
-
-    -- Top edge
-    frame[key].borderEdgeTop = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderEdgeTop:SetHeight(edgeThickness)
-    frame[key].borderEdgeTop:SetPoint("TOPLEFT", frame[key].borderCornerTL, "TOPRIGHT", 0, 0)
-    frame[key].borderEdgeTop:SetPoint("TOPRIGHT", frame[key].borderCornerTR, "TOPLEFT", 0, 0)
-    frame[key].borderEdgeTop:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line.tga")
-    frame[key].borderEdgeTop:SetRotation(0)
-    frame[key].borderEdgeTop:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
-    )
-    frame[key].borderEdgeTop:SetScale(trackerConfig.statusBar.borderScale or 1)
-
-    -- Right edge (vertical)
-    frame[key].borderEdgeRight = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderEdgeRight:SetWidth(edgeThickness)
-    frame[key].borderEdgeRight:SetPoint("TOPRIGHT", frame[key].borderCornerTR, "BOTTOMRIGHT", 0, 0)
-    frame[key].borderEdgeRight:SetPoint("BOTTOMRIGHT", frame[key].borderCornerBR, "TOPRIGHT", 0, 0)
-    frame[key].borderEdgeRight:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line_vertical.tga")
-    frame[key].borderEdgeRight:SetRotation(math.pi)
-    frame[key].borderEdgeRight:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
-    )
-    frame[key].borderEdgeRight:SetScale(trackerConfig.statusBar.borderScale or 1)
-
-    -- Bottom edge (rotated 180°)
-    frame[key].borderEdgeBottom = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderEdgeBottom:SetHeight(edgeThickness)
-    frame[key].borderEdgeBottom:SetPoint("BOTTOMRIGHT", frame[key].borderCornerBR, "BOTTOMLEFT", 0, 0)
-    frame[key].borderEdgeBottom:SetPoint("BOTTOMLEFT", frame[key].borderCornerBL, "BOTTOMRIGHT", 0, 0)
-    frame[key].borderEdgeBottom:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line.tga")
-    frame[key].borderEdgeBottom:SetRotation(math.pi)
-    frame[key].borderEdgeBottom:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
-    )
-    frame[key].borderEdgeBottom:SetScale(trackerConfig.statusBar.borderScale or 1)
-
-    -- Left edge (vertical)
-    frame[key].borderEdgeLeft = frame[key].border:CreateTexture(nil, "ARTWORK")
-    frame[key].borderEdgeLeft:SetWidth(edgeThickness)
-    frame[key].borderEdgeLeft:SetPoint("BOTTOMLEFT", frame[key].borderCornerBL, "TOPLEFT", 0, 0)
-    frame[key].borderEdgeLeft:SetPoint("TOPLEFT", frame[key].borderCornerTL, "BOTTOMLEFT", 0, 0)
-    frame[key].borderEdgeLeft:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarBorder_line_vertical.tga")
-    frame[key].borderEdgeLeft:SetRotation(0)
-    frame[key].borderEdgeLeft:SetVertexColor(
-        trackerConfig.statusBar.borderColor.r or 0,
-        trackerConfig.statusBar.borderColor.g or 0,
-        trackerConfig.statusBar.borderColor.b or 0,
-        forceHideViaAlpha and 0 or trackerConfig.statusBar.borderColor.a or 1
-    )
-    frame[key].borderEdgeLeft:SetScale(trackerConfig.statusBar.borderScale or 1)
+    FrameTrackerManager:CreateBorder(frame, key, {
+        borderColor = {
+            r = barConfig.borderColor.r or 0,
+            g = barConfig.borderColor.g or 0,
+            b = barConfig.borderColor.b or 0,
+            a = forceHideViaAlpha and 0 or barConfig.borderColor.a or 1
+        },
+        borderScale = barConfig.borderScale or 1
+    })
 
     -- Show statusBar frame once at creation; visibility controlled by alpha thereafter
     frame[key]:Show()
@@ -447,7 +592,7 @@ end
 local function CreateSingleInvisibleChargeAnchorBar(frame, barName, minValue, maxValue)
     -- local barName = "ChargeAnchorBar_" .. baseSpellID .. nameSuffix
     local bar = CreateFrame("StatusBar", barName, frame, "BackdropTemplate")
-    local anchorHeight = 100 --GetScreenHeight() * 2
+    local anchorHeight = GetScreenHeight() * 2
     bar:SetStatusBarTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga")
     bar:SetMinMaxValues(minValue, maxValue)
     bar:SetValue(minValue)
@@ -455,35 +600,35 @@ local function CreateSingleInvisibleChargeAnchorBar(frame, barName, minValue, ma
     bar:SetOrientation("VERTICAL")
     
     -- Debugging if I need to  see the status bars used for the charge based controlls
-    local borderColor, colorName
-    if frame.meta.isVariantFrame then
-        if barName:sub(-2) == "_A" then
-            borderColor = {1, 0, 0, 1}
-            colorName = "red"
-        else
-            borderColor = {1, 1, 0, 1}
-            colorName = "yellow"
-        end
-    else
-        if barName:sub(-2) == "_A" then
-            borderColor = {0, 1, 0, 1}
-            colorName = "green"
-        else
-            borderColor = {0, 0, 1, 1}
-            colorName = "blue"
-        end
-    end
-    bar:SetStatusBarColor(unpack(borderColor))
-    bar:SetAlpha(1)
+    -- local borderColor, colorName
+    -- if frame.meta.isVariantFrame then
+    --     if barName:sub(-2) == "_A" then
+    --         borderColor = {1, 0, 0, 1}
+    --         colorName = "red"
+    --     else
+    --         borderColor = {1, 1, 0, 1}
+    --         colorName = "yellow"
+    --     end
+    -- else
+    --     if barName:sub(-2) == "_A" then
+    --         borderColor = {0, 1, 0, 1}
+    --         colorName = "green"
+    --     else
+    --         borderColor = {0, 0, 1, 1}
+    --         colorName = "blue"
+    --     end
+    -- end
+    -- bar:SetStatusBarColor(unpack(borderColor))
+    -- bar:SetAlpha(1)
     
-    -- bar:SetStatusBarColor(0,0,0,0)
-    -- bar:SetAlpha(0)
+    bar:SetStatusBarColor(0,0,0,0)
+    bar:SetAlpha(0)
     -- Debugging if I need to  see the status bars used for the charge based controlls
-    bar:SetBackdrop({
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 2
-    })
-    bar:SetBackdropBorderColor(unpack(borderColor))
+    -- bar:SetBackdrop({
+    --     edgeFile = "Interface\\Buttons\\WHITE8x8",
+    --     edgeSize = 2
+    -- })
+    -- bar:SetBackdropBorderColor(unpack(borderColor))
     
     bar:Show()
     bar:ClearAllPoints()
@@ -904,35 +1049,57 @@ FrameTrackerManager.InvisibleAnchorController = {
     SetBarPropertiesAndFrameAnchor = function(frame, constructorValues, trackerConfig)
         --both bars
         if constructorValues.B.shouldRender and constructorValues.A.shouldRender then
+            -- Track which bars are active and their anchor configuration for drag/positioning
+            -- Each frame gets its own anchorModeData since base and variant can have different bar setups
+            frame.meta.anchorModeData = {
+                type = 'both',
+                point = constructorValues.B.anchor or 'BOTTOM',  -- Bar B's anchor point (TOP or BOTTOM)
+                pointA = constructorValues.A.anchor or 'BOTTOM',  -- Bar A's anchor point (TOP or BOTTOM)
+                relativePoint = trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint or 'BOTTOM'  -- UIParent's anchor point
+            }
+            
             frame.chargeAnchorBarB:SetMinMaxValues(constructorValues.B.min, constructorValues.B.max)
-            frame.chargeAnchorBarB:ClearAllPoints()
-            frame.chargeAnchorBarB:SetPoint(constructorValues.B.anchor, UIParent,
-                trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
-                ((trackerConfig.position.x) or 0), trackerConfig.position.y or 0)
+            -- Note: Bar B's position to UIParent will be set by SetFramePosition (which calls ClearAllPoints)
             frame.chargeAnchorBarB:Show()
 
             frame.chargeAnchorBarA:SetMinMaxValues(constructorValues.A.min, constructorValues.A.max)
+            frame.chargeAnchorBarA:ClearAllPoints()
             frame.chargeAnchorBarA:SetPoint(constructorValues.A.anchor, frame.chargeAnchorBarB:GetStatusBarTexture(), "TOP", 0, 0)
             frame.chargeAnchorBarA:Show()
+            
+            frame:ClearAllPoints()
             frame:SetPoint("CENTER", frame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
         -- just one bar
         elseif constructorValues.A.shouldRender then
+            -- Track that only bar A is active and its anchor configuration
+            -- Each frame gets its own anchorModeData since base and variant can have different bar setups
+            frame.meta.anchorModeData = {
+                type = 'barA',
+                point = constructorValues.A.anchor or 'BOTTOM',  -- Bar A's anchor point (TOP or BOTTOM)
+                relativePoint = trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint or 'BOTTOM'  -- UIParent's anchor point
+            }
+            
             frame.chargeAnchorBarA:SetMinMaxValues(constructorValues.A.min, constructorValues.A.max)
-            frame.chargeAnchorBarA:SetPoint(constructorValues.A.anchor, UIParent,
-                    trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint,
-                    ((trackerConfig.position.x) or 0), trackerConfig.position.y or 0)
+            -- Note: Bar A's position to UIParent will be set by SetFramePosition (which calls ClearAllPoints)
+            frame.chargeAnchorBarA:Show()
+            
+            frame:ClearAllPoints()
             frame:SetPoint("CENTER", frame.chargeAnchorBarA:GetStatusBarTexture(), "TOP", 0, 0)
+            
             -- Hide bar B when only bar A is needed
             if frame.chargeAnchorBarB then
                 frame.chargeAnchorBarB:Hide()
-                frame.chargeAnchorBarB:ClearAllPoints()
-            end
-            -- Show bar A if it was previously hidden
-            if frame.chargeAnchorBarA then
-                frame.chargeAnchorBarA:Show()
             end
         else
         -- no bars
+            -- Track that no bars are active
+            -- Each frame gets its own anchorModeData since base and variant can have different bar setups
+            frame.meta.anchorModeData = {
+                type = 'none',
+                point = nil,
+                relativePoint = nil
+            }
+            
             -- Hide both bars when they're not needed
             if frame.chargeAnchorBarA then
                 frame.chargeAnchorBarA:Hide()
@@ -942,21 +1109,17 @@ FrameTrackerManager.InvisibleAnchorController = {
                 frame.chargeAnchorBarB:Hide()
                 frame.chargeAnchorBarB:ClearAllPoints()
             end
+            
+            -- Critical: Clear frame's anchor points so it's not anchored to hidden bars
+            -- This ensures frame is visible when position is set
             frame:ClearAllPoints()
-            frame:SetPoint(
-                trackerConfig.position.anchorPoint,
-                UIParent,
-                trackerConfig.position.relativeAnchorPoint,
-                trackerConfig.position.x,
-                trackerConfig.position.y
-            )
+            -- Note: Position cache is cleared at the start of CreateInvisibleAnchorControllerBars
         end
     end,
     FlagAndHideUnusedFrames = function(frame, isVariantFrame, caseType, conditionalData, hasChargeBasedDisplay)
-        if not conditionalData or (not hasChargeBasedDisplay and not conditionalData) then
+        -- If there's no conditionalData, variant frame should not exist
+        if not conditionalData then
             FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'dualFrameStatus', 'hideVariant')
-        end
-        if not hasChargeBasedDisplay and not conditionalData then
             if isVariantFrame then
                 HideFrameElements(frame)
             else
@@ -964,6 +1127,7 @@ FrameTrackerManager.InvisibleAnchorController = {
             end
             return
         end
+        
         -- Handle frame visibility based on case type (unless skipped for drag operations)
         -- Cases A, B, G, H: Single-frame cases - hide the unused frame
         -- Cases C, D, E, F: Dual-frame cases - ensure both frames are visible (restore if previously hidden)
@@ -1001,6 +1165,13 @@ FrameTrackerManager.InvisibleAnchorController = {
 --- @param skipVisibilityUpdate boolean Whether to skip visibility updates (used during drag)
 function FrameTrackerManager:CreateInvisibleAnchorControllerBars(frame, trackerConfig, baseSpellID, isVariantFrame, skipVisibilityUpdate)
 
+    -- Clear position cache to ensure SetFramePosition runs after anchor mode changes
+    -- This is critical because toggling charge-based display changes anchor mode (none/barA/both)
+    -- without changing position config, but element positioning must be recalculated
+    if frame.previousProperties then
+        frame.previousProperties.position = nil
+    end
+
     local hasChargeBasedDisplay, hasChargeBasedConditionPropertyOverride, conditionalData = FrameTrackerManager.InvisibleAnchorController.GetRequiredBarsData(trackerConfig)
     local constructorValues, caseType = FrameTrackerManager.InvisibleAnchorController.CalculateRequiredBarProperties(hasChargeBasedDisplay, conditionalData, frame.meta.isVariantFrame, trackerConfig)
     FrameTrackerManager.InvisibleAnchorController.CreateBars(frame, constructorValues, baseSpellID)
@@ -1024,6 +1195,185 @@ end
     All other values (dimensions, colors, textures, etc.) are derived from 
     trackerConfig or API calls within each FrameBuilder method.
 ]]
+
+--- Helper function to convert cursor position to UIParent-relative coordinates
+--- @param anchorPoint string The anchor point to calculate offset from
+--- @return number offsetX, number offsetY
+local function GetCursorPositionRelativeToUIParent(anchorPoint)
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    x, y = x / scale, y / scale
+    
+    -- Calculate offset based on anchor point
+    if anchorPoint == "CENTER" or not anchorPoint then
+        local uiX, uiY = UIParent:GetCenter()
+        return x - uiX, y - uiY
+    end
+    
+    local left, bottom, width, height = UIParent:GetRect()
+    
+    if anchorPoint == "TOPLEFT" then
+        return x - left, y - (bottom + height)
+    elseif anchorPoint == "BOTTOMLEFT" then
+        return x - left, y - bottom
+    elseif anchorPoint == "TOPRIGHT" then
+        return x - (left + width), y - (bottom + height)
+    elseif anchorPoint == "BOTTOMRIGHT" then
+        return x - (left + width), y - bottom
+    elseif anchorPoint == "TOP" then
+        local uiX = UIParent:GetCenter()
+        return x - uiX, y - (bottom + height)
+    elseif anchorPoint == "BOTTOM" then
+        local uiX = UIParent:GetCenter()
+        return x - uiX, y - bottom
+    elseif anchorPoint == "LEFT" then
+        local _, uiY = UIParent:GetCenter()
+        return x - left, y - uiY
+    elseif anchorPoint == "RIGHT" then
+        local _, uiY = UIParent:GetCenter()
+        return x - (left + width), y - uiY
+    end
+    
+    -- Default to CENTER
+    local uiX, uiY = UIParent:GetCenter()
+    return x - uiX, y - uiY
+end
+
+--- Resolves relativeToFrame from various formats and sets frame position
+--- Handles: numeric baseSpellID, string ("UIParent", "Mouse", frame name), table (frame object or {uniqueID, trackerType}), nil
+--- When charge anchor bars are active, positions the appropriate bar instead of the frame
+--- @param frame table The frame to position
+--- @param trackerConfig table The tracker configuration containing position data
+function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
+    -- Determine which element should be positioned based on charge anchor mode
+    local elementToPosition = frame
+    local anchorModeData = frame.meta and frame.meta.anchorModeData
+    local useBarAnchorPoint = false  -- Flag to use bar's specific anchor point instead of user's
+    local barAnchorPoint = nil
+    
+    if anchorModeData and anchorModeData.type == "both" and frame.chargeAnchorBarB then
+        -- Both bars active: position bar B (anchored to UIParent)
+        elementToPosition = frame.chargeAnchorBarB
+        useBarAnchorPoint = true
+        barAnchorPoint = anchorModeData.point  -- Use the specific anchor point for this bar (TOP or BOTTOM)
+    elseif anchorModeData and anchorModeData.type == "barA" and frame.chargeAnchorBarA then
+        -- Only bar A active: position bar A (anchored to UIParent)
+        elementToPosition = frame.chargeAnchorBarA
+        useBarAnchorPoint = true
+        barAnchorPoint = anchorModeData.point  -- Use the specific anchor point for this bar (TOP or BOTTOM)
+    end
+    -- Otherwise position the frame itself (anchorModeData.type == "none" or no bars exist)
+    
+    elementToPosition:ClearAllPoints()
+    -- Cancel any existing mouse follow ticker
+    if frame.mouseFollowTicker then
+        frame.mouseFollowTicker:Cancel()
+        frame.mouseFollowTicker = nil
+    end
+    
+    local pos = trackerConfig.position
+    if pos and pos.anchorPoint and pos.x and pos.y then
+        -- Resolve relativeToFrame to actual frame object
+        local relativeFrame = UIParent
+        if pos.relativeToFrame then
+            if type(pos.relativeToFrame) == "number" then
+                -- It's a baseSpellID, look it up
+                for _, tType in ipairs({"buffs", "spells", "items"}) do
+                    local targetFrame = FrameTrackerManager.SpellStyler_frames[tType] 
+                                      and FrameTrackerManager.SpellStyler_frames[tType][pos.relativeToFrame]
+                    if targetFrame then
+                        relativeFrame = targetFrame
+                        break
+                    end
+                end
+            elseif type(pos.relativeToFrame) == "string" then
+                if pos.relativeToFrame == "Mouse" then
+                    -- Set up mouse following with a ticker (updates ~30 times per second)
+                    local anchorPt = useBarAnchorPoint and barAnchorPoint or pos.anchorPoint
+                    local relativeAnchorPt = useBarAnchorPoint and (anchorModeData.relativePoint or pos.anchorPoint) or (pos.relativeAnchorPoint or pos.anchorPoint)
+                    local mouseX, mouseY = GetCursorPositionRelativeToUIParent(relativeAnchorPt)
+                    local xOffset = 0 --frame.meta.isVariantFrame and 50 or 0
+                    elementToPosition:SetPoint(
+                        anchorPt,
+                        UIParent,
+                        relativeAnchorPt,
+                        mouseX + (pos.x or 0) + xOffset,
+                        mouseY + (pos.y or 0)
+                    )
+                    
+                    -- Start ticker to continuously update position
+                    -- Store references needed for dynamic config lookup
+                    frame._mouseAnchorBaseSpellID = frame.meta and frame.meta.baseSpellID
+                    frame._mouseAnchorTrackerType = frame._trackerType
+                    
+                    frame.mouseFollowTicker = C_Timer.NewTicker(0.03, function()
+                        if not frame:IsShown() then return end
+                        
+                        -- Read current config values dynamically so arrow key changes are respected
+                        local currentConfig = State:GetSpecificTrackerValue(frame._mouseAnchorBaseSpellID, frame._mouseAnchorTrackerType)
+                        if not currentConfig or not currentConfig.position or currentConfig.position.relativeToFrame ~= "Mouse" then
+                            -- Config changed, cancel this ticker
+                            if frame.mouseFollowTicker then
+                                frame.mouseFollowTicker:Cancel()
+                                frame.mouseFollowTicker = nil
+                            end
+                            return
+                        end
+                        
+                        local currentPos = currentConfig.position
+                        local currentAnchorPt = useBarAnchorPoint and barAnchorPoint or currentPos.anchorPoint
+                        local currentRelativeAnchorPt = useBarAnchorPoint and (anchorModeData.relativePoint or currentPos.anchorPoint) or (currentPos.relativeAnchorPoint or currentPos.anchorPoint)
+                        local mx, my = GetCursorPositionRelativeToUIParent(currentRelativeAnchorPt)
+                        local currentXOffset = 0 --frame.meta.isVariantFrame and 50 or 0
+                        elementToPosition:ClearAllPoints()
+                        elementToPosition:SetPoint(
+                            currentAnchorPt,
+                            UIParent,
+                            currentRelativeAnchorPt,
+                            mx + (currentPos.x or 0) + currentXOffset,
+                            my + (currentPos.y or 0)
+                        )
+                    end)
+                    return  -- Skip the standard SetPoint at the end
+                elseif pos.relativeToFrame == "UIParent" then
+                    relativeFrame = UIParent
+                else
+                    -- Try to resolve as frame name
+                    relativeFrame = _G[pos.relativeToFrame] or UIParent
+                end
+            elseif type(pos.relativeToFrame) == "table" then
+                if pos.relativeToFrame.GetObjectType then
+                    -- It's already a frame object
+                    relativeFrame = pos.relativeToFrame
+                elseif pos.relativeToFrame.uniqueID and pos.relativeToFrame.trackerType then
+                    -- Legacy format {uniqueID, trackerType}
+                    local targetFrame = FrameTrackerManager.SpellStyler_frames[pos.relativeToFrame.trackerType]
+                                      and FrameTrackerManager.SpellStyler_frames[pos.relativeToFrame.trackerType][pos.relativeToFrame.uniqueID]
+                    if targetFrame then
+                        relativeFrame = targetFrame
+                    end
+                end
+            end
+        end
+        local bonusOffSet = 0 --frame.meta.isVariantFrame and 50 or 0
+        local finalAnchorPoint = useBarAnchorPoint and barAnchorPoint or pos.anchorPoint
+        local finalRelativeAnchorPoint = useBarAnchorPoint and (anchorModeData.relativePoint or pos.anchorPoint) or (pos.relativeAnchorPoint or pos.anchorPoint)
+        if frame.meta.activeSpellID == 115151 or frame.meta.baseSpellID == 11515 then
+
+        end
+        elementToPosition:SetPoint(
+            finalAnchorPoint, 
+            relativeFrame,
+            finalRelativeAnchorPoint, 
+            (pos.x or 0) + bonusOffSet, 
+            pos.y or 0
+        )
+    else
+        -- Default position - center with offset
+        elementToPosition:SetPoint("CENTER", UIParent, "CENTER", -200, -100)
+    end
+end
+
 FrameTrackerManager.FrameBuilder = {
     Base = function(data)
         local frame = CreateFrame("Button", data.frameName, UIParent, "BackdropTemplate")
@@ -1040,6 +1390,7 @@ FrameTrackerManager.FrameBuilder = {
         
         ---@type TrackerFrameMeta
         frame.meta = {
+            itemID = data.itemID or nil,
             isVariantFrame = data.isVariantFrame,
             spellName = spellInfo.name,
             baseSpellID = data.baseSpellID,
@@ -1054,10 +1405,16 @@ FrameTrackerManager.FrameBuilder = {
             customTexture = data.trackerConfig.iconSettings.iconTexturePath ~= '' and data.trackerConfig.iconSettings.iconTexturePath ~= nil and data.trackerConfig.iconSettings.iconTexturePath or nil
         }
         
+        -- Store trackerType at top level for easy access (used by mouse anchor ticker)
+        frame._trackerType = data.trackerType
+
+        -- This stores previous values so that it only updates values that are different than the previous
+        frame.previousProperties = {}
+        
         -- Only set the icon's own size when it is not managed by a container.
+        local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
+        local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
         if not frame._inContainer then
-            local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
-            local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
             frame:SetSize(iconW, iconH)
         end
         frame:SetFrameStrata(data.trackerConfig.iconSettings.frameStrataLevel or "MEDIUM")
@@ -1065,30 +1422,9 @@ FrameTrackerManager.FrameBuilder = {
         frame:SetMovable(true)
         frame:SetClampedToScreen(false)
         frame:EnableMouse(false)  -- Don't eat mouse clicks - Layout overlay handles that
-        frame:SetBackdrop({
-            bgFile = "Interface\\Buttons\\WHITE8x8",
-            edgeFile = "Interface\\Buttons\\WHITE8x8",
-            edgeSize = 2,
-            insets = { left = 2, right = 2, top = 2, bottom = 2 },
-        })
-        frame:SetBackdropColor(0, 0, 0, 0)
-        frame:SetBackdropBorderColor(0, 0, 0, 0)
 
-        frame:ClearAllPoints()
-        
-        local pos = data.trackerConfig.position
-        if pos and pos.anchorPoint and pos.x and pos.y then
-            frame:SetPoint(
-                pos.anchorPoint, 
-                UIParent,
-                pos.relativeAnchorPoint or pos.anchorPoint, 
-                pos.x or 0, 
-                pos.y or 0
-            )
-        else
-            -- Default position - center with offset
-            frame:SetPoint("CENTER", UIParent, "CENTER", -200, -100)
-        end
+        -- Set frame position using shared helper
+        FrameTrackerManager:SetFramePosition(frame, data.trackerConfig)
         frame:Show()
         return frame
     end,
@@ -1107,6 +1443,10 @@ FrameTrackerManager.FrameBuilder = {
         
         -- Get icon texture
         local iconTexture = data.frame.meta.customTexture or data.trackerConfig.defaultIconTexturePath
+        
+        -- For items, defaultIconTexturePath is already the resolved texture path (not itemID)
+        -- No conversion needed
+        
         data.frame.icon:SetTexture(iconTexture)
         
         -- Apply color (RGB only, alpha goes on iconContainer)
@@ -1119,8 +1459,40 @@ FrameTrackerManager.FrameBuilder = {
         data.frame.iconContainer:SetAlpha(color.a or 1)
         data.frame.icon:SetDesaturated(false)
     end,
+    Border = function(data)
+        -- Create separate border frame
+        data.frame.borderFrame = CreateFrame("Frame", data.frameName .. "_Border", data.frame, "BackdropTemplate")
+        
+        -- Set frame level to be 1 above the iconContainer
+        data.frame.borderFrame:SetFrameLevel(data.frame:GetFrameLevel() + 1)
+        
+        -- Size border frame: if borderSize > 0, extend outside icon; otherwise match icon size
+        local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
+        local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
+        local borderSize = data.trackerConfig.iconSettings.borderSize or 0
+        if borderSize > 0 then
+            data.frame.borderFrame:SetSize(iconW + borderSize * 2, iconH + borderSize * 2)
+        else
+            data.frame.borderFrame:SetSize(iconW, iconH)
+            borderSize = borderSize * -1
+        end
+        data.frame.borderFrame:SetPoint("CENTER", data.frame, "CENTER", 0, 0)
+        
+        -- Apply backdrop with only edge (no background or insets)
+        data.frame.borderFrame:SetBackdrop({
+            edgeFile = "Interface\\Buttons\\WHITE8x8",
+            edgeSize = borderSize
+        })
+        data.frame.borderFrame:SetBackdropColor(0,0,0,0)
+        data.frame.borderFrame:SetBackdropBorderColor(
+            data.trackerConfig.iconSettings.borderColor.r,
+            data.trackerConfig.iconSettings.borderColor.g,
+            data.trackerConfig.iconSettings.borderColor.b,
+            data.trackerConfig.iconSettings.borderColor.a
+        )
+    end,
     Cooldown = function(data)
-        data.frame.cooldown = CreateFrame("Cooldown", data.frameName .. "_Cooldown", data.frame.iconContainer, "CooldownFrameTemplate")
+        data.frame.cooldown = CreateFrame("Cooldown", data.frameName .. "_Cooldown", data.frame, "CooldownFrameTemplate")
         data.frame.Cooldown = data.frame.cooldown
         data.frame.cooldown:SetAllPoints(data.frame.iconContainer)
         data.frame.cooldown:SetFrameLevel(data.frame.iconContainer:GetFrameLevel() + 1)  -- Above icon texture
@@ -1320,6 +1692,25 @@ FrameTrackerManager.FrameUpdater = {
             data.frame:SetAlpha(data.opacity)
             data.frame:SetFrameStrata(data.frameStrata.level)
             data.frame:SetFrameLevel(data.frameStrata.value)
+            
+            -- Set frame position using shared helper
+            if data.frame.previousProperties.position == nil
+                or data.frame.previousProperties.position.anchorPoint ~= data.trackerConfig.position.anchorPoint
+                or data.frame.previousProperties.position.relativeToFrame ~= data.trackerConfig.position.relativeToFrame
+                or data.frame.previousProperties.position.relativeAnchorPoint ~= data.trackerConfig.position.relativeAnchorPoint
+                or data.frame.previousProperties.position.x ~= data.trackerConfig.position.x
+                or data.frame.previousProperties.position.y ~= data.trackerConfig.position.y
+            then
+                FrameTrackerManager:SetFramePosition(data.frame, data.trackerConfig)
+                -- Store a copy, not a reference, so changes are detected
+                data.frame.previousProperties.position = {
+                    anchorPoint = data.trackerConfig.position.anchorPoint,
+                    relativeToFrame = data.trackerConfig.position.relativeToFrame,
+                    relativeAnchorPoint = data.trackerConfig.position.relativeAnchorPoint,
+                    x = data.trackerConfig.position.x,
+                    y = data.trackerConfig.position.y
+                }
+            end
         end)
     end,
     Icon = function(data)
@@ -1343,10 +1734,57 @@ FrameTrackerManager.FrameUpdater = {
             data.frame:SetSize(data.icon.width, data.icon.height)
         end
     end,
+    Border = function(data)
+        -- Update border frame if it exists
+        if data.frame.borderFrame then
+            local suc, err = pcall(function()
+                -- Set frame level to be 1 above the iconContainer
+                data.frame.borderFrame:SetFrameLevel(data.frame:GetFrameLevel() + 2)
+                
+                -- Apply border size and color from data (pre-computed or from config)
+                local borderSize = (data.border and data.border.size) or data.trackerConfig.iconSettings.borderSize
+                local borderColor = (data.border and data.border.color) or data.trackerConfig.iconSettings.borderColor
+                
+                local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
+                local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
+                -- Size border frame: if borderSize > 0, extend outside icon; otherwise match icon size
+
+                if data.frame.previousProperties.borderSize ~= borderSize
+                    or data.frame.previousProperties.borderColor.r ~= borderColor.r
+                    or data.frame.previousProperties.borderColor.g ~= borderColor.g
+                    or data.frame.previousProperties.borderColor.b ~= borderColor.b
+                    or data.frame.previousProperties.borderColor.a ~= borderColor.a
+                then
+                    if borderSize > 0 then
+                        data.frame.borderFrame:SetSize(iconW + borderSize * 2, iconH + borderSize * 2)
+                    else
+                        data.frame.borderFrame:SetSize(iconW, iconH)
+                        borderSize = borderSize * -1
+                    end
+                    data.frame.borderFrame.backdropInfo.edgeSize = borderSize
+                    
+                    data.frame.borderFrame:SetBackdrop({
+                        edgeFile = "Interface\\Buttons\\WHITE8x8",
+                        edgeSize = borderSize
+                    })
+                    data.frame.borderFrame:SetBackdropColor(0,0,0,0)
+                    data.frame.borderFrame:SetBackdropBorderColor(
+                        borderColor.r,
+                        borderColor.g,
+                        borderColor.b,
+                        borderSize ~= 0 and borderColor.a or 0
+                    )
+                    FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(data.frame, 'borderColor', borderColor)
+                    FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(data.frame, 'borderSize', borderSize)
+                end
+            end)
+        end
+    end,
     Alerts = function(data)
         if data.alerts.display == false then return end
         -- Re-attach the glow animation child with the latest glowNotification config
         ApplyGlowNotificationSetup(data.frame, data.trackerConfig)
+        SpellStyler.GlowUtil:PlayProcGlow(data.frame, 200)
     end,
     Cooldown = function(data)
         -- Apply icon desaturation setting
@@ -1743,12 +2181,18 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             texture = (function()
                 local override = getOverride("iconSettings.iconTexturePath")
                 local custom = override or (trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath) or nil
-                return custom or frame.updatedIconID or trackerConfig.defaultIconTexturePath
+                local texture = custom or frame.updatedIconID or trackerConfig.defaultIconTexturePath
+                
+                -- For items, defaultIconTexturePath is already the resolved texture path (not itemID)
+                -- No conversion needed
+                
+                return texture
             end)(),
             zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom) or 0,
             width = getOverride("iconSettings.width") or trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48,
             height = getOverride("iconSettings.height") or trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48,
-            color = getOverride("iconColor") or trackerConfig.iconColor or {r=1, g=1, b=1, a=1}
+            color = getOverride("iconColor") or trackerConfig.iconColor or {r=1, g=1, b=1},
+            alpha = getOverride("iconAlpha") or trackerConfig.iconAlpha or 1
         },
         alerts = {
             display = trackerConfig.glowNotification.shouldDisplay
@@ -1862,6 +2306,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
     -- Call each FrameUpdater method to apply pre-computed properties
     FrameTrackerManager.FrameUpdater.Base(data)
     FrameTrackerManager.FrameUpdater.Icon(data)
+    FrameTrackerManager.FrameUpdater.Border(data)
     FrameTrackerManager.FrameUpdater.Alerts(data)
     FrameTrackerManager.FrameUpdater.Cooldown(data)
     FrameTrackerManager.FrameUpdater.DisplayCountTicker(data)
@@ -1906,6 +2351,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
             Frame.meta.isVariantFrame = true
         end 
         FrameTrackerManager.FrameBuilder.Icon(frameMeta)
+        FrameTrackerManager.FrameBuilder.Border(frameMeta)
         FrameTrackerManager.FrameBuilder.Cooldown(frameMeta)
         FrameTrackerManager.FrameBuilder.CooldownBar(frameMeta)
         FrameTrackerManager.FrameBuilder.Count(frameMeta)
@@ -1926,6 +2372,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
         trackerType = trackerType,
         isVariantFrame = false,
         trackerConfig = trackerConfig,
+        itemID = trackerConfig.itemID or nil
     }
     local baseFrame = BuildFrame(dataBaseFrame)
     
@@ -1936,6 +2383,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
         trackerType = trackerType,
         isVariantFrame = true,
         trackerConfig = trackerConfig,
+        itemID = trackerConfig.itemID or nil
     }
     
     local variantFrame = BuildFrame(dataVariantFrame)
@@ -2233,7 +2681,7 @@ local hasPlayerEnetedWorld = false
 --- tables. Called synchronously on talent change so that no events fired
 --- during the rescan delay can reach stale frames or query the wrong spec DB.
 function FrameTrackerManager:TeardownSpecFrames()
-    for _, tType in ipairs({"buffs", "essential", "utility", "spells"}) do
+    for _, tType in ipairs({"buffs", "essential", "utility", "spells", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
             for donk, frame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 if frame and frame.Hide then
@@ -2269,7 +2717,7 @@ function FrameTrackerManager:TeardownSpecFrames()
     end
     FrameTrackerManager.cooldownManagerFrames    = { buffs = {} }
     FrameTrackerManager.cooldownIDToBaseSpellID = {}
-    FrameTrackerManager.SpellStyler_frames      = { buffs = {}, essential = {}, utility = {}, spells = {} }
+    FrameTrackerManager.SpellStyler_frames      = { buffs = {}, essential = {}, utility = {}, spells = {}, items = {} }
 end
 
 
@@ -2314,6 +2762,7 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         FrameTrackerManager:ApplyCooldownDuration({
             customFrame    = frame,
             config         = config,
+            itemID         = frame.meta.itemID,
             baseSpellID    = frame.meta.baseSpellID,
             activeSpellID  = frame.meta.activeSpellID,
             trackerType    = frame.meta.trackerType,
@@ -2407,6 +2856,9 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         config = config.cooldownText,
         textAlpha = whenActive
     })
+    
+    -- Update collapsible container visibility if frame is in a container
+    FrameTrackerManager:UpdateCollapsibleContainers(frame)
 end
 
 
@@ -2465,20 +2917,21 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
         return 0, 1, 1, 0  -- available=0, active=1, progress=1, full=0
     end
     
+    local statusBarAlpha = (config and config.statusBar and config.statusBar.color and config.statusBar.color.a) or 1
+    
     -- Buffs: simple aura presence check
     if trackerType == 'buffs' then
         local hasAura = frame.meta.currentAuraInstanceID and frame.meta.currentAuraInstanceID ~= 0
-        return hasAura and 0 or 1, hasAura and 1 or 0, hasAura and 1 or 0, hasAura and 0 or 1
+        
+        return hasAura and 0 or 1, 
+               hasAura and 1 or 0, 
+               hasAura and statusBarAlpha or 0, 
+               hasAura and 0 or statusBarAlpha
     end
     
     -- Items: build duration object on the fly and check cooldown state
-    if config and config.isItem then
-        local durationObj = nil
-        pcall(function()
-            local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(frame.meta.baseSpellID)
-            durationObj = C_DurationUtil.CreateDuration()
-            durationObj:SetTimeFromStart(startTimeSeconds, durationSeconds)
-        end)
+    if config and config.isItem and frame.meta.itemID then
+        local durationObj = FrameTrackerManager:GetItemDurationObject(frame.meta.itemID)
         
         local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
         
@@ -2486,19 +2939,19 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
             -- Item is on cooldown
             whenAvailableToCast = 0
             whenOnCooldown = 1
-            progressBar = 1--durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve(true)) or 1
+            progressBar = statusBarAlpha  -- Items have full progress bar during cooldown
             fullBar = 0
         else
             -- Item is available
             whenAvailableToCast = 1
             whenOnCooldown = 0
             progressBar = 0
-            fullBar = 1
+            fullBar = statusBarAlpha
         end
         
         return whenAvailableToCast, whenOnCooldown, progressBar, fullBar
     end
-    
+
     -- Spells: use secret-safe charge count or duration curves
     local cooldownInfo = C_Spell.GetSpellCooldown(activeSpellID)
     local chargeInfo = C_Spell.GetSpellCharges(activeSpellID)
@@ -2526,8 +2979,8 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     
     -- Progress/full bar alphas use curves (inverse of each other via different curve objects)
     if durationObj then
-        fullBar = durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve())
-        progressBar = durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve(true))
+        fullBar = durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve(false, statusBarAlpha))
+        progressBar = durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve(true, statusBarAlpha))
     else
         fullBar = 0
         progressBar = 0
@@ -2646,10 +3099,14 @@ function FrameTrackerManager:renderUpdateChargesText(data)
                 else
                     data.customFrame.count:SetAlpha(0)
                 end
-            elseif data.customFrame.meta.trackerType == "spells" then
+            elseif data.customFrame.meta.trackerType == "spells" or data.customFrame.meta.trackerType == "items" then
                 if not countCfg.display then
                     data.customFrame.count:SetAlpha(0)
+                elseif data.customFrame.meta.trackerType == "items" then
+                    -- Items don't have charges, hide count text
+                    data.customFrame.count:SetAlpha(0)
                 else
+                    -- Spells: show charge count for multi-charge spells
                     local chargesData = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID)
                     local currentCharges
                     if not chargesData or chargesData.maxCharges == 1 then
@@ -2726,12 +3183,12 @@ FrameTrackerManager.ApplyVisibility = {
             alpha = 1
         elseif context.displayState == "cooldown" or context.displayState == "active" then
             alpha = context.whenOnCooldownAlpha
-        elseif context.displayState == "available" or context.displayState == "inactive" then
+            elseif context.displayState == "available" or context.displayState == "inactive" then
             alpha = context.whenAvailableToCastAlpha
-        else
+            else
             alpha = 0
         end
-        
+
         -- Get color from override first, then state
         local iconColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "iconColor")
         local color = iconColorOverride or (context.config and context.config.iconColor) or {}
@@ -2889,21 +3346,15 @@ FrameTrackerManager.ApplyVisibility = {
             if context.trackerType == "buffs" then
                 context.customFrame.cooldown:SetAlpha(1)    
             else
-                --TODO: See if this actually works - just set display to true and see if it ignores the GCD swipe
-                local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
-                local durationObject
-                
                 -- Check if this is an item tracker
                 local config = State:GetSpecificTrackerValue(context.customFrame.meta.baseSpellID, context.customFrame.meta.trackerType)
                 if config and config.isItem then
-                    -- Item: create duration object using C_DurationUtil
-                    local success, error = pcall(function()
-                        local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(context.customFrame.meta.baseSpellID)
-                        durationObject = C_DurationUtil.CreateDuration()
-                        durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
-                    end)
+                    -- Items: always show at full alpha during cooldown (no GCD for items)
+                    context.customFrame.cooldown:SetAlpha(1)
                 else
-                    -- Spell tracker: get duration from spell API
+                    -- Spell tracker: hide during GCD using duration curves
+                    local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
+                    local durationObject
                     local maxSpellCharges = 1
                     local spellChargeInfo = C_Spell.GetSpellCharges(context.customFrame.meta.activeSpellID)
                     if spellChargeInfo and spellChargeInfo.maxCharges then
@@ -2914,10 +3365,10 @@ FrameTrackerManager.ApplyVisibility = {
                     else
                         durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
                     end
+                    
+                    local alpha = durationObject and durationObject:EvaluateRemainingDuration(durationEqualToGCD) or 0
+                    context.customFrame.cooldown:SetAlpha(alpha)
                 end
-                
-                local alpha = durationObject and durationObject:EvaluateRemainingDuration(durationEqualToGCD) or 0
-                context.customFrame.cooldown:SetAlpha(alpha)
             end
         end
     end,
@@ -2965,6 +3416,28 @@ FrameTrackerManager.ApplyVisibility = {
     end,
 }
 
+--- Creates and returns a duration object for an item cooldown
+--- @param itemID number The item ID to get cooldown for
+--- @return table|nil durationObject The duration object, or nil if item has no cooldown or on error
+function FrameTrackerManager:GetItemDurationObject(itemID)
+    if not itemID then return nil end
+    
+    local durationObject = nil
+    local success, error = pcall(function()
+        local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(itemID)
+        if startTimeSeconds and durationSeconds and durationSeconds > 0 then
+            durationObject = C_DurationUtil.CreateDuration()
+            durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
+        end
+    end)
+    
+    if error or not durationObject then
+        return nil
+    end
+    
+    return durationObject
+end
+
 --- @class ApplyCooldownDurationData
 --- @field baseSpellID number
 --- @field activeSpellID number
@@ -3005,11 +3478,9 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
                 end)
             end
         elseif data.config and data.config.isItem then
-            -- Items: create duration object using C_DurationUtil and C_Item.GetItemCooldown
+            -- Items: create duration object using GetItemDurationObject
             s, e = pcall(function()
-                local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(data.baseSpellID)
-                durationObject = C_DurationUtil.CreateDuration()
-                durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
+                durationObject = FrameTrackerManager:GetItemDurationObject(data.itemID)
             end)
         else
             s, e = pcall(function()
@@ -3160,7 +3631,7 @@ function FrameTrackerManager:MatchTrackerFrame(spellID)
         }
     ]]
     local currentSpellToBaseSpellID = C_Spell.GetBaseSpell(spellID)
-    for _, tType in ipairs({"essential", "utility", "spells"}) do
+    for _, tType in ipairs({"essential", "utility", "spells", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
             for baseSpellID, trackedFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 --match found, update the return data
@@ -3184,8 +3655,13 @@ function FrameTrackerManager:Initalize()
     if isInitialized or not hasPlayerEnetedWorld then return end
     isInitialized = true
 
+    -- Queue all frames for creation (buffs + spells/items)
     FrameTrackerManager:SetupCooldownManagerHooks()
     FrameTrackerManager:CreateNonBuffTrackerFrames()
+    
+    -- Build dependency tree and create frames in correct order
+    local tree = FrameTrackerManager:BuildAnchorDependencyTree()
+    FrameTrackerManager:CreateFramesFromDependencyTree(tree)
     
     -- Evaluate all conditionals after frames are created
     if SpellStyler.ConditionalEngine then
@@ -3198,6 +3674,10 @@ function FrameTrackerManager:Initalize()
         -- Re-setup hooks in case viewer was recreated
         FrameTrackerManager:SetupCooldownManagerHooks()
         FrameTrackerManager:CreateNonBuffTrackerFrames()
+        
+        -- Build dependency tree and create frames in correct order
+        local delayedTree = FrameTrackerManager:BuildAnchorDependencyTree()
+        FrameTrackerManager:CreateFramesFromDependencyTree(delayedTree)
         
         -- Re-evaluate conditionals after delayed setup
         if SpellStyler.ConditionalEngine then
@@ -3298,7 +3778,7 @@ local function eventHandlers(event, frame, meta)
 end
 
 local function forceUpdateAllFrames()
-    for _, tType in ipairs({"essential", "utility", "spells", "buffs"}) do
+    for _, tType in ipairs({"essential", "utility", "spells", "buffs", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
             for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 -- Update configuration changes first
@@ -3449,33 +3929,38 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
         --If an aura has been removed, its possible it was something that could modify a spells cooldown rate. The only way to respond (correctl update the duration and its ModRate, is to reapply, for any active cooldown)
-        for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
-            -- Skip if mock cooldown is active
-            if customFrame.meta.isDurationActive and not customFrame.meta.mockCooldownActive then
-                if customFrame.meta.dualFrameStatus ~= 'hideBase' then
-                    FrameTrackerManager:DriveFrameUpdate(
-                        customFrame,
-                        {
-                            resolveDuration = true,
-                            syncChargeText = true
-                        },
-                        nil,
-                        "respondingToPotentialModRateChange"
-                    )
-                end
-                if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then
-                    FrameTrackerManager:DriveFrameUpdate(
-                        customFrame.variantFrame,
-                        {
-                            resolveDuration = true,
-                            syncChargeText = true
-                        },
-                        nil,
-                        "respondingToPotentialModRateChange"
-                    )
+        for _, tType in ipairs({"spells", "items"}) do
+            if FrameTrackerManager.SpellStyler_frames[tType] then
+                for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                    -- Skip if mock cooldown is active
+                    if customFrame.meta.isDurationActive and not customFrame.meta.mockCooldownActive then
+                        if customFrame.meta.dualFrameStatus ~= 'hideBase' then
+                            FrameTrackerManager:DriveFrameUpdate(
+                                customFrame,
+                                {
+                                    resolveDuration = true,
+                                    syncChargeText = true
+                                },
+                                nil,
+                                "respondingToPotentialModRateChange"
+                            )
+                        end
+                        if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then
+                            FrameTrackerManager:DriveFrameUpdate(
+                                customFrame.variantFrame,
+                                {
+                                    resolveDuration = true,
+                                    syncChargeText = true
+                                },
+                                nil,
+                                "respondingToPotentialModRateChange"
+                            )
+                        end
+                    end
                 end
             end
         end
+
 
         -- Also treat an aura as removed when Blizzard reports a full update
         -- (isFullUpdate = true) — in that case refresh all CDM frames to let
@@ -3567,7 +4052,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         end
                         
                         local override = C_Spell.GetOverrideSpell(spellID)
-                        if override ~= spellID then
+                        if override ~= spellID and not match.customFrame.meta.isItem then
                             local spellInfoUpdate = C_Spell.GetSpellInfo(override)
                             --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                             --Save the override spell onto the frame though to be able to check future casts

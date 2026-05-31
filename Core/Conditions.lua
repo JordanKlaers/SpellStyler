@@ -35,7 +35,7 @@ local PAREN_COLORS = {
 }
 
 -- ─── Misc constants ──────────────────────────────────────────────────────────
-local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges", "buff" }
+local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges", "buff", "UnitHealth" }
 local COMPARISON_OPTIONS = {
     { label = "less than",             value = "<"  },
     { label = "less than or equal to", value = "<=" },
@@ -963,6 +963,147 @@ ConditionalCreator.conditionalTypeRenderers = {
         end)
         
         return 0
+    end,
+    UnitHealth = function(container, condition, vertPadding, onHeightResolved)
+        condition.UnitHealth = condition.UnitHealth or {}
+        local data = condition.UnitHealth
+        
+        -- Default values
+        if not data.unit then data.unit = "player" end
+        if not data.comparison then data.comparison = "<=" end
+        if not data.healthType then data.healthType = "percentage" end
+        
+        local yOffset = vertPadding
+        
+        -- Line 1: Unit dropdown
+        local unitLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        unitLabel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+        unitLabel:SetText("Unit")
+        
+        local unitDropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+        unitDropdown:SetPoint("LEFT", unitLabel, "RIGHT", -12, -2)
+        UIDropDownMenu_SetWidth(unitDropdown, 100)
+        
+        local function RefreshUnit()
+            local txt = "player"
+            if data.unit == "player" then txt = "Player"
+            elseif data.unit == "target" then txt = "Target"
+            elseif data.unit == "focus" then txt = "Focus"
+            end
+            UIDropDownMenu_SetText(unitDropdown, txt)
+        end
+        
+        UIDropDownMenu_Initialize(unitDropdown, function(self, level)
+            local units = {
+                { label = "Player", value = "player" },
+                { label = "Target", value = "target" },
+                { label = "Focus", value = "focus" },
+            }
+            
+            for _, unit in ipairs(units) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = unit.label
+                info.value = unit.value
+                info.checked = (data.unit == unit.value)
+                info.func = function(btn)
+                    data.unit = btn.value
+                    RefreshUnit()
+                    -- Re-evaluate all conditionals
+                    if SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        RefreshUnit()
+        
+        yOffset = yOffset - 30
+        
+        -- Line 2: Actual label, comparison dropdown, Target label, text input
+        local actualLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        actualLabel:SetPoint("TOPLEFT", container, "TOPLEFT", 0, yOffset)
+        actualLabel:SetText("Actual")
+        
+        local compDropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+        compDropdown:SetPoint("LEFT", actualLabel, "RIGHT", -12, -2)
+        UIDropDownMenu_SetWidth(compDropdown, 120)
+        
+        local HEALTH_COMPARISON_OPTIONS = {
+            { label = "less than or equal to", value = "<=" },
+            { label = "greater than or equal", value = ">=" },
+        }
+        
+        local function RefreshComp()
+            local txt = "|cFF888888operator|r"
+            for _, opt in ipairs(HEALTH_COMPARISON_OPTIONS) do
+                if opt.value == data.comparison then txt = opt.label; break end
+            end
+            UIDropDownMenu_SetText(compDropdown, txt)
+        end
+        
+        UIDropDownMenu_Initialize(compDropdown, function(self, level)
+            for _, opt in ipairs(HEALTH_COMPARISON_OPTIONS) do
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = opt.label
+                info.value = opt.value
+                info.checked = (data.comparison == opt.value)
+                info.func = function(btn)
+                    data.comparison = btn.value
+                    RefreshComp()
+                    -- Re-evaluate all conditionals
+                    if SpellStyler.ConditionalEngine then
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        RefreshComp()
+        
+        local targetLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        targetLabel:SetPoint("LEFT", compDropdown, "RIGHT", -8, 2)
+        targetLabel:SetText("Target %:")
+        
+        local targetInput = CreateFrame("EditBox", nil, container, "InputBoxTemplate")
+        targetInput:SetSize(60, ROW_HEIGHT)
+        targetInput:SetPoint("LEFT", targetLabel, "RIGHT", 8, 0)
+        targetInput:SetAutoFocus(false)
+        targetInput:SetMaxLetters(6)
+        targetInput:SetNumeric(true)
+        if data.targetValue ~= nil then targetInput:SetText(tostring(data.targetValue * 100)) end
+        targetInput:SetScript("OnTextChanged", function(self)
+            local v = tonumber(self:GetText())
+            if v then
+                data.targetValue = math.min(math.max(0, v), 100) / 100
+                -- Re-evaluate all conditionals
+                if SpellStyler.ConditionalEngine then
+                    C_Timer.After(0.5, function()
+                        SpellStyler.ConditionalEngine:EvaluateAll()
+                    end)
+                end
+            end
+        end)
+        
+        yOffset = yOffset - 30
+        
+        -- Calculate final height
+        local totalHeight = math.abs(yOffset - vertPadding) + 5
+        
+        -- Hide/show dropdowns to measure height properly
+        unitDropdown:Hide()
+        compDropdown:Hide()
+        C_Timer.After(0, function()
+            if not container:IsShown() then return end
+            unitDropdown:Show()
+            compDropdown:Show()
+            container:SetHeight(totalHeight)
+            if onHeightResolved then
+                onHeightResolved(totalHeight)
+            end
+        end)
+        
+        return totalHeight
     end
 }
 

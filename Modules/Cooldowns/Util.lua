@@ -8,13 +8,13 @@ local Util = SpellStyler.Util
 
 	inverse == true just swaps whats said above
 ]]
-function Util:IsValidCooldownCurve(inverse)
+function Util:IsValidCooldownCurve(inverse, alphaFromColor)
     --dummy GCD spell is never secret
     local GCD = C_Spell.GetSpellCooldown(61304)
     --should we use :GetSpellCooldownDuration() instead?
 
-    local inGCD  = inverse and 0 or 1
-    local outGCD = inverse and 1 or 0
+    local inGCD  = inverse and 0 or (alphaFromColor or 1)
+    local outGCD = inverse and (alphaFromColor or 1) or 0
 
     local C = C_CurveUtil.CreateCurve()
     C:SetType(Enum.LuaCurveType.Step)
@@ -55,5 +55,24 @@ function Util:IsZeroDurationCurve(inverse)
     C:SetType(Enum.LuaCurveType.Step)
     C:AddPoint(0, onZero)
     C:AddPoint(.0001, onNonZero)
+    return C
+end
+
+
+function Util:CurveComparison(targetHealth, targetValue, baseValue, comparison, isColor)
+    local C
+    if isColor then
+        C = C_CurveUtil.CreateColorCurve();
+    else
+        C = C_CurveUtil.CreateCurve()
+    end
+    C:SetType(Enum.LuaCurveType.Step)
+    if comparison == "<=" then
+        C:AddPoint(0, CreateColor(targetValue.r, targetValue.g, targetValue.b, targetValue.a or 1))
+        C:AddPoint(targetHealth, CreateColor(baseValue.r, baseValue.g, baseValue.b, baseValue.a or 1))
+    else
+        C:AddPoint(0, CreateColor(baseValue.r, baseValue.g, baseValue.b, baseValue.a or 1))
+        C:AddPoint(targetHealth, CreateColor(targetValue.r, targetValue.g, targetValue.b, targetValue.a or 1))
+    end
     return C
 end

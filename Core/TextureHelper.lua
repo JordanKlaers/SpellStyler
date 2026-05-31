@@ -364,12 +364,23 @@ pcall(function()
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                local spell = 107428
-                local cooldown = C_Spell.GetSpellCooldown(spell)
+                -- local item = 431416
+                -- local itemID = 241308
+                -- local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(itemID)
+                -- local spellName, spellID = C_Item.GetItemSpell(itemID)
                 -- DevTool:AddData({
-                --     cooldown = cooldown,
-                --     health = UnitHealthPercent("target")
-                -- }, "can I see if its zero")
+                --     itemCooldown = {
+                --         startTimeSeconds = startTimeSeconds,
+                --         durationSeconds = durationSeconds,
+                --         enableCooldownTimer = enableCooldownTimer
+                --     },
+                --     spellName = spellName,
+                --     spellID = spellID,
+                --     dataBase = SpellStyler.State:GetDataBase_V2(),
+                --     frameMatch = SpellStyler.FrameTrackerManager:MatchTrackerFrame(spellID),
+                --     overridedSpell = C_Spell.GetOverrideSpell(spellID),
+                --     existingFrames = SpellStyler.FrameTrackerManager.SpellStyler_frames
+                -- }, "X data")
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool

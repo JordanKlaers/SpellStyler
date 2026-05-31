@@ -872,6 +872,146 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
     return inputs
 end
 
+-- ============================================================================
+-- TARGET ANCHOR DROPDOWN RENDERER
+-- Dynamically generates anchor options including all tracked frames
+-- ============================================================================
+
+function IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl, uniqueID, trackerType, config)
+    -- Row container for the dropdown
+    local row = CreateFrame("Frame", nil, container)
+    row:SetSize(290, 30)
+    row:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -1)
+    
+    local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetText("Target anchor:")
+    label:SetTextColor(0.8, 0.8, 0.8)
+    label:SetPoint("LEFT", row, "LEFT", 0, 0)
+    label:SetJustifyH("LEFT")
+    
+    local dropdown = CreateFrame("Frame", nil, row, "UIDropDownMenuTemplate")
+    dropdown:SetPoint("RIGHT", row, "RIGHT", 18, 0)
+    UIDropDownMenu_SetWidth(dropdown, 140)
+    
+    -- Store reference to config and IDs (uniqueID/trackerType are nil in multi-icon mode)
+    dropdown.uniqueID = uniqueID
+    dropdown.trackerType = trackerType
+    dropdown.config = config
+    
+    -- In multi-icon mode, we use a placeholder uniqueID for getValue lookups
+    local lookupID = uniqueID or 0
+    
+    UIDropDownMenu_Initialize(dropdown, function(self, level)
+        local currentValue = config.getValue(lookupID, "position.relativeToFrame")
+        
+        -- UIParent option
+        do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = "UIParent"
+            info.value = "UIParent"
+            info.checked = (currentValue == nil or currentValue == UIParent or (type(currentValue) == "string" and currentValue == "UIParent"))
+            info.func = function(btn)
+                config.setValue(lookupID, "position.relativeToFrame", "UIParent")
+                UIDropDownMenu_SetSelectedValue(dropdown, "UIParent")
+                UIDropDownMenu_SetText(dropdown, "UIParent")
+                -- Apply the change immediately to cancel mouse ticker and reposition
+                if uniqueID and trackerType then
+                    SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                end
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+        
+        -- Mouse option (special case for cursor positioning)
+        do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = "Mouse"
+            info.value = "Mouse"
+            info.checked = (currentValue == "Mouse")
+            info.func = function(btn)
+                config.setValue(lookupID, "position.relativeToFrame", "Mouse")
+                UIDropDownMenu_SetSelectedValue(dropdown, "Mouse")
+                UIDropDownMenu_SetText(dropdown, "Mouse")
+                -- Apply the change immediately to start mouse ticker
+                if uniqueID and trackerType then
+                    SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                end
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+        
+        -- Separator
+        do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = ""
+            info.isTitle = true
+            info.notCheckable = true
+            UIDropDownMenu_AddButton(info, level)
+        end
+        
+        -- Get all tracked frames
+        if SpellStyler.State and SpellStyler.State.getTrackerValuesListForSettings then
+            local trackerList = SpellStyler.State:getTrackerValuesListForSettings()
+            local FTM = SpellStyler.FrameTrackerManager
+            
+            for _, entry in ipairs(trackerList) do
+                if not entry.isHeader then
+                    -- Get the actual frame
+                    local frame = FTM and FTM.SpellStyler_frames[entry.trackerType] 
+                                  and FTM.SpellStyler_frames[entry.trackerType][entry.uniqueID]
+                    
+                    if frame then
+                        local info = UIDropDownMenu_CreateInfo()
+                        info.text = entry.name or tostring(entry.uniqueID)
+                        info.value = entry.uniqueID
+                        -- Compare stored baseSpellID against entry's uniqueID
+                        info.checked = (tostring(currentValue) == tostring(entry.uniqueID))
+                        info.func = function(btn)
+                            -- Save as numeric baseSpellID
+
+                            config.setValue(lookupID, "position.relativeToFrame", entry.uniqueID)
+                            UIDropDownMenu_SetSelectedValue(dropdown, entry.uniqueID)
+                            UIDropDownMenu_SetText(dropdown, entry.name or tostring(entry.uniqueID))
+                            -- Apply the change immediately to cancel mouse ticker and reposition
+                            if uniqueID and trackerType then
+                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                            end
+                        end
+                        UIDropDownMenu_AddButton(info, level)
+                    end
+                end
+            end
+        end
+    end)
+    
+    -- Set initial display text
+    local currentValue = config.getValue(lookupID, "position.relativeToFrame")
+    if currentValue == nil or currentValue == UIParent or (type(currentValue) == "string" and currentValue == "UIParent") then
+        UIDropDownMenu_SetText(dropdown, "UIParent")
+    elseif currentValue == "Mouse" then
+        UIDropDownMenu_SetText(dropdown, "Mouse")
+    elseif type(currentValue) == "number" then
+        -- currentValue is a baseSpellID, look it up
+        local foundName = nil
+        if SpellStyler.State and SpellStyler.State.getTrackerValuesListForSettings then
+            local trackerList = SpellStyler.State:getTrackerValuesListForSettings()
+            
+            for _, entry in ipairs(trackerList) do
+                if not entry.isHeader and entry.uniqueID == currentValue then
+                    foundName = entry.name or tostring(entry.uniqueID)
+                    break
+                end
+            end
+        end
+        
+        UIDropDownMenu_SetText(dropdown, foundName or "UIParent")
+    else
+        UIDropDownMenu_SetText(dropdown, "UIParent")
+    end
+    
+    return row
+end
+
 function IconSettingsRenderer:GetIconConfigInputs(config)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
@@ -1004,6 +1144,21 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataValue", value) end,
                 },
                 {
+                    type = "textinput",
+                    label = "Border Size:",
+                    tooltip = "Negative values render the border inside the icon. Positive Values render the border outside the icon",
+                    numeric = true,
+                    min = -5000,
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.borderSize") or 0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.borderSize", value) end,
+                },
+                {
+                    type = "colorpicker",
+                    label = "Border Color:",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.borderColor") or {r=1, g=1, b=1, a=0} end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.borderColor", value) end,
+                },
+                {
                     type = "checkbox",
                     label = "Desaturate when on cooldown",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.desaturated") or false end,
@@ -1023,6 +1178,19 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideCooldownBling", value) end,
                 }
                 
+            }
+        },
+        {
+            type = "header",
+            text = "Anchor",
+            state = 'collapsed',
+            sectionContent = {
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl, uid, tType, config)
+                    end
+                },
             }
         },
         -- Status bar
@@ -2367,7 +2535,7 @@ end
 -- Main entry point for rendering icon settings into any container frame
 -- ============================================================================
 function IconSettingsRenderer:getTrackerTypeForID(uniqueID)
-	for _, tType in ipairs({"buffs", "essential", "utility"}) do
+	for _, tType in ipairs({"buffs", "essential", "utility", "spells", "items"}) do
 		if SpellStyler.State:CheckIsAlreadyTracker(uniqueID, tType) then
 			return tType
 		end
@@ -2697,6 +2865,13 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(options)
                                     lastControl = controlFrame
                                 end
                             end
+                        elseif inputDef.text == "Anchor" then
+                            -- Render anchor dropdown in multi-icon mode
+                            -- Pass nil for uniqueID and trackerType since we're in multi mode
+                            local anchorRow = IconSettingsRenderer:RenderTargetAnchorDropdown(parent, lastControl, nil, nil, config)
+                            if anchorRow then
+                                lastControl = anchorRow
+                            end
                         else
                             -- Other custom renders are not available in multi-mode
                             local msg = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -3019,92 +3194,165 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
                 frame:EnableMouse(true)
                 frame:RegisterForDrag("LeftButton")
                 
-                frame:SetScript("OnDragStart", function(self)
+                local dragStart = function(self)
+                    -- Save original anchor configuration before StartMoving() clears it
+                    local savedPos = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "position")
+                    self._savedAnchorBeforeDrag = {
+                        anchorPoint = savedPos.anchorPoint,
+                        relativeToFrame = savedPos.relativeToFrame,
+                        relativeAnchorPoint = savedPos.relativeAnchorPoint,
+                        x = savedPos.x,
+                        y = savedPos.y
+                    }
                     self:StartMoving()
                     -- Notify settings panel that this icon was selected
                     if onFrameClickCallback then
                         onFrameClickCallback(baseSpellID, trackerType)
                     end
-                end)
-                
-                frame:SetScript("OnDragStop", function(self)
+                end
+                local dragEnd = function(self)
                     self:StopMovingOrSizing()
-                    -- Save the new full position to the database (anchor, relative point, offsets)
-                    local point, relativeTo, relativePoint, xOff, yOff = self:GetPoint()
-                    -- Prefer saving a sanitized reference for relativeTo (use UIParent name when applicable)
-                    local relRef = nil
-                    if relativeTo == UIParent then
-                        relRef = "UIParent"
+                    
+                    -- Get the current offset directly from GetPoint
+                    local point, relativeTo, relativePoint, offsetX, offsetY = self:GetPointByName('CENTER')
+                    
+                    -- offsetX is good as-is, but offsetY needs adjustment for statusBar chain
+                    local adjustedOffsetY = offsetY
+                    
+                    local anchorModeData = self.meta and self.meta.anchorModeData
+
+                    DevTool:AddData({
+                        anchorModeData = anchorModeData,
+                        self = self
+                    }, "anchor mode data " .. self.meta.activeSpellID)
+                    if anchorModeData and (anchorModeData.type == "both" or anchorModeData.type == "barA") then
+                        -- Frame is anchored CENTER to BarA texture TOP, need to calculate root position
+                        if anchorModeData.type == "both" and self.chargeAnchorBarA and self.chargeAnchorBarB then
+                            -- Both bars: need to account for both texture heights
+                            local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
+                            local _, barBTextureHeight = self.chargeAnchorBarB:GetStatusBarTexture():GetSize()
+                            local _, barAHeight        = self.chargeAnchorBarA:GetSize()
+                            local _, barBHeight        = self.chargeAnchorBarB:GetSize()
+                            
+                            local barAPoint = anchorModeData.pointA or "BOTTOM"
+                            if barAPoint == "TOP" then
+                                DevTool:AddData({}, "anchor A (TOP) subtracting" .. barAHeight - barATextureHeight)
+                                adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
+                            else
+                                DevTool:AddData({}, "anchor A (BOTTOM) subtracting " .. barATextureHeight)
+                                adjustedOffsetY = adjustedOffsetY - barATextureHeight
+                            end
+                            
+                            
+                            local barBPoint = anchorModeData.point
+                            if barBPoint == "TOP" then
+                                DevTool:AddData({}, "anchor B (TOP) subtracting " .. barBHeight - barBTextureHeight)
+                                adjustedOffsetY = adjustedOffsetY + barBHeight - barBTextureHeight
+                            else
+                                DevTool:AddData({}, "anchor B (BOTTOM) subtracting " .. barBTextureHeight)
+                                adjustedOffsetY = adjustedOffsetY - barBTextureHeight
+                            end
+                        elseif anchorModeData.type == "barA" and self.chargeAnchorBarA then
+                            local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
+                            local _, barAHeight        = self.chargeAnchorBarA:GetSize()
+
+                            local barAPoint = anchorModeData.point
+                            if barAPoint == "TOP" then
+                                DevTool:AddData({}, "anchor A (TOP) subtracting" .. barAHeight - barATextureHeight)
+                                adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
+                            else
+                                DevTool:AddData({}, "anchor A (BOTTOM) subtracting " .. barATextureHeight)
+                                adjustedOffsetY = adjustedOffsetY - barATextureHeight
+                            end
+                        end
                     end
                     
-                    local positionData = {
-                        anchorPoint = point or "CENTER",
-                        relativeToFrame = relRef or nil,
-                        relativeAnchorPoint = relativePoint or point or "CENTER",
-                        x = xOff or 0,
-                        y = yOff or 0
-                    }
+                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.x", offsetX)
+                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.y", adjustedOffsetY)
                     
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position", positionData)
-                    
-                    -- State setter automatically calls ApplyStaticFrameProperties (handles charge infrastructure internally)
-                    -- This will reposition both base and variant frames and recreate charge bars at new position
-                    -- Variant frame is REUSED (preserving ConditionalEngine cache)
-                end)
+                    if FrameTrackerManager and FrameTrackerManager.ApplyStaticFrameProperties then
+                        FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                    end
+                end
                 
-                -- Add click handler to select icon in settings
-                frame:SetScript("OnMouseDown", function(self, button)
+                local mouseHoverTooltip = function(self)
+                    self:EnableMouseWheel(true)
+                    -- Show tooltip with size info
+                    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                    GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
+                    GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
+                    local width = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
+                    local height = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
+                    GameTooltip:AddLine(string.format("Size: %dx%d", width, height), 1, 1, 0)
+                    GameTooltip:AddLine("Drag to reposition", 0.5, 0.8, 1)
+                    GameTooltip:Show()
+                end
+
+                local selectInMenu = function(self, button)
                     if button == "LeftButton" and onFrameClickCallback then
                         onFrameClickCallback(baseSpellID, trackerType)
                     end
+                end
+
+                local scrollSize = function(self, delta)
+                    -- Get current size
+                    local currentWidth = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
+                    local currentHeight = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
+                    
+                    -- Calculate new size (scroll up = increase, scroll down = decrease)
+                    local sizeChange = delta * 2
+                    local newWidth = math.max(16, math.min(200, currentWidth + sizeChange))
+                    local newHeight = math.max(16, math.min(200, currentHeight + sizeChange))
+                    
+                    -- Apply new size
+                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width", newWidth)
+                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height", newHeight)
+                    
+                    -- Update tooltip with new size
+                    if GameTooltip:IsOwned(self) then
+                        GameTooltip:ClearLines()
+                        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                        GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
+                        GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
+                        GameTooltip:AddLine(string.format("Size: %dx%d", newWidth, newHeight), 1, 1, 0)
+                        GameTooltip:Show()
+                    end
+                end
+
+                frame:SetScript("OnDragStart", dragStart)
+                frame:SetScript("OnDragStop", dragEnd)
+                
+                -- Add click handler to select icon in settings
+                frame:SetScript("OnMouseDown", selectInMenu)
+                -- Add hover handlers for mouse wheel enable/disable
+                frame:SetScript("OnEnter", mouseHoverTooltip)
+                
+                frame:SetScript("OnLeave", function(self)
+                    self:EnableMouseWheel(false)
+                    GameTooltip:Hide()
                 end)
+                
+                -- Handle mouse wheel for resizing
+                frame:SetScript("OnMouseWheel", scrollSize)
                 
                 -- Enable dragging for variant frame if it exists (shares same position as base)
                 if frame.variantFrame and not frame.variantFrame._inContainer then
                     frame.variantFrame:EnableMouse(true)
                     frame.variantFrame:RegisterForDrag("LeftButton")
                     
-                    frame.variantFrame:SetScript("OnDragStart", function(self)
-                        self:StartMoving()
-                        -- Notify settings panel that this icon was selected
-                        if onFrameClickCallback then
-                            onFrameClickCallback(self.meta.baseSpellID, self.meta.trackerType)
-                        end
-                    end)
+                    frame.variantFrame:SetScript("OnDragStart", dragStart)
+                    frame.variantFrame:SetScript("OnDragStop", dragEnd)
                     
-                    frame.variantFrame:SetScript("OnDragStop", function(self)
-                        self:StopMovingOrSizing()
-                        -- Save to the same position property as base frame
-                        local point, relativeTo, relativePoint, xOff, yOff = self:GetPoint()
-                        local relRef = nil
-                        if relativeTo == UIParent then
-                            relRef = "UIParent"
-                        end
-                        
-                        local positionData = {
-                            anchorPoint = point or "CENTER",
-                            relativeToFrame = relRef or nil,
-                            relativeAnchorPoint = relativePoint or point or "CENTER",
-                            x = xOff or 0,
-                            y = yOff or 0
-                        }
-                        
-                        -- Use meta from variant frame to get correct baseSpellID/trackerType
-                        State:SetTrackerValueConfigProperty(self.meta.baseSpellID, self.meta.trackerType, "position", positionData)
-                        
-                        -- Verify it was saved
-                        local saved = State:GetTrackerValueConfigProperty(self.meta.baseSpellID, self.meta.trackerType, "position")
-                        
-                        -- Infrastructure rebuild is already triggered by State setter
-                        -- This will reuse the variant frame and recreate charge bars at new position
-                    end)
+                    -- Add click handler to select icon in settings
+                    frame.variantFrame:SetScript("OnMouseDown", selectInMenu)
+                    -- Add hover handlers for mouse wheel enable/disable
+                    frame.variantFrame:SetScript("OnEnter", mouseHoverTooltip)
                     
-                    -- Add click handler for variant frame
-                    frame.variantFrame:SetScript("OnMouseDown", function(self, button)
-                        if button == "LeftButton" and onFrameClickCallback then
-                            onFrameClickCallback(self.meta.baseSpellID, self.meta.trackerType)
-                        end
+                    frame.variantFrame:SetScript("OnLeave", function(self)
+                        self:EnableMouseWheel(false)
+                        GameTooltip:Hide()
                     end)
+                    frame.variantFrame:SetScript("OnMouseWheel", scrollSize)
                 end
             end
         end
@@ -3121,10 +3369,14 @@ function IconSettingsRenderer:DisableDraggingForAllFrames()
         for baseSpellID, frame in pairs(frames) do
             if frame then
                 frame:EnableMouse(false)
+                frame:EnableMouseWheel(false)
                 frame:RegisterForDrag()
                 frame:SetScript("OnDragStart", nil)
                 frame:SetScript("OnDragStop",  nil)
                 frame:SetScript("OnMouseDown", nil)
+                frame:SetScript("OnEnter", nil)
+                frame:SetScript("OnLeave", nil)
+                frame:SetScript("OnMouseWheel", nil)
                 
                 -- Hide the drag border indicator
                 if frame._SpellStyler_dragBorder then
@@ -3134,10 +3386,14 @@ function IconSettingsRenderer:DisableDraggingForAllFrames()
                 -- Disable dragging for variant frame if it exists
                 if frame.variantFrame then
                     frame.variantFrame:EnableMouse(false)
+                    frame.variantFrame:EnableMouseWheel(false)
                     frame.variantFrame:RegisterForDrag()
                     frame.variantFrame:SetScript("OnDragStart", nil)
                     frame.variantFrame:SetScript("OnDragStop",  nil)
                     frame.variantFrame:SetScript("OnMouseDown", nil)
+                    frame.variantFrame:SetScript("OnEnter", nil)
+                    frame.variantFrame:SetScript("OnLeave", nil)
+                    frame.variantFrame:SetScript("OnMouseWheel", nil)
                     
                     if frame.variantFrame._SpellStyler_dragBorder then
                         frame.variantFrame._SpellStyler_dragBorder:Hide()

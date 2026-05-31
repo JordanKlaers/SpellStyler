@@ -46,6 +46,7 @@ local function AddNewContainerConfig(name)
         iconWidth       = DEFAULT_ICON_SIZE,  -- width applied to each icon inside this container
         iconHeight      = DEFAULT_ICON_SIZE,  -- height applied to each icon inside this container
         collapsible     = false,              -- when true, CollapseLayout hides inactive icons
+        growDirection   = "right",            -- collapsible grow direction: horizontal: "left"|"right", vertical: "up"|"down"
     }
 end
 
@@ -141,18 +142,45 @@ function Containers:DetachIconsFromContainer(uniqueIDs)
     local FTM = SpellStyler.FrameTrackerManager
     if not FTM then return end
     for _, uniqueID in ipairs(uniqueIDs) do
-        for _, tType in ipairs({"buffs", "essential", "utility", "spells"}) do
+        for _, tType in ipairs({"buffs", "essential", "utility", "spells", "items"}) do
             local f = FTM:GetTrackerFrame(uniqueID, tType)
             if f then
                 f._inContainer = nil
-                FTM:ApplyStaticFrameProperties(uniqueID, tType)
+                
+                -- Clean up containerAnchorBar with pcall protection
+                if f.containerAnchorBar then
+                    pcall(function()
+                        f.containerAnchorBar:SetValue(0)
+                        f.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)
+                        local barTex = f.containerAnchorBar:GetStatusBarTexture()
+                        if barTex then
+                            barTex:SetAlpha(0)
+                            barTex:SetVertexColor(0, 0, 0, 0)
+                        end
+                        f.containerAnchorBar:SetAlpha(0)
+                        f.containerAnchorBar:Hide()
+                        f.containerAnchorBar:ClearAllPoints()
+                        f.containerAnchorBar:SetParent(nil)
+                    end)
+                    f.containerAnchorBar = nil
+                end
+                
+                -- Restore frame to full visibility with pcall protection
+                pcall(function()
+                    f:SetAlpha(1)
+                end)
+                
+                -- Apply properties with pcall to prevent taint propagation
+                pcall(function()
+                    FTM:ApplyStaticFrameProperties(uniqueID, tType)
+                end)
                 break
             end
         end
     end
     local ISR = SpellStyler.IconSettingsRenderer
     if ISR and ISR.EnableDraggingForAllFrames then
-        ISR:EnableDraggingForAllFrames()
+        -- ISR:EnableDraggingForAllFrames()
     end
 end
 
@@ -218,7 +246,7 @@ function Containers:LayoutContainer(name)
 
     local PADDING = 5  -- padding around the icon grid on all sides
 
-    local trackerTypes = { "buffs", "essential", "utility", "spells" }
+    local trackerTypes = { "buffs", "essential", "utility", "spells", "items" }
     -- Use the container's configured icon size; fall back to DEFAULT_ICON_SIZE.
     local containerIconW = (type(config.iconWidth)  == "number" and config.iconWidth  > 0) and config.iconWidth  or DEFAULT_ICON_SIZE
     local containerIconH = (type(config.iconHeight) == "number" and config.iconHeight > 0) and config.iconHeight or DEFAULT_ICON_SIZE
@@ -226,7 +254,16 @@ function Containers:LayoutContainer(name)
     -- Compute the grid dimensions so the container can be sized to wrap all icons.
     local numCols, numRows
     if N > 0 then
-        if vertical then
+        if config.collapsible then
+            -- Collapsible containers show all icons in a single row/column
+            if vertical then
+                numRows = N
+                numCols = 1
+            else
+                numCols = N
+                numRows = 1
+            end
+        elseif vertical then
             local R = rowLimit or N
             numRows = math.min(N, R)
             numCols = math.ceil(N / numRows)
@@ -240,14 +277,49 @@ function Containers:LayoutContainer(name)
     end
     local gridWidth  = numCols * containerIconW + (numCols - 1) * 4
     local gridHeight = numRows * containerIconH + (numRows - 1) * 4
-    containerFrame:SetSize(gridWidth + PADDING * 2, gridHeight + PADDING * 2)
+    pcall(function() containerFrame:SetSize(gridWidth + PADDING * 2, gridHeight + PADDING * 2) end)
 
     for i, uid in ipairs(config.associatedIcons) do
         for _, tType in ipairs(trackerTypes) do
             local frame = FTM:GetTrackerFrame(uid, tType)
             if frame then
+                -- If frame is anchored to mouse, cancel ticker and reset anchor to UIParent
+                local frameConfig = State:GetSpecificTrackerValue(uid, tType)
+                if frameConfig and frameConfig.position and frameConfig.position.relativeToFrame == "Mouse" then
+                    -- Cancel mouse ticker
+                    if frame.mouseFollowTicker then
+                        frame.mouseFollowTicker:Cancel()
+                        frame.mouseFollowTicker = nil
+                    end
+                    -- Reset anchor to UIParent
+                    State:SetTrackerValueConfigProperty(uid, tType, "position.relativeToFrame", "UIParent")
+                end
+                
+                -- Clean up containerAnchorBar if container is not collapsible
+                if not config.collapsible and frame.containerAnchorBar then
+                    pcall(function()
+                        frame.containerAnchorBar:SetValue(0)
+                        frame.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)
+                        local barTex = frame.containerAnchorBar:GetStatusBarTexture()
+                        if barTex then
+                            barTex:SetAlpha(0)
+                            barTex:SetVertexColor(0, 0, 0, 0)
+                        end
+                        frame.containerAnchorBar:SetAlpha(0)
+                        frame.containerAnchorBar:Hide()
+                        frame.containerAnchorBar:ClearAllPoints()
+                        frame.containerAnchorBar:SetParent(nil)
+                    end)
+                    frame.containerAnchorBar = nil
+                end
+                
+                -- Restore full visibility for non-collapsible containers
+                if not config.collapsible then
+                    pcall(function() frame:SetAlpha(1) end)
+                end
+                
                 -- Resize the icon to the container's configured dimensions
-                frame:SetSize(containerIconW, containerIconH)
+                pcall(function() frame:SetSize(containerIconW, containerIconH) end)
                 local iconW = containerIconW
                 local iconH = containerIconH
                 local idx   = i - 1  -- 0-based for modular arithmetic
@@ -290,6 +362,9 @@ function Containers:LayoutContainer(name)
                 frame:RegisterForDrag()
                 frame:SetScript("OnDragStart", nil)
                 frame:SetScript("OnDragStop",  nil)
+                
+                -- Show the frame (CollapseLayout will hide if needed)
+                frame:Show()
                 break
             end
         end
@@ -305,16 +380,13 @@ end
 -- Collapse layout (public)
 -- ============================================================
 
---- Shows only the icons currently on cooldown (meta.isDurationActive == true) and
---- packs them sequentially inside the container.  Icons that are not on cooldown
---- are hidden and their slot is reclaimed by the next active icon.
+--- Creates invisible anchor statusBars for collapsible positioning and visibility.
+--- Each icon gets a statusBar (min=0, max=1, width=iconWidth+gap) that controls
+--- its position and visibility. StatusBars chain together (LEFT→RIGHT), and the icon
+--- frame anchors to its statusBar's LEFT edge.
 ---
---- This is intentionally simpler than LayoutContainer: no alignment offsets,
---- no column/row wrapping — just a straight left-to-right (or top-to-bottom)
---- sequence of whatever is active right now.
----
---- Only icons already associated with the named container are processed.
---- Call this whenever you need the container to reflect live cooldown state.
+--- Only works for collapsible containers supporting single row/column.
+--- Updates statusBar values based on spell state (charges, cooldowns, buff presence).
 ---
 --- @param name string|nil  Container name; defaults to activeName.
 function Containers:CollapseLayout(name)
@@ -323,72 +395,125 @@ function Containers:CollapseLayout(name)
     local containers = self:GetDB()
     local config = containers[name]
     if not config then return end
-
+    
     -- If the container is not marked collapsible, do nothing.
     if not config.collapsible then return end
 
     local containerFrame = containerFrames[name]
     if not containerFrame then return end
-
+    
     local FTM = SpellStyler.FrameTrackerManager
     if not FTM then return end
 
-    local trackerTypes   = { "buffs", "essential", "utility", "spells" }
+    local trackerTypes   = { "buffs", "essential", "utility", "spells", "items" }
     local vertical       = (config.orientation == "vertical")
     local containerIconW = (type(config.iconWidth)  == "number" and config.iconWidth  > 0) and config.iconWidth  or DEFAULT_ICON_SIZE
     local containerIconH = (type(config.iconHeight) == "number" and config.iconHeight > 0) and config.iconHeight or DEFAULT_ICON_SIZE
-    local PADDING        = 5
     local GAP            = 4
-
-    -- Walk associated icons in configured order; split into active / inactive.
-    local activeFrames = {}
-    for _, uid in ipairs(config.associatedIcons) do
-        for _, tType in ipairs(trackerTypes) do
-            local frame = FTM:GetTrackerFrame(uid, tType)
-            if frame then
-                if frame.meta and frame.meta.isDurationActive then
-                    table.insert(activeFrames, frame)
-                else
-                    frame:Hide()
-                end
-                break
-            end
+    local barSize        = (vertical and containerIconH or containerIconW) + GAP
+    
+    -- Determine grow direction settings
+    local growDir = config.growDirection or (vertical and "down" or "right")
+    local barOrientation, isReverseFill, anchorPoint, iconAnchorPoint
+    
+    if vertical then
+        barOrientation = "VERTICAL"
+        if growDir == "down" then
+            isReverseFill = true
+            anchorPoint = "BOTTOM"
+            iconAnchorPoint = "TOP"
+        else  -- up
+            isReverseFill = false
+            anchorPoint = "TOP"
+            iconAnchorPoint = "BOTTOM"
+        end
+    else  -- horizontal
+        barOrientation = "HORIZONTAL"
+        if growDir == "right" then
+            isReverseFill = false
+            anchorPoint = "RIGHT"
+            iconAnchorPoint = "LEFT"
+        else  -- left
+            isReverseFill = true
+            anchorPoint = "LEFT"
+            iconAnchorPoint = "RIGHT"
         end
     end
 
-    local N = #activeFrames
-    if N == 0 then
-        -- Nothing active; keep the container at minimum size (icons are already hidden).
-        containerFrame:SetSize(PADDING * 2 + containerIconW, PADDING * 2 + containerIconH)
-        return
-    end
-
-    -- Resize the container to fit exactly the active icons.
-    if vertical then
-        containerFrame:SetSize(
-            PADDING * 2 + containerIconW,
-            PADDING * 2 + N * containerIconH + (N - 1) * GAP
-        )
-    else
-        containerFrame:SetSize(
-            PADDING * 2 + N * containerIconW + (N - 1) * GAP,
-            PADDING * 2 + containerIconH
-        )
-    end
-
-    -- Position active icons sequentially from the top-left of the container.
-    for i, frame in ipairs(activeFrames) do
-        local idx = i - 1  -- 0-based
-        frame:Show()
-        frame:ClearAllPoints()
-        if vertical then
-            frame:SetPoint("TOPLEFT", containerFrame, "TOPLEFT",
-                PADDING,
-                -(PADDING + idx * (containerIconH + GAP)))
-        else
-            frame:SetPoint("TOPLEFT", containerFrame, "TOPLEFT",
-                PADDING + idx * (containerIconW + GAP),
-                -PADDING)
+    -- Create or update anchor statusBars for each associated icon
+    local previousBar = nil
+    for i, uid in ipairs(config.associatedIcons) do
+        for _, tType in ipairs(trackerTypes) do
+            local frame = FTM:GetTrackerFrame(uid, tType)
+            if frame then
+                -- Create containerAnchorBar if it doesn't exist
+                if not frame.containerAnchorBar then
+                    frame.containerAnchorBar = CreateFrame("StatusBar", nil, UIParent)
+                    frame.containerAnchorBar:SetStatusBarTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\empty.tga")
+                    local barTexture = frame.containerAnchorBar:GetStatusBarTexture()
+                    if barTexture then
+                        barTexture:SetAlpha(0)  -- Invisible fill texture
+                        barTexture:SetVertexColor(0, 0, 0, 0)  -- No color
+                    end
+                    frame.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)  -- No color
+                    frame.containerAnchorBar:SetAlpha(0)  -- Invisible frame
+                    frame.containerAnchorBar:Hide()  -- Start hidden
+                    frame.containerAnchorBar:SetMinMaxValues(0, 1)
+                    frame.containerAnchorBar:SetValue(0)
+                    frame.containerAnchorBar.frame = frame  -- Reference back to frame
+                end
+                
+                -- Configure bar orientation and fill direction
+                frame.containerAnchorBar:SetOrientation(barOrientation)
+                frame.containerAnchorBar:SetReverseFill(isReverseFill)
+                
+                -- Ensure bar stays invisible (show for positioning only)
+                frame.containerAnchorBar:Show()
+                frame.containerAnchorBar:SetAlpha(0)
+                
+                -- Set bar size based on orientation with pcall protection
+                pcall(function()
+                    if vertical then
+                        frame.containerAnchorBar:SetSize(containerIconW, barSize)
+                    else
+                        frame.containerAnchorBar:SetSize(barSize, containerIconH)
+                    end
+                end)
+                
+                -- Position the bar: first bar anchors to container, others chain to previous
+                frame.containerAnchorBar:ClearAllPoints()
+                if i == 1 then
+                    if vertical then
+                        if growDir == "down" then
+                            frame.containerAnchorBar:SetPoint("TOP", containerFrame, "TOP", 0, 0)
+                        else  -- up
+                            frame.containerAnchorBar:SetPoint("BOTTOM", containerFrame, "BOTTOM", 0, 0)
+                        end
+                    else  -- horizontal
+                        if growDir == "right" then
+                            frame.containerAnchorBar:SetPoint("LEFT", containerFrame, "LEFT", 0, 0)
+                        else  -- left
+                            frame.containerAnchorBar:SetPoint("RIGHT", containerFrame, "RIGHT", 0, 0)
+                        end
+                    end
+                else
+                    -- Safely get previous bar's texture and chain using grow direction
+                    local prevTexture = previousBar and previousBar:GetStatusBarTexture()
+                    if prevTexture then
+                        frame.containerAnchorBar:SetPoint(iconAnchorPoint, prevTexture, anchorPoint, 0, 0)
+                    end
+                end
+                
+                -- Anchor the icon frame to its statusBar
+                frame:ClearAllPoints()
+                frame:SetPoint(iconAnchorPoint, frame.containerAnchorBar, iconAnchorPoint, 0, 0)
+                
+                previousBar = frame.containerAnchorBar
+                
+                -- Update visibility/positioning based on current spell state
+                Containers:UpdateContainerFrameVisibility(frame, config)
+                break
+            end
         end
     end
 end
@@ -585,6 +710,79 @@ function Containers:CreateContainer(parent, config)
     frame:SetAlpha(0)
 
     return frame
+end
+
+-- ============================================================
+-- Container visibility update
+-- ============================================================
+
+--- Updates visibility and positioning for a frame in a collapsible container.
+--- Uses statusBar value (0-1) to control both frame alpha and positioning.
+---
+--- Logic by tracker type:
+---   - Spells with charges: Use current charges for alpha & statusBar value
+---   - Items: Use cooldown state (on cooldown → 0, available → 1)
+---   - Buffs: Use aura presence (absent → 0, present → 1)
+---   - Spells without charges: Use cooldown curve (on cooldown → 0, available → 1)
+---
+--- @param frame table The tracker frame to update
+--- @param containerConfig table The container config (optional, will be looked up if nil)
+function Containers:UpdateContainerFrameVisibility(frame, containerConfig)
+    if not frame or not frame.containerAnchorBar then return end
+    if not frame._inContainer then return end
+    
+    local trackerType = frame.meta.trackerType
+    local baseSpellID = frame.meta.baseSpellID
+    local activeSpellID = frame.meta.activeSpellID
+    local itemID = frame.meta.itemID
+    
+    local alphaValue = 0
+    local barValue = 0
+    
+    -- Handle mock cooldown override
+    if frame.meta.mockCooldownActive then
+        alphaValue = 1
+        barValue = 1
+    elseif trackerType == "buffs" then
+        -- Buffs: check aura presence
+        local hasAura = frame.meta.currentAuraInstanceID and frame.meta.currentAuraInstanceID ~= 0
+        alphaValue = hasAura and 1 or 0
+        barValue = hasAura and 1 or 0
+    elseif trackerType == "items" then
+        -- Items: check cooldown from C_Item.GetItemCooldown (never secret)
+        if itemID then
+            local startTime, duration = C_Item.GetItemCooldown(itemID)
+            local onCooldown = duration and duration > 0
+            alphaValue = onCooldown and 0 or 1
+            barValue = onCooldown and 0 or 1
+        end
+    else
+        -- Spells: check for charges first
+        local chargeInfo = C_Spell.GetSpellCharges(activeSpellID)
+        
+        if chargeInfo and chargeInfo.maxCharges > 1 then
+            -- Spell with charges: use current charges
+            alphaValue = chargeInfo.currentCharges
+            barValue = chargeInfo.currentCharges
+        else
+            -- Spell without charges: use cooldown curve
+            local durationObj = C_Spell.GetSpellCooldownDuration(activeSpellID)
+            if durationObj then
+                -- Curve that returns 1 when available, 0 when on cooldown
+                local curve = SpellStyler.Util:IsValidCooldownCurve(false, 1)
+                alphaValue = durationObj:EvaluateRemainingDuration(curve)
+                barValue = alphaValue
+            else
+                -- No duration object means available
+                alphaValue = 1
+                barValue = 1
+            end
+        end
+    end
+    
+    -- Apply values to frame and statusBar
+    frame:SetAlpha(alphaValue)
+    frame.containerAnchorBar:SetValue(barValue)
 end
 
 -- ============================================================================
