@@ -221,3 +221,13 @@ Version 1.6.0
 	- Updates so that icons and statusBars can properly apply the alpha values from their color selections when the element should be visible
 	- Adds conditional for unit health percentage (supports player, focus and target unit ids)
 	- Adds ability to hover the mouse over an icon and scroll to increase or decrease the icon size
+
+Version 1.7.0
+	- Small updates in the settings UI for fonts. No functionality changes
+	- Removed the anchor dropdown settings for the status bar (cooldown bar). You can move the bar anywhere already.
+	- Adds a scale setting, so you can change the frame and ALL its components at once
+	- Combines some settings submenu sections and renames the titles. The settings were getting out of control and were semantically confusing
+	- Adds the ability to track totem durations as a bar. This associates a spell cast to a totem if the totem event occurs within 200ms of a spell cast (and only for a spell flagged for totem tracking). This works for tracking one totem but may be unreliable with more.
+	- Updates the conditional property overrides to properly support the "glow notification" option.
+	- Adds notification that some conditions may not support temporary property overrides. Only displays for the conditions for which its disable, to give an explination
+	- Removed custom label and custom texture from property overrides because its not possible to support those property overrides for conditions that use curves (A blizzard api method for working with secrets) Will need to reimplement a restricted implementation if anyone wants these

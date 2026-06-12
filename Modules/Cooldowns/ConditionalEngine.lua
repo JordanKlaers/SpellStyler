@@ -13,6 +13,18 @@ ConditionalEngine.liveValues = {
     -- Cooldown_<spellID>   = number secs (written on first NotifySourceChanged)
 }
 
+--- Mapping of conditionType to whether it requires constant updates.
+--- Conditions that require constant updates cannot detect state changes
+--- and thus cannot support time-limited property overrides.
+--- Add new conditionTypes here as 'true' if they need constant evaluation.
+ConditionalEngine.conditionTypeUpdateMapping = {
+    ["ComboPoints"] = false,
+    ["IsSpellUsable"] = false,
+    ["Charges"] = false,
+    ["UnitHealth"] = true,  -- Uses secret curve values that can't detect changes
+    ["buff"] = false,
+}
+
 
 --- Write a new value into liveValues and immediately re-evaluate all icons.
 ---
@@ -175,7 +187,6 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
             elseif conditionStructure.conditionType == "Charges" then
                 table.insert(partiallyResolved, true)
             elseif conditionStructure.conditionType == "UnitHealth" then
-                DevTool:AddData(conditionStructure, "unit health unit exists?")
                 table.insert(partiallyResolved, true)
                 requiresConstantUpdate = true
             elseif conditionStructure.conditionType == "buff" then
@@ -184,7 +195,6 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
                 if buffData and buffData.buffID and buffData.state then
                     local activeBuffs = currentLiveValues.activeBuffs or {}
                     local isActive = false
-                    
                     -- Handle both single ID and table of IDs
                     if type(buffData.buffID) == "table" then
                         -- Check if ANY of the buff IDs is active
@@ -211,6 +221,11 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
                     table.insert(partiallyResolved, false)
                 end
 			end
+            
+            -- Check if this conditionType requires constant updates
+            if conditionStructure.conditionType and ConditionalEngine.conditionTypeUpdateMapping[conditionStructure.conditionType] then
+                requiresConstantUpdate = true
+            end
 		else
 			table.insert(partiallyResolved, deepCopy(conditionStructure))
 		end
@@ -223,6 +238,30 @@ end
 -- ============================================================================
 -- CHARGE CONDITIONAL HELPERS
 -- ============================================================================
+
+--- Checks if a conditional uses any conditionType that requires constant updates.
+--- Conditions requiring constant updates cannot detect state changes and thus
+--- cannot support time-limited property overrides (duration field).
+--- @param conditionalName string The name of the conditional to check
+--- @return boolean True if the conditional uses any conditionType requiring constant updates
+function ConditionalEngine:ConditionalRequiresConstantUpdate(conditionalName)
+    local conditionalData = SpellStyler_DB
+        and SpellStyler_DB.conditionals
+        and SpellStyler_DB.conditionals[conditionalName]
+    if not conditionalData or not conditionalData.entries then
+        return false
+    end
+    
+    for _, entry in ipairs(conditionalData.entries) do
+        if entry.type == "condition" and entry.conditionType then
+            if self.conditionTypeUpdateMapping[entry.conditionType] then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
 
 --- Checks if a conditional definition contains a Charges condition.
 --- @param conditionalName string The name of the conditional to check
@@ -496,13 +535,11 @@ end
 --- @param healthConfig table The UnitHealth config { unit, comparison, targetValue, healthType }
 --- @param override table The property override definition
 --- @return any The computed value (or original override.value if not applicable)
-function ConditionalEngine:CalculateCurveValue(healthConfig, override, trackerValue)
-    
+function ConditionalEngine:CalculateCurveValue(healthConfig, overrideValue, baseValue, isColor)
     -- Only apply curve calculation to color properties
-    local baseValue = SpellStyler.State:AccessNestedValue(trackerValue, override.property, nil, 'get')
     if UnitExists(healthConfig.unit) then
-        if override.property and string.lower(override.property):find("color") then
-            local calculatedValue_r, calculatedValue_g, calculatedValue_b, calculatedValue_a = UnitHealthPercent(healthConfig.unit, true, SpellStyler.Util:CurveComparison(healthConfig.targetValue, override.value, baseValue, healthConfig.comparison, true)):GetRGBA()
+        if isColor then
+            local calculatedValue_r, calculatedValue_g, calculatedValue_b, calculatedValue_a = UnitHealthPercent(healthConfig.unit, true, SpellStyler.Util:CurveComparison(healthConfig.targetValue, overrideValue, baseValue, healthConfig.comparison, true)):GetRGBA()
             return {
                 r = calculatedValue_r,
                 g = calculatedValue_g,
@@ -510,7 +547,10 @@ function ConditionalEngine:CalculateCurveValue(healthConfig, override, trackerVa
                 a = calculatedValue_a
             }
         else
-            local calculatedValue = UnitHealthPercent(healthConfig.unit, true, SpellStyler.Util:CurveComparison(healthConfig.targetValue, override.value, baseValue, healthConfig.comparison))
+            local calculatedValue = 1
+            local s, e = pcall(function()
+                calculatedValue = UnitHealthPercent(healthConfig.unit, true, SpellStyler.Util:CurveComparison(healthConfig.targetValue, overrideValue, baseValue, healthConfig.comparison))
+            end)            
             return calculatedValue
         end
     else
@@ -554,10 +594,29 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
     
     for _, override in ipairs(propertyOverrides) do
         local actualValue = override.value
-        
+        local overrideValue = override.value
         -- Automatically use curve calculation for all property overrides when UnitHealth conditional is used
         if usesUnitHealth and healthConfig then
-            actualValue = self:CalculateCurveValue(healthConfig, override, trackerValue)
+            local baseValueDefault = nil
+            if override.property == 'glowNotification.glowColor' then
+                -- This specific property needs to have 0 be the default alpha, since this is a "requiresConstantUpdate" property (it cant destinguish true false) AND its also weird because it needs to support the "display notification when spell becomes available"
+                local stateValue = SpellStyler.State:AccessNestedValue(trackerValue, override.property, nil, 'get')
+                baseValueDefault = {
+                    r = stateValue.r,
+                    g = stateValue.g,
+                    b = stateValue.b,
+                    a = 0
+                }
+            else
+                baseValueDefault = SpellStyler.State:AccessNestedValue(trackerValue, override.property, nil, 'get')
+                -- curves can only accept numbers, ensure its a number being passed (TODO: remove or create solution for unsupported methods that are called as a result of the property override options)
+                overrideValue = tonumber(override.value) or 0
+            end
+
+            local isColor = (override.property and string.lower(override.property):find("color")) ~= nil
+            local success, error = pcall(function()
+                actualValue = self:CalculateCurveValue(healthConfig, overrideValue, baseValueDefault, isColor or false)
+            end)
         end
         
         table.insert(computedOverrides, {

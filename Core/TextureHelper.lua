@@ -364,23 +364,33 @@ pcall(function()
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                -- local item = 431416
-                -- local itemID = 241308
-                -- local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(itemID)
-                -- local spellName, spellID = C_Item.GetItemSpell(itemID)
+                -- local a = C_CurveUtil.CreateCurve()
+                -- a:SetType(Enum.LuaCurveType.Step)
+                -- a:AddPoint(0, 10)
+                -- a:AddPoint(1, 90)
+                -- local b = C_CurveUtil.CreateCurve()
+                -- b:SetType(Enum.LuaCurveType.Step)
+                -- b:AddPoint(0, 90)
+                -- b:AddPoint(1, 10)
                 -- DevTool:AddData({
-                --     itemCooldown = {
-                --         startTimeSeconds = startTimeSeconds,
-                --         durationSeconds = durationSeconds,
-                --         enableCooldownTimer = enableCooldownTimer
+                --     a = {
+                --         low = "0 - 10",
+                --         high  = "100 - 90",
+                --         result = UnitHealthPercent("target", true, a)
                 --     },
-                --     spellName = spellName,
-                --     spellID = spellID,
-                --     dataBase = SpellStyler.State:GetDataBase_V2(),
-                --     frameMatch = SpellStyler.FrameTrackerManager:MatchTrackerFrame(spellID),
-                --     overridedSpell = C_Spell.GetOverrideSpell(spellID),
-                --     existingFrames = SpellStyler.FrameTrackerManager.SpellStyler_frames
-                -- }, "X data")
+                --     b = {
+                --         low = "0 - 90",
+                --         high  = "100 - 10",
+                --         result = UnitHealthPercent("target", true, b)
+                --     }
+                -- }, "curve test")
+                -- local unitHealthCurveValue = UnitHealthPercent("target", true, SpellStyler.Util:CurveComparison(100, 9, 1, "<="))
+                -- DevTool:AddData({
+                --     SpellStyler = SpellStyler,
+                --     SpellStyler_CharDB = SpellStyler_CharDB,
+                --     unitHealthCurveValue = unitHealthCurveValue,
+                --     isSecret = issecretvalue(unitHealthCurveValue)
+                -- }, "SpellStyler")
 			end
 
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool

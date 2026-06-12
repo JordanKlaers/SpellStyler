@@ -208,9 +208,15 @@ function IconSettingsRenderer:CreateDropdown(parent, config, anchor)
     dropdown:SetPoint("RIGHT", row, "RIGHT", 18, 0)
     UIDropDownMenu_SetWidth(dropdown, config.width or 140)
 
+    -- Check if this is a font dropdown and if global override is enabled
+    local isFontDropdown = config.label and config.label:match("Font:")
+    local isGlobalOverride = false
+    if isFontDropdown and State and State.GetGlobalSettings then
+        local gs = State:GetGlobalSettings()
+        isGlobalOverride = gs and gs.fontSettings and gs.fontSettings.overrideAllFonts or false
+    end
+
     UIDropDownMenu_Initialize(dropdown, function(self, level)
-        -- Check if this is a font dropdown by looking for "Font:" label
-        local isFontDropdown = config.label and config.label:match("Font:")
         local LSM = isFontDropdown and LibStub and LibStub("LibSharedMedia-3.0", true) or nil
         
         for _, opt in ipairs(config.options) do
@@ -240,11 +246,30 @@ function IconSettingsRenderer:CreateDropdown(parent, config, anchor)
 
     -- Set initial text from current value
     local currentValue = config:getValue()
-    for _, opt in ipairs(config.options) do
-        if opt.value == currentValue then
-            UIDropDownMenu_SetText(dropdown, opt.label)
-            break
+    if isGlobalOverride then
+        -- Force display "Use Global Default" when global override is active
+        UIDropDownMenu_SetText(dropdown, "Use Global Default")
+        UIDropDownMenu_DisableDropDown(dropdown)
+    else
+        for _, opt in ipairs(config.options) do
+            if opt.value == currentValue then
+                UIDropDownMenu_SetText(dropdown, opt.label)
+                break
+            end
         end
+    end
+    
+    -- Add tooltip if global override is active
+    if isGlobalOverride then
+        dropdown:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Font Override Active", 1, 1, 1)
+            GameTooltip:AddLine("Font settings are currently overwritten with the global values from the utility tab", 0.8, 0.8, 0.8, true)
+            GameTooltip:Show()
+        end)
+        dropdown:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
     end
 
     return row, dropdown
@@ -516,128 +541,111 @@ local function GetFontOptions()
     return options
 end
 
---- Creates font flags checkboxes (multi-select)
+--- Creates font flags dropdown
 --- @param parent frame The parent frame
 --- @param config table Config object with getValue/setValue
 --- @param anchor frame The frame to anchor to
 --- @param configPath string The config path (e.g., "cooldownText.fontFlags")
 --- @param uniqueID number The unique tracker ID
 --- @param trackerType string The tracker type
---- @return frame The last created checkbox frame
+--- @return frame The row frame
 local function CreateFontFlagsCheckboxes(parent, config, anchor, configPath, uniqueID, trackerType)
-    local container = CreateFrame("Frame", nil, parent)
-    container:SetSize(290, 80)
-    container:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -5)
+    -- Row container
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetSize(290, 30)
+    row:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -1)
     
-    local label = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     label:SetText("Font Flags:")
     label:SetTextColor(0.8, 0.8, 0.8)
-    label:SetPoint("TOPLEFT", container, "TOPLEFT", 0, 0)
+    label:SetPoint("LEFT", row, "LEFT", 0, 0)
+    label:SetJustifyH("LEFT")
     
-    -- Helper to parse flags string into table
-    local function ParseFlags(flagsStr)
-        if not flagsStr or flagsStr == "" or flagsStr == "default" then
-            return {}
-        end
-        local flags = {}
-        for flag in string.gmatch(flagsStr, "[^,]+") do
-            local trimmed = flag:match("^%s*(.-)%s*$")  -- trim whitespace
-            flags[trimmed] = true
-        end
-        return flags
-    end
+    local dropdown = CreateFrame("Frame", nil, row, "UIDropDownMenuTemplate")
+    dropdown:SetPoint("RIGHT", row, "RIGHT", 18, 0)
+    UIDropDownMenu_SetWidth(dropdown, 140)
     
-    -- Helper to build flags string from table
-    local function BuildFlags(flagsTable)
-        local parts = {}
-        if flagsTable.OUTLINE then table.insert(parts, "OUTLINE") end
-        if flagsTable.THICKOUTLINE then table.insert(parts, "THICKOUTLINE") end
-        if flagsTable.MONOCHROME then table.insert(parts, "MONOCHROME") end
-        if #parts == 0 then return "" end
-        return table.concat(parts, ",")
-    end
-    
-    -- Get current flags
+    -- Get current flags and migrate old comma-separated format to new single-value format
     local currentFlags = config.getValue(uniqueID, configPath) or "default"
-    local flagsTable = ParseFlags(currentFlags)
     
-    -- Use Global Default checkbox
-    local useGlobalCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
-    useGlobalCB:SetSize(20, 20)
-    useGlobalCB:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -5)
-    useGlobalCB:SetChecked(currentFlags == "default")
-    
-    local useGlobalLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    useGlobalLabel:SetPoint("LEFT", useGlobalCB, "RIGHT", 2, 0)
-    useGlobalLabel:SetText("Use Global Default")
-    useGlobalLabel:SetTextColor(0.7, 0.7, 0.7)
-    
-    -- Flag checkboxes
-    local outlineCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
-    outlineCB:SetSize(20, 20)
-    outlineCB:SetPoint("TOPLEFT", useGlobalCB, "BOTTOMLEFT", 20, -5)
-    outlineCB:SetChecked(flagsTable.OUTLINE == true)
-    outlineCB:SetEnabled(currentFlags ~= "default")
-    
-    local outlineLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    outlineLabel:SetPoint("LEFT", outlineCB, "RIGHT", 2, 0)
-    outlineLabel:SetText("Outline")
-    outlineLabel:SetTextColor(currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7)
-    
-    local thickOutlineCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
-    thickOutlineCB:SetSize(20, 20)
-    thickOutlineCB:SetPoint("TOPLEFT", outlineCB, "BOTTOMLEFT", 0, -3)
-    thickOutlineCB:SetChecked(flagsTable.THICKOUTLINE == true)
-    thickOutlineCB:SetEnabled(currentFlags ~= "default")
-    
-    local thickOutlineLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    thickOutlineLabel:SetPoint("LEFT", thickOutlineCB, "RIGHT", 2, 0)
-    thickOutlineLabel:SetText("Thick Outline")
-    thickOutlineLabel:SetTextColor(currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7)
-    
-    local monochromeCB = CreateFrame("CheckButton", nil, container, "UICheckButtonTemplate")
-    monochromeCB:SetSize(20, 20)
-    monochromeCB:SetPoint("TOPLEFT", thickOutlineCB, "BOTTOMLEFT", 0, -3)
-    monochromeCB:SetChecked(flagsTable.MONOCHROME == true)
-    monochromeCB:SetEnabled(currentFlags ~= "default")
-    
-    local monochromeLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    monochromeLabel:SetPoint("LEFT", monochromeCB, "RIGHT", 2, 0)
-    monochromeLabel:SetText("Monochrome")
-    monochromeLabel:SetTextColor(currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7, currentFlags == "default" and 0.5 or 0.7)
-    
-    -- Update function
-    local function UpdateFlags()
-        if useGlobalCB:GetChecked() then
-            config.setValue(uniqueID, configPath, "default")
-            outlineCB:SetEnabled(false)
-            thickOutlineCB:SetEnabled(false)
-            monochromeCB:SetEnabled(false)
-            outlineLabel:SetTextColor(0.5, 0.5, 0.5)
-            thickOutlineLabel:SetTextColor(0.5, 0.5, 0.5)
-            monochromeLabel:SetTextColor(0.5, 0.5, 0.5)
+    -- Migration: Convert old comma-separated format to new single-value format
+    if currentFlags:find(",") then
+        -- Prioritize THICKOUTLINE > OUTLINE > MONOCHROME
+        if currentFlags:find("THICKOUTLINE") then
+            currentFlags = "THICKOUTLINE"
+        elseif currentFlags:find("OUTLINE") then
+            currentFlags = "OUTLINE"
+        elseif currentFlags:find("MONOCHROME") then
+            currentFlags = "MONOCHROME"
         else
-            local flags = {
-                OUTLINE = outlineCB:GetChecked(),
-                THICKOUTLINE = thickOutlineCB:GetChecked(),
-                MONOCHROME = monochromeCB:GetChecked()
-            }
-            config.setValue(uniqueID, configPath, BuildFlags(flags))
-            outlineCB:SetEnabled(true)
-            thickOutlineCB:SetEnabled(true)
-            monochromeCB:SetEnabled(true)
-            outlineLabel:SetTextColor(0.7, 0.7, 0.7)
-            thickOutlineLabel:SetTextColor(0.7, 0.7, 0.7)
-            monochromeLabel:SetTextColor(0.7, 0.7, 0.7)
+            currentFlags = "default"
+        end
+        config.setValue(uniqueID, configPath, currentFlags)
+    end
+    
+    -- Validate that currentFlags is one of the valid options
+    if currentFlags ~= "default" and currentFlags ~= "OUTLINE" and currentFlags ~= "THICKOUTLINE" and currentFlags ~= "MONOCHROME" then
+        currentFlags = "default"
+        config.setValue(uniqueID, configPath, currentFlags)
+    end
+    
+    -- Check if global font override is enabled
+    local isGlobalOverride = false
+    if State and State.GetGlobalSettings then
+        local gs = State:GetGlobalSettings()
+        isGlobalOverride = gs and gs.fontSettings and gs.fontSettings.overrideAllFonts or false
+    end
+    
+    -- Define dropdown options
+    local options = {
+        { label = "Use Global Default", value = "default" },
+        { label = "Outline", value = "OUTLINE" },
+        { label = "Thick Outline", value = "THICKOUTLINE" },
+        { label = "Monochrome", value = "MONOCHROME" },
+    }
+    
+    UIDropDownMenu_Initialize(dropdown, function(self, level)
+        for _, opt in ipairs(options) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = opt.label
+            info.value = opt.value
+            info.func = function()
+                config.setValue(uniqueID, configPath, opt.value)
+                UIDropDownMenu_SetText(dropdown, opt.label)
+            end
+            info.checked = (currentFlags == opt.value)
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+    
+    -- Set initial text from current value
+    if isGlobalOverride then
+        -- Force display "Use Global Default" when global override is active
+        UIDropDownMenu_SetText(dropdown, "Use Global Default")
+        UIDropDownMenu_DisableDropDown(dropdown)
+    else
+        for _, opt in ipairs(options) do
+            if opt.value == currentFlags then
+                UIDropDownMenu_SetText(dropdown, opt.label)
+                break
+            end
         end
     end
     
-    useGlobalCB:SetScript("OnClick", UpdateFlags)
-    outlineCB:SetScript("OnClick", UpdateFlags)
-    thickOutlineCB:SetScript("OnClick", UpdateFlags)
-    monochromeCB:SetScript("OnClick", UpdateFlags)
+    -- Add tooltip if global override is active
+    if isGlobalOverride then
+        dropdown:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Font Override Active", 1, 1, 1)
+            GameTooltip:AddLine("Font settings are currently overwritten with the global values from the utility tab", 0.8, 0.8, 0.8, true)
+            GameTooltip:Show()
+        end)
+        dropdown:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+    end
     
-    return container
+    return row
 end
 
 --- Creates status bar configuration inputs that can be reused for different bar types
@@ -712,23 +720,6 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
             setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".displayState", value) end,
         })
     end
-    
-    -- Common status bar inputs
-    table.insert(inputs, {
-        type = "dropdown",
-        label = "Anchor Point on Self:",
-        options = ANCHOR_OPTIONS,
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".anchorSelf") or "LEFT" end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".anchorSelf", value) end,
-    })
-    
-    table.insert(inputs, {
-        type = "dropdown",
-        label = "Anchor Point on Icon:",
-        options = ANCHOR_OPTIONS,
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".anchorParent") or "RIGHT" end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".anchorParent", value) end,
-    })
     
     table.insert(inputs, {
         type = "textinput",
@@ -1121,6 +1112,15 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.opacity", value) end,
                 },
                 {
+                    type = "textinput",
+                    label = "Scale:",
+                    numeric = true,
+                    max = 10000,
+                    min = -10000,
+                    getValue = function(self) return config.getValue(self.uniqueID, "scale") or 1.0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "scale", value) end,
+                },
+                {
                     type = "dropdown",
                     label = "Frame Strata:",
                     options = {
@@ -1135,6 +1135,12 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     },
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataLevel") or "MEDIUM" end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataLevel", value) end,
+                },
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl, uid, tType, config)
+                    end
                 },
                 {
                     type = "textinput",
@@ -1180,25 +1186,75 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 
             }
         },
-        {
-            type = "header",
-            text = "Anchor",
-            state = 'collapsed',
-            sectionContent = {
-                {
-                    type = "customRender",
-                    render = function(container, lastControl, uid, tType, rerender)
-                        return IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl, uid, tType, config)
-                    end
-                },
-            }
-        },
         -- Status bar
         {
             type = "header",
-            text = "Bar Timer",
+            text = "Spell Cooldown / Buff Duration",
             state = 'collapsed',
-            section = CreateStatusBarInputs("statusBar", config, { includeMockCooldown = true, includeDisplayState = true, isBarPosition = true })
+            section = (function()
+                local section = {
+                    {
+                        type = "checkbox",
+                        label = "Display Cooldown Text",
+                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.display") or false end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.display", value) end,
+                    },
+                    {
+                        type = "dropdown",
+                        label = "Font:",
+                        options = GetFontOptions(),
+                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.font") or "default" end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.font", value) end,
+                    },
+                    {
+                        type = "customRender",
+                        render = function(container, lastControl, uid, tType)
+                            return CreateFontFlagsCheckboxes(container, config, lastControl, "cooldownText.fontFlags", uid, tType)
+                        end
+                    },
+                    {
+                        type = "textinput",
+                        label = "Size:",
+                        numeric = true,
+                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.size") or 14 end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.size", value) end,
+                    },
+                    {
+                        type = "colorpicker",
+                        label = "Color:",
+                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.color") or {r=1, g=1, b=1, a=1} end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.color", value) end,
+                    },
+                    {
+                        type = "textinput",
+                        label = "Offset X:",
+                        numeric = true,
+                        min = -5000,
+                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.x") or 0 end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.x", value) end,
+                    },
+                    {
+                        type = "textinput",
+                        label = "Offset Y:",
+                        numeric = true,
+                        min = -5000,
+                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.y") or 0 end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.y", value) end,
+                    },
+                }
+                
+                -- Spread the status bar inputs into the section (JavaScript: [...array])
+                local statusBarInputs = CreateStatusBarInputs("statusBar", config, { 
+                    includeMockCooldown = true, 
+                    includeDisplayState = true, 
+                    isBarPosition = true 
+                })
+                for _, input in ipairs(statusBarInputs) do
+                    table.insert(section, input)
+                end
+                
+                return section
+            end)()
         },
         {
             type = "header",
@@ -1285,67 +1341,11 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 },
             }
         },
-        -- Cooldown Text
-        {
-            type = "header",
-            text = "Cooldown Text",
-            state = 'collapsed',
-            section = {
-                {
-                    type = "checkbox",
-                    label = "Display Cooldown Text",
-                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.display") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.display", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Font:",
-                    options = GetFontOptions(),
-                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.font") or "default" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.font", value) end,
-                },
-                {
-                    type = "customRender",
-                    render = function(container, lastControl, uid, tType)
-                        return CreateFontFlagsCheckboxes(container, config, lastControl, "cooldownText.fontFlags", uid, tType)
-                    end
-                },
-                {
-                    type = "textinput",
-                    label = "Size:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.size") or 14 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.size", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.color") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.color", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Offset X:",
-                    numeric = true,
-                    min = -5000,
-                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.x") or 0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.x", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Offset Y:",
-                    numeric = true,
-                    min = -5000,
-                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.y") or 0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.y", value) end,
-                },
-            }
-        },
         
         -- Count Text
         {
             type = "header",
-            text = "Count/Charge Text",
+            text = "Spell Charges / Buff Stacks",
             state = 'collapsed',
             section = {
                 {
@@ -1353,16 +1353,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     render = function(container, lastControl, uid, tType, rerender)
                         return IconSettingsRenderer:RenderCountTextSection(container, lastControl, uid, tType, rerender, config)
                     end
-                }
-            }
-        },
-        
-        -- Count/Charge Bar
-        {
-            type = "header",
-            text = "Count/Charge Bar",
-            state = 'collapsed',
-            section = {
+                },
                 {
                     type = "customRender",
                     render = function(container, lastControl, uid, tType, rerender)
@@ -1371,7 +1362,26 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 }
             }
         },
-        
+
+        {
+            type = "header",
+            text = "Totem Tracking",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "checkbox",
+                    label = "Attempt to track totem duration",
+                    getValue = function(self) return config.getValue(self.uniqueID, "totemBar.attemptToTrack") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "totemBar.attemptToTrack", value) end,
+                },
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uniqueID, trackerType, rerender)
+                        return IconSettingsRenderer:RenderTotemBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
+                    end
+                },
+            }
+        },
         -- Custom Label
         {
             type = "header",
@@ -1454,15 +1464,15 @@ end
 -- Maps each user-visible property label to its dot-path in the tracker config
 -- and the type of value input needed.
 local PROPERTY_DEFS = {
-    { label = "Offset X",              path = "position.x",                     inputType = "text"  },
-    { label = "Offset Y",              path = "position.y",                     inputType = "text"  },
+    { label = "Offset X",              path = "position.x",                     inputType = "text"  }, --SetPoint does not accept secret values, so to implement youd need two statusBars for the x and y shift
+    { label = "Offset Y",              path = "position.y",                     inputType = "text"  }, --SetPoint does not accept secret values, so to implement youd need two statusBars for the x and y shift
     { label = "Icon Color",            path = "iconColor",                      inputType = "color" },
     { label = "Icon Custom Texture",   path = "iconSettings.iconTexturePath",   inputType = "text",     inputLabel = "Texture path:"  },
     { label = "Icon Width",            path = "iconSettings.width",             inputType = "text"  },
     { label = "Icon Height",           path = "iconSettings.height",            inputType = "text"  },
     { label = "Opacity",               path = "iconSettings.opacity",           inputType = "text"  },
-    { label = "Trigger Glow",          path = "glowNotification.shouldDisplay", inputType = "text",     inputLabel = "Glow duration:"  },
-    { label = "Custom Label",          path = "customLabel.text",               inputType = "text"  },
+    { label = "Trigger Glow",          path = "glowNotification.glowColor",     inputType = "color" }, -- This is an unusual one, its assumed that if this property is present then it SHOULD should the glow notification when its associated condition passes
+    -- { label = "Custom Label",          path = "customLabel.text",               inputType = "text"  },
     { label = "Custom Label Size",     path = "customLabel.size",               inputType = "text"  },
     { label = "Custom Label X",        path = "customLabel.x",                  inputType = "text"  },
     { label = "Custom Label Y",        path = "customLabel.y",                  inputType = "text"  },
@@ -1696,6 +1706,88 @@ function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uni
 end
 
 -- ============================================================================
+-- TOTEM BAR SECTION RENDERER
+-- Called from the customRender control inside the "Totem Bar" header.
+-- Renders status bar display settings for totem duration visualization.
+-- ============================================================================
+
+-- Helper function to build totem bar input definitions
+-- Similar to charge bar but without min/max values (works like cooldown bar)
+local function GetTotemBarInputDefinitions(config)
+    local sectionInputs = {
+        {
+            type = "dropdown",
+            label = "Totem Bar Display:",
+            options = {
+                { label = "Always", value = "always" },
+                { label = "Only when active", value = "active" },
+                { label = "Never", value = "never" },
+            },
+            getValue = function(self) 
+                local val = config.getValue(self.uniqueID, "totemBar.displayState")
+                return val or "never"
+            end,
+            setValue = function(self, value) 
+                config.setValue(self.uniqueID, "totemBar.displayState", value) 
+            end,
+        },
+    }
+    
+    -- Add bar configuration inputs (similar to cooldown bar)
+    local barInputs = CreateStatusBarInputs("totemBar", config, { 
+        includeMockCooldown = false, 
+        includeDisplayState = false,
+        isBarPosition = false 
+    })
+    for _, input in ipairs(barInputs) do
+        table.insert(sectionInputs, input)
+    end
+    
+    return sectionInputs
+end
+
+function IconSettingsRenderer:RenderTotemBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
+    -- Build section inputs array for bar display
+    local sectionInputs = GetTotemBarInputDefinitions(config)
+    
+    -- Now render all the inputs using the existing rendering logic
+    local currentAnchor = lastControl
+    for _, inputDef in ipairs(sectionInputs) do
+        -- Set uniqueID and trackerType on the input definition so getValue/setValue can access them
+        inputDef.uniqueID = uniqueID
+        inputDef.trackerType = trackerType
+        
+        if inputDef.type == "checkbox" then
+            currentAnchor = CreateCheckbox(container, inputDef, currentAnchor)
+        elseif inputDef.type == "textinput" then
+            currentAnchor = CreateTextInput(container, inputDef, currentAnchor)
+        elseif inputDef.type == "colorpicker" then
+            currentAnchor = CreateColorPicker(container, inputDef, currentAnchor)
+        elseif inputDef.type == "dropdown" then
+            currentAnchor = self:CreateDropdown(container, inputDef, currentAnchor)
+        elseif inputDef.type == "positionbuttons" then
+            -- Set up getX/setX/getY/setY methods based on pathPrefix
+            local pathPrefix = inputDef.pathPrefix or (inputDef.isBarPosition and "statusBar" or "position")
+            inputDef.getX = function(self)
+                return config.getValue(self.uniqueID, pathPrefix .. ".x") or 0
+            end
+            inputDef.getY = function(self)
+                return config.getValue(self.uniqueID, pathPrefix .. ".y") or 0
+            end
+            inputDef.setX = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".x", value)
+            end
+            inputDef.setY = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".y", value)
+            end
+            currentAnchor = CreatePositionInputs(container, inputDef, currentAnchor, inputDef.isBarPosition)
+        end
+    end
+    
+    return currentAnchor
+end
+
+-- ============================================================================
 -- PROPERTY OVERRIDE CREATOR
 -- Called from the customRender control inside the "Property Overrides"
 -- header section.  Returns the last frame created so the outer layout loop can
@@ -1748,7 +1840,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
 
     for i, cond in ipairs(conditions) do
         local isExpanded = (_conditionEntryStates[uidKey][i] ~= "collapsed")
-        local capturedI  = i
+        local conditionIndex  = i
 
         -- Sub-header bar
         local subHeaderBg = CreateFrame("Frame", nil, container)
@@ -1776,11 +1868,11 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
         delBtn:SetScript("OnClick", function()
             -- Get the frame and conditional key before removing from state
             local customFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
-            local conditionalKey = (cond.customName and cond.customName ~= "") and cond.customName or (cond.conditionalName or ("Condition " .. capturedI))
+            local conditionalKey = (cond.customName and cond.customName ~= "") and cond.customName or (cond.conditionalName or ("Condition " .. conditionIndex))
             
             -- Remove from state
-            SpellStyler.State:RemoveSpecialVisibilityCondition(uniqueID, trackerType, capturedI)
-            _conditionEntryStates[uidKey][capturedI] = nil
+            SpellStyler.State:RemoveSpecialVisibilityCondition(uniqueID, trackerType, conditionIndex)
+            _conditionEntryStates[uidKey][conditionIndex] = nil
             
             -- Explicitly clear this conditional's cached overrides and update the frame
             if customFrame and SpellStyler.ConditionalEngine then
@@ -1795,10 +1887,10 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
         end)
 
         subHeaderBtn:SetScript("OnClick", function()
-            if _conditionEntryStates[uidKey][capturedI] == "collapsed" then
-                _conditionEntryStates[uidKey][capturedI] = nil
+            if _conditionEntryStates[uidKey][conditionIndex] == "collapsed" then
+                _conditionEntryStates[uidKey][conditionIndex] = nil
             else
-                _conditionEntryStates[uidKey][capturedI] = "collapsed"
+                _conditionEntryStates[uidKey][conditionIndex] = "collapsed"
             end
             rerender()
         end)
@@ -1816,7 +1908,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
             local BOX_H    = BOX_PAD + ROW_H + ROW_GAP + ROW_H + ROW_GAP + ROW_H + (BOX_PAD * 2)  -- 92
 
             for j, override in ipairs(overrides) do
-                local capturedJ = j
+                local propertyOverrideIndex = j
                 local propDef   = _PROP_DEF_BY_PATH[override.property]
 
                 -- ── Bordered container for this override ───────────────────────
@@ -1839,10 +1931,10 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 delOverrideBtn:SetScript("OnClick", function()
                     -- Get the frame and conditional key before removing from state
                     local customFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
-                    local conditionalKey = (cond.customName and cond.customName ~= "") and cond.customName or (cond.conditionalName or ("Condition " .. capturedI))
+                    local conditionalKey = (cond.customName and cond.customName ~= "") and cond.customName or (cond.conditionalName or ("Condition " .. conditionIndex))
                     
                     -- Remove the property override from state
-                    SpellStyler.State:RemovePropertyOverride(uniqueID, trackerType, capturedI, capturedJ)
+                    SpellStyler.State:RemovePropertyOverride(uniqueID, trackerType, conditionIndex, propertyOverrideIndex)
                     
                     -- Explicitly clear this conditional's cached overrides and update the frame
                     if customFrame and SpellStyler.ConditionalEngine then
@@ -1879,17 +1971,16 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                         info.value   = def.path
                         info.checked = (override.property == def.path)
                         info.func    = function(btn)
-                            SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "property", btn.value)
+                            -- DevTool:AddData(btn.value, "but value")
+                            -- TODO: If the property is the glow notification call a method to add or update the glowNotification to work via alpha rather than duration
+                            SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "property", btn.value)
                             local newDef = _PROP_DEF_BY_PATH[btn.value]
                             if newDef and newDef.inputType == "color" then
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=1, g=1, b=1, a=1 })
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=1, g=1, b=1, a=1 })
                             else
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", "")
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", "")
                             end
                             rerender()
-                            if SpellStyler.ConditionalEngine then
-                                SpellStyler.ConditionalEngine:EvaluateAll()
-                            end
                         end
                         UIDropDownMenu_AddButton(info, level)
                     end
@@ -1917,7 +2008,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=nr, g=ng, b=nb, a=na })
                                 -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
                                 -- No need to call EvaluateAll again during dragging
                             end,
@@ -1925,13 +2016,13 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=nr, g=ng, b=nb, a=na })
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=nr, g=ng, b=nb, a=na })
                                 -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
                                 -- No need to call EvaluateAll again during dragging
                             end,
                             cancelFunc = function(prev)
                                 colorBtn:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 })
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 })
                                 -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
                                 -- No need to call EvaluateAll again during cancel
                             end,
@@ -1951,7 +2042,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     textInput:SetMaxLetters(256)
                     textInput:SetText(tostring(override.value or ""))
                     textInput:SetScript("OnTextChanged", function(self)
-                        SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "value", self:GetText())
+                        SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", self:GetText())
                         -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
                         -- No need to call EvaluateAll again during typing
                     end)
@@ -1975,10 +2066,48 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 durationInput:SetScript("OnTextChanged", function(self)
                     local text = self:GetText()
                     local duration = (text and text ~= "") and tonumber(text) or nil
-                    SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, capturedI, capturedJ, "duration", duration)
+                    SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "duration", duration)
                     -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
                     -- No need to call EvaluateAll again during typing
                 end)
+                
+                -- Check if the conditional requires constant updates (e.g., UnitHealth)
+                -- If so, disable duration input since time-limited overrides can't work
+                local requiresConstantUpdate = false
+                if cond.conditionalName and cond.conditionalName ~= "" and SpellStyler.ConditionalEngine then
+                    requiresConstantUpdate = SpellStyler.ConditionalEngine:ConditionalRequiresConstantUpdate(cond.conditionalName)
+                end
+                
+                if requiresConstantUpdate then
+                    -- Disable the input
+                    durationInput:SetEnabled(false)
+                    durationInput:SetTextColor(0.5, 0.5, 0.5)
+                    durationInput:SetText("")
+                    
+                    -- Update label to show it's disabled
+                    durationLabel:SetTextColor(0.5, 0.5, 0.5)
+                    
+                    -- Add tooltip to both label and input explaining why
+                    local tooltipText = "The condition used is unable to detect when the state changes, and is thus unable to apply a timer. The property override is either applied or not applied. Please reach out on the discord (found on the addon page) for more information"
+                    
+                    durationLabel:SetScript("OnEnter", function(self)
+                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                        GameTooltip:SetText(tooltipText, nil, nil, nil, nil, true)
+                        GameTooltip:Show()
+                    end)
+                    durationLabel:SetScript("OnLeave", function(self)
+                        GameTooltip:Hide()
+                    end)
+                    
+                    durationInput:SetScript("OnEnter", function(self)
+                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                        GameTooltip:SetText(tooltipText, nil, nil, nil, nil, true)
+                        GameTooltip:Show()
+                    end)
+                    durationInput:SetScript("OnLeave", function(self)
+                        GameTooltip:Hide()
+                    end)
+                end
 
                 currentAnchor = overrideBox
             end
@@ -1999,7 +2128,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
             plusHl:SetTexture(PLUS_ICON_PATH_SVC)
             plusHl:SetAlpha(0.6)
             plusBtn:SetScript("OnClick", function()
-                SpellStyler.State:AddPropertyOverride(uniqueID, trackerType, capturedI)
+                SpellStyler.State:AddPropertyOverride(uniqueID, trackerType, conditionIndex)
                 rerender()
             end)
 
@@ -2036,11 +2165,11 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 noneInfo.value    = ""
                 noneInfo.checked  = (cond.conditionalName == "" or cond.conditionalName == nil)
                 noneInfo.func     = function()
-                    SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, capturedI, "")
-                    RefreshCondTrigger()
+                    SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, conditionIndex, "")
                     if SpellStyler.ConditionalEngine then
                         SpellStyler.ConditionalEngine:EvaluateAll()
                     end
+                    rerender()  -- Rerender to update duration input state
                 end
                 UIDropDownMenu_AddButton(noneInfo, level)
 
@@ -2058,8 +2187,8 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     info.value   = name
                     info.checked = (cond.conditionalName == name)
                     info.func    = function(btn)
-                        SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, capturedI, btn.value)
-                        RefreshCondTrigger()
+                        SpellStyler.State:SetSpecialVisibilityConditionConditionalName(uniqueID, trackerType, conditionIndex, btn.value)
+                        rerender()  -- Rerender to update duration input state
                     end
                     UIDropDownMenu_AddButton(info, level)
                 end
@@ -3221,10 +3350,6 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
                     
                     local anchorModeData = self.meta and self.meta.anchorModeData
 
-                    DevTool:AddData({
-                        anchorModeData = anchorModeData,
-                        self = self
-                    }, "anchor mode data " .. self.meta.activeSpellID)
                     if anchorModeData and (anchorModeData.type == "both" or anchorModeData.type == "barA") then
                         -- Frame is anchored CENTER to BarA texture TOP, need to calculate root position
                         if anchorModeData.type == "both" and self.chargeAnchorBarA and self.chargeAnchorBarB then
@@ -3236,20 +3361,16 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
                             
                             local barAPoint = anchorModeData.pointA or "BOTTOM"
                             if barAPoint == "TOP" then
-                                DevTool:AddData({}, "anchor A (TOP) subtracting" .. barAHeight - barATextureHeight)
                                 adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
                             else
-                                DevTool:AddData({}, "anchor A (BOTTOM) subtracting " .. barATextureHeight)
                                 adjustedOffsetY = adjustedOffsetY - barATextureHeight
                             end
                             
                             
                             local barBPoint = anchorModeData.point
                             if barBPoint == "TOP" then
-                                DevTool:AddData({}, "anchor B (TOP) subtracting " .. barBHeight - barBTextureHeight)
                                 adjustedOffsetY = adjustedOffsetY + barBHeight - barBTextureHeight
                             else
-                                DevTool:AddData({}, "anchor B (BOTTOM) subtracting " .. barBTextureHeight)
                                 adjustedOffsetY = adjustedOffsetY - barBTextureHeight
                             end
                         elseif anchorModeData.type == "barA" and self.chargeAnchorBarA then
@@ -3258,10 +3379,8 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
 
                             local barAPoint = anchorModeData.point
                             if barAPoint == "TOP" then
-                                DevTool:AddData({}, "anchor A (TOP) subtracting" .. barAHeight - barATextureHeight)
                                 adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
                             else
-                                DevTool:AddData({}, "anchor A (BOTTOM) subtracting " .. barATextureHeight)
                                 adjustedOffsetY = adjustedOffsetY - barATextureHeight
                             end
                         end

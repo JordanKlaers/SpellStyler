@@ -68,11 +68,21 @@ function Util:CurveComparison(targetHealth, targetValue, baseValue, comparison, 
     end
     C:SetType(Enum.LuaCurveType.Step)
     if comparison == "<=" then
-        C:AddPoint(0, CreateColor(targetValue.r, targetValue.g, targetValue.b, targetValue.a or 1))
-        C:AddPoint(targetHealth, CreateColor(baseValue.r, baseValue.g, baseValue.b, baseValue.a or 1))
+        if isColor then
+            C:AddPoint(0, CreateColor(targetValue.r, targetValue.g, targetValue.b, targetValue.a or 1))
+            C:AddPoint(targetHealth, CreateColor(baseValue.r, baseValue.g, baseValue.b, baseValue.a or 1))
+        else
+            C:AddPoint(0, targetValue)
+            C:AddPoint(targetHealth, baseValue)
+        end
     else
-        C:AddPoint(0, CreateColor(baseValue.r, baseValue.g, baseValue.b, baseValue.a or 1))
-        C:AddPoint(targetHealth, CreateColor(targetValue.r, targetValue.g, targetValue.b, targetValue.a or 1))
+        if isColor then
+            C:AddPoint(0, CreateColor(baseValue.r, baseValue.g, baseValue.b, baseValue.a or 1))
+            C:AddPoint(targetHealth, CreateColor(targetValue.r, targetValue.g, targetValue.b, targetValue.a or 1))
+        else
+            C:AddPoint(0, baseValue)
+            C:AddPoint(targetHealth, targetValue)
+        end
     end
     return C
 end

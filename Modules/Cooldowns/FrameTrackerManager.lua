@@ -39,18 +39,22 @@ FrameTrackerManager._driveQueue     = {}
 FrameTrackerManager._processCDMQueue = {}
 FrameTrackerManager._totemLogQueue  = {}
 FrameTrackerManager._pendingFrameCreation = {}  -- Frames waiting to be created after dependency resolution
+FrameTrackerManager._totemSpellQueue = {}  -- Queue of spell casts waiting to be matched with PLAYER_TOTEM_UPDATE: { spellID = expirationTime }
+FrameTrackerManager._activeTotemSlots = {}  -- Maps active totem slots to frames: { slotIndex = frame }
 
 local isInitialized = false
 
 local function ApplyGlowNotificationSetup(frame, trackerConfig)
     if not SpellStyler.GlowUtil then return end
-    local gn = trackerConfig and trackerConfig.glowNotification
+    local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "glowNotification.glowColor")
+    local gn = overrideColor or trackerConfig and trackerConfig.glowNotification
     if not gn then return end
     local gc = gn.glowColor or {}
     local cfg = {
         r          = gc.r or 1,
         g          = gc.g or 1,
         b          = gc.b or 1,
+        a          = gc.a or 1,
         scale      = 1.85,
         desaturated = false,
     }
@@ -1264,6 +1268,10 @@ function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
     end
     -- Otherwise position the frame itself (anchorModeData.type == "none" or no bars exist)
     
+    -- Get the frame's scale to compensate for position offsets
+    -- When SetScale is applied, the x/y offsets are also scaled, so we need to divide by scale
+    local frameScale = frame:GetScale() or 1
+    
     elementToPosition:ClearAllPoints()
     -- Cancel any existing mouse follow ticker
     if frame.mouseFollowTicker then
@@ -1297,8 +1305,8 @@ function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
                         anchorPt,
                         UIParent,
                         relativeAnchorPt,
-                        mouseX + (pos.x or 0) + xOffset,
-                        mouseY + (pos.y or 0)
+                        (mouseX + (pos.x or 0) + xOffset) / frameScale,
+                        (mouseY + (pos.y or 0)) / frameScale
                     )
                     
                     -- Start ticker to continuously update position
@@ -1325,13 +1333,14 @@ function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
                         local currentRelativeAnchorPt = useBarAnchorPoint and (anchorModeData.relativePoint or currentPos.anchorPoint) or (currentPos.relativeAnchorPoint or currentPos.anchorPoint)
                         local mx, my = GetCursorPositionRelativeToUIParent(currentRelativeAnchorPt)
                         local currentXOffset = 0 --frame.meta.isVariantFrame and 50 or 0
+                        local currentScale = frame:GetScale() or 1
                         elementToPosition:ClearAllPoints()
                         elementToPosition:SetPoint(
                             currentAnchorPt,
                             UIParent,
                             currentRelativeAnchorPt,
-                            mx + (currentPos.x or 0) + currentXOffset,
-                            my + (currentPos.y or 0)
+                            (mx + (currentPos.x or 0) + currentXOffset) / currentScale,
+                            (my + (currentPos.y or 0)) / currentScale
                         )
                     end)
                     return  -- Skip the standard SetPoint at the end
@@ -1358,19 +1367,17 @@ function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
         local bonusOffSet = 0 --frame.meta.isVariantFrame and 50 or 0
         local finalAnchorPoint = useBarAnchorPoint and barAnchorPoint or pos.anchorPoint
         local finalRelativeAnchorPoint = useBarAnchorPoint and (anchorModeData.relativePoint or pos.anchorPoint) or (pos.relativeAnchorPoint or pos.anchorPoint)
-        if frame.meta.activeSpellID == 115151 or frame.meta.baseSpellID == 11515 then
 
-        end
         elementToPosition:SetPoint(
             finalAnchorPoint, 
             relativeFrame,
             finalRelativeAnchorPoint, 
-            (pos.x or 0) + bonusOffSet, 
-            pos.y or 0
+            ((pos.x or 0) + bonusOffSet) / frameScale, 
+            (pos.y or 0) / frameScale
         )
     else
         -- Default position - center with offset
-        elementToPosition:SetPoint("CENTER", UIParent, "CENTER", -200, -100)
+        elementToPosition:SetPoint("CENTER", UIParent, "CENTER", -200 / frameScale, -100 / frameScale)
     end
 end
 
@@ -1562,6 +1569,9 @@ FrameTrackerManager.FrameBuilder = {
     CooldownBar = function(data)
         FrameTrackerManager:CreateStatusBar(data.frame, "statusBar", data.trackerConfig, data.baseSpellID, data.trackerType, nil, nil, nil, "statusBar")
     end,
+    TotemBar = function(data)
+        FrameTrackerManager:CreateStatusBar(data.frame, "totemBar", data.trackerConfig, data.baseSpellID, data.trackerType, nil, nil, nil, "totemBar")
+    end,
     Count = function(data)
         data.frame.count = data.frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
         data.frame.Count = data.frame.count  -- Masque expects .Count
@@ -1688,29 +1698,39 @@ FrameTrackerManager.FrameBuilder = {
 FrameTrackerManager.FrameUpdater = {
     Base = function(data)
         -- Apply frame-level properties (opacity, strata, position)
-        pcall(function()
+        local success, error = pcall(function()
+            data.frame:SetScale(data.scale or 1)
             data.frame:SetAlpha(data.opacity)
             data.frame:SetFrameStrata(data.frameStrata.level)
             data.frame:SetFrameLevel(data.frameStrata.value)
             
             -- Set frame position using shared helper
-            if data.frame.previousProperties.position == nil
-                or data.frame.previousProperties.position.anchorPoint ~= data.trackerConfig.position.anchorPoint
-                or data.frame.previousProperties.position.relativeToFrame ~= data.trackerConfig.position.relativeToFrame
-                or data.frame.previousProperties.position.relativeAnchorPoint ~= data.trackerConfig.position.relativeAnchorPoint
-                or data.frame.previousProperties.position.x ~= data.trackerConfig.position.x
-                or data.frame.previousProperties.position.y ~= data.trackerConfig.position.y
-            then
-                FrameTrackerManager:SetFramePosition(data.frame, data.trackerConfig)
-                -- Store a copy, not a reference, so changes are detected
-                data.frame.previousProperties.position = {
-                    anchorPoint = data.trackerConfig.position.anchorPoint,
-                    relativeToFrame = data.trackerConfig.position.relativeToFrame,
-                    relativeAnchorPoint = data.trackerConfig.position.relativeAnchorPoint,
-                    x = data.trackerConfig.position.x,
-                    y = data.trackerConfig.position.y
+            -- if data.frame.previousProperties.position == nil
+            --     or data.frame.previousProperties.position.anchorPoint ~= data.trackerConfig.position.anchorPoint
+            --     or data.frame.previousProperties.position.relativeToFrame ~= data.trackerConfig.position.relativeToFrame
+            --     or data.frame.previousProperties.position.relativeAnchorPoint ~= data.trackerConfig.position.relativeAnchorPoint
+            --     or (issecretvalue(data.position.x) or data.position.x ~= data.frame.previousProperties.position.x)
+            --     or (issecretvalue(data.position.y) or data.position.y ~= data.frame.previousProperties.position.y)
+            -- then
+                local positionData = {
+                    position = {
+                        anchorPoint = data.trackerConfig.position.anchorPoint,
+                        relativeToFrame = data.trackerConfig.position.relativeToFrame,
+                        relativeAnchorPoint = data.trackerConfig.position.relativeAnchorPoint,
+                        x = data.position.x,
+                        y = data.position.y
+                    }
                 }
-            end
+                FrameTrackerManager:SetFramePosition(data.frame, positionData)
+                -- Store a copy, not a reference, so changes are detected
+                -- data.frame.previousProperties.position = {
+                --     anchorPoint = data.trackerConfig.position.anchorPoint,
+                --     relativeToFrame = data.trackerConfig.position.relativeToFrame,
+                --     relativeAnchorPoint = data.trackerConfig.position.relativeAnchorPoint,
+                --     x = data.position.x,
+                --     y = data.position.y
+                -- }
+            -- end
         end)
     end,
     Icon = function(data)
@@ -1781,10 +1801,16 @@ FrameTrackerManager.FrameUpdater = {
         end
     end,
     Alerts = function(data)
-        if data.alerts.display == false then return end
+        local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.frame, "glowNotification.glowColor")
+        if data.alerts.display == false and not overrideColor then return end
         -- Re-attach the glow animation child with the latest glowNotification config
         ApplyGlowNotificationSetup(data.frame, data.trackerConfig)
-        SpellStyler.GlowUtil:PlayProcGlow(data.frame, 200)
+        if overrideColor then
+           SpellStyler.GlowUtil:PlayProcGlow(data.frame, nil, overrideColor)
+        else
+            SpellStyler.GlowUtil:StopProcGlow(data.frame) 
+        end
+        -- SpellStyler.GlowUtil:PlayProcGlow(data.frame, 200)
     end,
     Cooldown = function(data)
         -- Apply icon desaturation setting
@@ -1825,7 +1851,7 @@ FrameTrackerManager.FrameUpdater = {
             end
             
             if cdText then
-                pcall(function()
+                local success, error  = pcall(function()
                     -- Apply font size from pre-computed value
                     local fontPath, _, fontFlags = cdText:GetFont()
                     if data.cooldownText.fontSize then
@@ -2010,6 +2036,194 @@ FrameTrackerManager.FrameUpdater = {
         if data.frame.statusBar.borderEdgeBottom then data.frame.statusBar.borderEdgeBottom:SetScale(bs) end
         if data.frame.statusBar.borderEdgeLeft then data.frame.statusBar.borderEdgeLeft:SetScale(bs) end
     end,
+
+    TotemBar = function(data)
+
+        for _, component in ipairs({
+            data.frame.totemBar,
+            data.frame.totemBar.bgTexture,
+            data.frame.totemBar.fullCoverTexture,
+            data.frame.totemBar.glowTexture,
+            data.frame.totemBar.border,
+            data.frame.totemBar.borderCornerTL,
+            data.frame.totemBar.borderCornerTR,
+            data.frame.totemBar.borderCornerBR,
+            data.frame.totemBar.borderCornerBL,
+            data.frame.totemBar.borderEdgeTop,
+            data.frame.totemBar.borderEdgeRight,
+            data.frame.totemBar.borderEdgeBottom,
+            data.frame.totemBar.borderEdgeLeft
+        }) do
+            pcall(function()
+                if data.totemBar == nil or data.totemBar.displayState == 'never' then component:Hide()
+                else component:Show()
+                end
+            end)
+        end
+
+        if not (data.frame.totemBar and data.totemBar and data.totemBar.displayState ~= 'never') then return end
+        
+        pcall(function()
+            -- Apply all properties from pre-computed values
+            data.frame.totemBar:SetSize(data.totemBar.width, data.totemBar.height)
+            data.frame.totemBar:SetScale(data.totemBar.scale)
+            data.frame.totemBar.bgTexture:SetScale(data.totemBar.scale)
+            
+            data.frame.totemBar:ClearAllPoints()
+            data.frame.totemBar:SetPoint(
+                data.totemBar.anchorSelf,
+                data.frame,
+                data.totemBar.anchorParent,
+                data.totemBar.x,
+                data.totemBar.y
+            )
+            
+            if data.totemBar.texture then
+                data.frame.totemBar:SetStatusBarTexture(data.totemBar.texture)
+                local statusBarTexture = data.frame.totemBar:GetStatusBarTexture()
+                if statusBarTexture then
+                    statusBarTexture:SetDrawLayer("ARTWORK", 0)
+                end
+                if data.frame.totemBar.fullCoverTexture then
+                    data.frame.totemBar.fullCoverTexture:SetTexture(data.totemBar.texture)
+                end
+                if data.frame.totemBar.bgTexture then
+                    data.frame.totemBar.bgTexture:SetTexture(data.totemBar.texture)
+                end
+            end
+            
+            data.frame.totemBar:SetOrientation(data.totemBar.orientation)
+            data.frame.totemBar:SetReverseFill(data.totemBar.reverseFill)
+            data.frame.totemBar:SetFillStyle(data.totemBar.fillStyle)
+            
+            if data.totemBar.rotation then
+                data.frame.totemBar:SetRotation(math.rad(data.totemBar.rotation))
+            end
+            
+            -- Apply bar color (this is the fill color, not controlled by ApplyVisibility)
+            -- Check for conditional overrides first
+            local barColor = data.totemBar.color or data.trackerConfig.totemBar.color
+            if SpellStyler.ConditionalEngine then
+                local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.frame, "totemBar.color")
+                if overrideColor then
+                    barColor = overrideColor
+                end
+            end
+            data.frame.totemBar:SetValue(0)
+            -- Set base bar color (alpha will be controlled by ApplyVisibility)
+            data.frame.totemBar:SetStatusBarColor(
+                barColor.r or 0.2,
+                barColor.g or 0.8,
+                barColor.b or 1,
+                1
+            )
+        end)
+        
+        -- Apply border/background visibility from pre-computed values
+        if data.totemBar.onlyBar or data.totemBar.displayState == 'never' then
+            data.frame.totemBar.borderCornerTL:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderCornerTR:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderCornerBR:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderCornerBL:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderEdgeTop:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderEdgeRight:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderEdgeBottom:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.borderEdgeLeft:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.bgTexture:SetVertexColor(0,0,0,0)
+            data.frame.totemBar.glowTexture:SetVertexColor(0,0,0,0)
+        elseif data.totemBar.displayState == 'always' then
+            local bc = data.totemBar.borderColor
+            local bgc = data.totemBar.backgroundColor
+            local gc = data.totemBar.glowColor
+            
+            data.frame.totemBar.borderCornerTL:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderCornerTR:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderCornerBR:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderCornerBL:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderEdgeTop:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderEdgeRight:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderEdgeBottom:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.borderEdgeLeft:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.totemBar.bgTexture:SetVertexColor(bgc.r, bgc.g, bgc.b, bgc.a)
+            data.frame.totemBar.glowTexture:SetVertexColor(gc.r, gc.g, gc.b, gc.a)
+        end
+        
+        -- Apply border scale from pre-computed value
+        local bs = data.totemBar.borderScale
+        if data.frame.totemBar.borderCornerTL then data.frame.totemBar.borderCornerTL:SetScale(bs) end
+        if data.frame.totemBar.borderCornerTR then data.frame.totemBar.borderCornerTR:SetScale(bs) end
+        if data.frame.totemBar.borderCornerBR then data.frame.totemBar.borderCornerBR:SetScale(bs) end
+        if data.frame.totemBar.borderCornerBL then data.frame.totemBar.borderCornerBL:SetScale(bs) end
+        if data.frame.totemBar.borderEdgeTop then data.frame.totemBar.borderEdgeTop:SetScale(bs) end
+        if data.frame.totemBar.borderEdgeRight then data.frame.totemBar.borderEdgeRight:SetScale(bs) end
+        if data.frame.totemBar.borderEdgeBottom then data.frame.totemBar.borderEdgeBottom:SetScale(bs) end
+        if data.frame.totemBar.borderEdgeLeft then data.frame.totemBar.borderEdgeLeft:SetScale(bs) end
+        
+        -- Apply totem bar visibility based on slot association and live duration
+        -- Check if this frame is associated with any totem slot
+        local associatedSlot = nil
+        for slot, frame in pairs(FrameTrackerManager._activeTotemSlots) do
+            if frame == data.frame then
+                associatedSlot = slot
+                break
+            end
+        end
+        
+        -- Calculate alpha values from live totem duration if associated with a slot
+        local configAlpha = (data.trackerConfig.totemBar.color and data.trackerConfig.totemBar.color.a) or 1
+        local bgConfigAlpha = (data.trackerConfig.totemBar.backgroundColor and data.trackerConfig.totemBar.backgroundColor.a) or 1
+        local glowConfigAlpha = (data.trackerConfig.totemBar.glowColor and data.trackerConfig.totemBar.glowColor.a) or 1
+        local borderConfigAlpha = (data.trackerConfig.totemBar.borderColor and data.trackerConfig.totemBar.borderColor.a) or 1
+        
+        local totemBarAlpha = 0
+        local fullBarAlpha = data.totemBar.defaultFull and configAlpha or 0  -- Use configAlpha when not active
+        local bgAlpha = 0
+        local glowAlpha = 0
+        local borderAlpha = 0
+        
+        if associatedSlot then
+            local totemDuration = GetTotemDuration(associatedSlot)
+            if totemDuration then
+                -- Totem is active, evaluate curves for alpha values with their respective config alphas
+                totemBarAlpha = totemDuration:EvaluateRemainingDuration(
+                    SpellStyler.Util:IsValidCooldownCurve(true, configAlpha)
+                )
+                fullBarAlpha = totemDuration:EvaluateRemainingDuration(
+                    SpellStyler.Util:IsValidCooldownCurve(false, configAlpha)
+                )
+                bgAlpha = totemDuration:EvaluateRemainingDuration(
+                    SpellStyler.Util:IsValidCooldownCurve(true, bgConfigAlpha)
+                )
+                glowAlpha = totemDuration:EvaluateRemainingDuration(
+                    SpellStyler.Util:IsValidCooldownCurve(true, glowConfigAlpha)
+                )
+                borderAlpha = totemDuration:EvaluateRemainingDuration(
+                    SpellStyler.Util:IsValidCooldownCurve(true, borderConfigAlpha)
+                )
+            else
+                -- No duration means totem expired, restore full bar if defaultFull is true
+                totemBarAlpha = 0
+                fullBarAlpha = data.totemBar.defaultFull and configAlpha or 0
+                bgAlpha = 0
+                glowAlpha = 0
+                borderAlpha = 0
+            end
+        end
+        
+        -- Apply visibility using the calculated alphas (or zeros if not associated/active)
+        FrameTrackerManager.ApplyVisibility.TotemBar({
+            customFrame = data.frame,
+            config = data.trackerConfig,
+            displayState = data.trackerConfig.totemBar.displayState,
+            totemBarConfig = data.trackerConfig.totemBar,
+            totemBarAlpha = totemBarAlpha,
+            fullBarAlpha = fullBarAlpha,
+            bgAlpha = bgAlpha,
+            glowAlpha = glowAlpha,
+            borderAlpha = borderAlpha,
+            isFull = data.trackerConfig.totemBar.defaultFillValue == 'full'
+        })
+    end,
     
     VisualChargeBar = function(data)
         
@@ -2174,7 +2388,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
         trackerConfig = trackerConfig,  -- Keep for special checks
         baseSpellID = baseSpellID,
         trackerType = trackerType,
-        
+        scale = trackerConfig.scale or 1,
         -- Icon properties
         icon = {
             displayState = trackerConfig.iconSettings.iconDisplayState,
@@ -2262,6 +2476,37 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             glowColor = getOverride("statusBar.glowColor") or trackerConfig.statusBar.glowColor,
             borderScale = getOverride("statusBar.borderScale") or trackerConfig.statusBar.borderScale or 0.5
         },
+
+        totemBar = {
+            displayState = trackerConfig.totemBar.displayState,
+            width = getOverride("totemBar.width") or trackerConfig.totemBar.width or 200,
+            height = getOverride("totemBar.height") or trackerConfig.totemBar.height or 20,
+            scale = getOverride("totemBar.scale") or trackerConfig.totemBar.scale or 1,
+            x = getOverride("totemBar.x") or trackerConfig.totemBar.x or 0,
+            y = getOverride("totemBar.y") or trackerConfig.totemBar.y or 0,
+            anchorSelf = getOverride("totemBar.anchorSelf") or trackerConfig.totemBar.anchorSelf or "LEFT",
+            anchorParent = getOverride("totemBar.anchorParent") or trackerConfig.totemBar.anchorParent or "RIGHT",
+            texture = (function()
+                local override = getOverride("totemBar.customBarTexture")
+                return override or (trackerConfig.totemBar.customBarTexture ~= "" and trackerConfig.totemBar.customBarTexture) or trackerConfig.totemBar.defaultBarTexture
+            end)(),
+            orientation = (trackerConfig.totemBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL",
+            reverseFill = trackerConfig.totemBar.fillOrEmpty == 'inverse',
+            fillStyle = (trackerConfig.totemBar.progressDirection == 'reverse') and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard,
+            rotation = getOverride("totemBar.rotation") or trackerConfig.totemBar.rotation,
+            onlyBar = (function()
+                local override = getOverride("totemBar.onlyRenderBar")
+                return (override ~= nil) and override or (trackerConfig.totemBar.onlyRenderBar or false)
+            end)(),
+            borderColor = getOverride("totemBar.borderColor") or trackerConfig.totemBar.borderColor,
+            backgroundColor = getOverride("totemBar.backgroundColor") or trackerConfig.totemBar.backgroundColor,
+            glowColor = getOverride("totemBar.glowColor") or trackerConfig.totemBar.glowColor,
+            borderScale = getOverride("totemBar.borderScale") or trackerConfig.totemBar.borderScale or 0.5,
+            defaultFull = (function()
+                local override = getOverride("totemBar.defaultFillValue")
+                return (override ~= nil) and override == 'full' or trackerConfig.totemBar and trackerConfig.totemBar.defaultFillValue == 'full'
+            end)()
+        },
         
         -- Visual charge bar properties
         visualChargeBar = {
@@ -2299,8 +2544,8 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             useChargeAnchor = frame.chargeAnchorBarA ~= nil,
             anchorPoint = trackerConfig.position and trackerConfig.position.anchorPoint,
             relativeAnchorPoint = trackerConfig.position and (trackerConfig.position.relativeAnchorPoint or trackerConfig.position.anchorPoint),
-            x = (trackerConfig.position and trackerConfig.position.x or 0) + (getOverride("position.x") or 0),
-            y = (trackerConfig.position and trackerConfig.position.y or 0) + (getOverride("position.y") or 0)
+            x = getOverride("position.x") or (trackerConfig.position and trackerConfig.position.x) or 0,
+            y = getOverride("position.y") or (trackerConfig.position and trackerConfig.position.y) or 0
         }
     }
     -- Call each FrameUpdater method to apply pre-computed properties
@@ -2312,6 +2557,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
     FrameTrackerManager.FrameUpdater.DisplayCountTicker(data)
     FrameTrackerManager.FrameUpdater.CustomLabel(data)
     FrameTrackerManager.FrameUpdater.StatusBar(data)
+    FrameTrackerManager.FrameUpdater.TotemBar(data)
     FrameTrackerManager.FrameUpdater.VisualChargeBar(data)
 
     FrameTrackerManager:DriveFrameUpdate(
@@ -2354,6 +2600,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
         FrameTrackerManager.FrameBuilder.Border(frameMeta)
         FrameTrackerManager.FrameBuilder.Cooldown(frameMeta)
         FrameTrackerManager.FrameBuilder.CooldownBar(frameMeta)
+        FrameTrackerManager.FrameBuilder.TotemBar(frameMeta)
         FrameTrackerManager.FrameBuilder.Count(frameMeta)
         FrameTrackerManager.FrameBuilder.Alerts(frameMeta)
         FrameTrackerManager.FrameBuilder.CustomLabel(frameMeta)
@@ -2667,6 +2914,182 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
 end
 
 -- ============================================================================
+-- TOTEM SPELL QUEUE MANAGEMENT
+-- ============================================================================
+
+--- Adds a spell to the totem tracking queue with a 200ms expiration window.
+--- @param spellID number The spell ID to track
+function FrameTrackerManager:AddSpellToTotemQueue(spellID)
+    local expirationTime = GetTime() + 0.2  -- 200ms window
+    FrameTrackerManager._totemSpellQueue[spellID] = expirationTime
+end
+
+--- Removes expired entries from the totem spell queue.
+--- @return number Count of expired entries removed
+function FrameTrackerManager:CleanupExpiredTotemQueueEntries()
+    local currentTime = GetTime()
+    local removedCount = 0
+    
+    for spellID, expirationTime in pairs(FrameTrackerManager._totemSpellQueue) do
+        if currentTime > expirationTime then
+            FrameTrackerManager._totemSpellQueue[spellID] = nil
+            removedCount = removedCount + 1
+        end
+    end
+    
+    return removedCount
+end
+
+--- Removes a specific spell from the totem queue and cleans up any expired entries.
+--- @param spellID number The spell ID to remove
+function FrameTrackerManager:RemoveSpellFromTotemQueue(spellID)
+    FrameTrackerManager._totemSpellQueue[spellID] = nil
+    FrameTrackerManager:CleanupExpiredTotemQueueEntries()
+end
+
+--- Checks if there are any spells in the totem queue (non-expired).
+--- @return number|nil The first valid spell ID found, or nil if queue is empty
+function FrameTrackerManager:GetNextTotemQueueSpell()
+    FrameTrackerManager:CleanupExpiredTotemQueueEntries()
+    
+    local currentTime = GetTime()
+    for spellID, expirationTime in pairs(FrameTrackerManager._totemSpellQueue) do
+        if currentTime <= expirationTime then
+            return spellID
+        end
+    end
+    
+    return nil
+end
+
+--- Clears the totem bar for a tracker frame when a totem expires.
+--- @param frame table The tracker frame
+function FrameTrackerManager:ClearTotemBarDuration(frame)
+    if not frame or not frame.totemBar then
+        return
+    end
+    
+    local config = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
+    if not config or not config.totemBar then
+        return
+    end
+    
+    local success, error = pcall(function()
+        -- Clear the totem bar
+        frame.totemBar:SetValue(0)
+        
+        -- Mark totem as inactive in metadata and clear slot
+        if frame.meta then
+            frame.meta.isTotemActive = false
+            frame.meta.totemSlot = nil
+        end
+        
+        -- Calculate fullBarAlpha: should be visible when inactive if defaultFillValue is 'full' (inverse behavior)
+        local isFull = config.totemBar and config.totemBar.defaultFillValue == 'full'
+        local configAlpha = (config.totemBar.color and config.totemBar.color.a) or 1
+        local fullBarAlpha = isFull and configAlpha or 0  -- Show full bar when inactive if defaultFillValue is 'full'
+        
+        -- Apply visual state with zero alpha (no duration)
+        FrameTrackerManager.ApplyVisibility.TotemBar({
+            customFrame = frame,
+            config = config,
+            displayState = config.totemBar.displayState,
+            totemBarConfig = config.totemBar,
+            totemBarAlpha = 0,  -- No duration = 0 alpha
+            fullBarAlpha = fullBarAlpha,  -- Full bar visible when inactive if defaultFillValue is 'full'
+            bgAlpha = 0,  -- No duration = no bg visibility
+            glowAlpha = 0,  -- No duration = no glow visibility
+            borderAlpha = 0,  -- No duration = no border visibility
+            isFull = isFull
+        })
+    end)
+end
+
+--- Applies a totem duration object specifically to the totemBar of a tracker frame.
+--- This function ONLY handles duration application - all visual properties are handled
+--- by FrameUpdater.TotemBar and ApplyVisibility.TotemBar.
+--- @param frame table The tracker frame
+--- @param totemDuration table|userdata The totem duration object from GetTotemDuration
+function FrameTrackerManager:ApplyTotemBarDuration(frame, totemDuration)
+    if not frame or not frame.totemBar then
+        return
+    end
+    
+    local config = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
+    if not config or not config.totemBar then
+        return
+    end
+    
+    local success, error = pcall(function()
+        -- Determine timer direction based on config
+        local timerDir = (config.totemBar.fillOrEmpty == 'inverse')
+            and Enum.StatusBarTimerDirection.ElapsedTime
+            or Enum.StatusBarTimerDirection.RemainingTime
+        
+        -- Mark totem as active in metadata
+        if frame.meta then
+            frame.meta.isTotemActive = true
+        end
+        
+        -- Clear and apply the totem duration
+        frame.totemBar:SetValue(0)
+        frame.totemBar:SetTimerDuration(
+            totemDuration,
+            Enum.StatusBarInterpolation.Immediate,
+            timerDir
+        )
+        
+        -- Evaluate the duration to get alpha values (like statusBar progressBar/fullBar alpha)
+        -- This allows bg/border/glow to sync with the actual duration state
+        local configAlpha = (config.totemBar.color and config.totemBar.color.a) or 1
+        local bgConfigAlpha = (config.totemBar.backgroundColor and config.totemBar.backgroundColor.a) or 1
+        local glowConfigAlpha = (config.totemBar.glowColor and config.totemBar.glowColor.a) or 1
+        local borderConfigAlpha = (config.totemBar.borderColor and config.totemBar.borderColor.a) or 1
+        
+        local totemBarAlpha = 1  -- Default to full visibility (progress)
+        local fullBarAlpha = 0  -- Default to no full bar
+        local bgAlpha = 1
+        local glowAlpha = 1
+        local borderAlpha = 1
+        
+        if totemDuration then
+            -- Use the same curve evaluation as statusBar progressBar
+            totemBarAlpha = totemDuration:EvaluateRemainingDuration(
+                SpellStyler.Util:IsValidCooldownCurve(true, configAlpha)
+            )
+            -- Calculate fullBar alpha using inverse curve (fills when NOT active, like statusBar)
+            fullBarAlpha = totemDuration:EvaluateRemainingDuration(
+                SpellStyler.Util:IsValidCooldownCurve(false, configAlpha)
+            )
+            -- Calculate separate alphas for bg/glow/border with their config alphas
+            bgAlpha = totemDuration:EvaluateRemainingDuration(
+                SpellStyler.Util:IsValidCooldownCurve(true, bgConfigAlpha)
+            )
+            glowAlpha = totemDuration:EvaluateRemainingDuration(
+                SpellStyler.Util:IsValidCooldownCurve(true, glowConfigAlpha)
+            )
+            borderAlpha = totemDuration:EvaluateRemainingDuration(
+                SpellStyler.Util:IsValidCooldownCurve(true, borderConfigAlpha)
+            )
+        end
+        
+        -- Apply visual state after duration is set, passing the duration-based alphas
+        FrameTrackerManager.ApplyVisibility.TotemBar({
+            customFrame = frame,
+            config = config,
+            displayState = config.totemBar.displayState,
+            totemBarConfig = config.totemBar,
+            totemBarAlpha = totemBarAlpha,  -- Duration-based alpha for progress
+            fullBarAlpha = fullBarAlpha,  -- Duration-based alpha for full bar
+            bgAlpha = bgAlpha,
+            glowAlpha = glowAlpha,
+            borderAlpha = borderAlpha,
+            isFull = config.totemBar and config.totemBar.defaultFillValue == 'full'
+        })
+    end)
+end
+
+-- ============================================================================
 -- SPELL Cooldown Tracking
 -- ============================================================================
 
@@ -2718,6 +3141,7 @@ function FrameTrackerManager:TeardownSpecFrames()
     FrameTrackerManager.cooldownManagerFrames    = { buffs = {} }
     FrameTrackerManager.cooldownIDToBaseSpellID = {}
     FrameTrackerManager.SpellStyler_frames      = { buffs = {}, essential = {}, utility = {}, spells = {}, items = {} }
+    FrameTrackerManager._activeTotemSlots       = {}  -- Clear active totem slot tracking on spec change
 end
 
 
@@ -2854,7 +3278,9 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         shouldDisplay = config.cooldownText.display,
         customFrame = frame,
         config = config.cooldownText,
-        textAlpha = whenActive
+        textAlpha = whenActive,
+        activeSpellID = frame.meta.activeSpellID,
+        
     })
     
     -- Update collapsible container visibility if frame is in a container
@@ -2963,11 +3389,8 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     
     local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
     
-    -- When isActive == false, spell is reliably available (only reliable indicator)
-    if cooldownInfo and cooldownInfo.isActive == false then
-        whenAvailableToCast = 1
-        whenOnCooldown = 0
-    elseif chargeInfo and chargeInfo.maxCharges > 1 then
+
+    if chargeInfo and chargeInfo.maxCharges > 1 then
         -- Charge-based spell: currentCharges secret-normalizes (>=1 becomes 1, 0 stays 0)
         whenAvailableToCast = chargeInfo.currentCharges
         whenOnCooldown = durationObj and durationObj:EvaluateRemainingDuration(SpellStyler.Util:IsValidCooldownCurve(true)) or 0
@@ -3414,6 +3837,90 @@ FrameTrackerManager.ApplyVisibility = {
             end
         end
     end,
+    --[[
+        customFrame
+        config
+        displayState
+        totemBarConfig
+        totemBarAlpha - duration-based alpha from curve evaluation (progress bar)
+        fullBarAlpha - duration-based alpha for full cover texture
+        bgAlpha - duration-based alpha for background (evaluated with bg config alpha)
+        glowAlpha - duration-based alpha for glow (evaluated with glow config alpha)
+        borderAlpha - duration-based alpha for border (evaluated with border config alpha)
+        isFull - whether defaultFillValue is 'full'
+    ]]
+    TotemBar = function(context)
+        -- Use duration-based alpha from context (like statusBar uses progressBarAlpha/fullBarAlpha)
+        local totemBarAlpha = context.totemBarAlpha or 0
+        local totemBarFrameAlpha = 1
+        local totemBarFillAlpha = 0
+        local fullBarAlpha = 0
+        
+        if context.displayState == 'never' then
+            totemBarFrameAlpha = 0
+            totemBarFillAlpha = 0
+            fullBarAlpha = 0
+        elseif context.displayState == 'always' then
+            totemBarFrameAlpha = 1
+            totemBarFillAlpha = totemBarAlpha
+            fullBarAlpha = (context.isFull) and (context.fullBarAlpha or 0) or 0
+        elseif context.displayState == 'active' or context.displayState == 'cooldown' then
+            -- Only show during active totem (like statusBar shows during cooldown)
+            totemBarFrameAlpha = totemBarAlpha
+            totemBarFillAlpha = totemBarAlpha
+            fullBarAlpha = 0
+        end
+        
+        pcall(function()
+            -- Check for cached conditional overrides first
+            local barColor = context.totemBarConfig.color
+            if SpellStyler.ConditionalEngine then
+                local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "totemBar.color")
+                if overrideColor then
+                    barColor = overrideColor
+                end
+            end
+            
+            context.customFrame.totemBar:SetAlpha(totemBarFrameAlpha)
+            
+            -- Set bar fill color with visibility alpha from duration
+            context.customFrame.totemBar:SetStatusBarColor(
+                barColor.r or 0.2,
+                barColor.g or 0.8,
+                barColor.b or 1,
+                totemBarFillAlpha
+            )
+            
+            -- Set full cover texture (like statusBar)
+            if context.customFrame.totemBar.fullCoverTexture then
+                context.customFrame.totemBar.fullCoverTexture:SetVertexColor(
+                    barColor.r or 0.2,
+                    barColor.g or 0.8,
+                    barColor.b or 1,
+                    fullBarAlpha
+                )
+            end
+        end)
+        
+        -- Apply background, glow, and border visibility (like statusBar logic)
+        local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "totemBar.onlyRenderBar")
+        local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (context.config.totemBar.onlyRenderBar or false)
+        
+        -- Match statusBar conditional: exclude 'never' AND 'always' states
+        if not onlyBar and context.config.totemBar.displayState ~= 'never' and context.config.totemBar.displayState ~= 'always' then
+            FrameTrackerManager:SetStatusBarContainerVisibility({
+                customFrame = context.customFrame,
+                config = context.config,
+                baseSpellID = context.customFrame.meta.baseSpellID,
+                activeSpellID = context.customFrame.meta.activeSpellID,
+                trackerType = context.customFrame.meta.trackerType,
+                statusBarFillAlpha = totemBarFillAlpha,
+                bgAlpha = context.bgAlpha,
+                glowAlpha = context.glowAlpha,
+                borderAlpha = context.borderAlpha
+            }, 'totemBar')
+        end
+    end,
 }
 
 --- Creates and returns a duration object for an item cooldown
@@ -3550,40 +4057,39 @@ function FrameTrackerManager:SetStatusBarContainerVisibility(data, key)
         return
     end
     
-    -- Use statusBarFrameAlpha if provided (from ApplyVisibility.StatusBar), otherwise default to 1
-    -- This ensures bg/glow/border visibility matches the status bar's visibility state
-    local visibilityAlpha = data.statusBarFillAlpha
+    -- Use pre-calculated alphas if provided (for totemBar), otherwise fall back to statusBarFillAlpha
+    -- For totemBar: bg/glow/border alphas are calculated with their config alphas in the curve evaluation
+    -- For statusBar: we use the bar alpha for all elements (legacy behavior)
+    local bgAlpha = data.bgAlpha or data.statusBarFillAlpha
+    local glowAlpha = data.glowAlpha or data.statusBarFillAlpha
+    local borderAlpha = data.borderAlpha or data.statusBarFillAlpha
 
     -- Background texture uses backgroundColor (check override first)
-    -- Alpha is: 0 if onlyBar=true, otherwise visibilityAlpha * config alpha
-    if data.customFrame.statusBar.bgTexture then
+    if data.customFrame[key].bgTexture then
         local bgColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, key .. ".backgroundColor")
-        local c = bgColorOverride or data.config.statusBar.backgroundColor
-        local alpha = visibilityAlpha
-        data.customFrame.statusBar.bgTexture:SetVertexColor(c.r or 0, c.g or 0, c.b or 0, alpha)
+        local c = bgColorOverride or data.config[key].backgroundColor
+        data.customFrame[key].bgTexture:SetVertexColor(c.r or 0, c.g or 0, c.b or 0, bgAlpha)
     end
 
     -- Glow overlay uses glowColor (check override first)
-    if data.customFrame.statusBar.glowTexture then
+    if data.customFrame[key].glowTexture then
         local glowColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, key .. ".glowColor")
         local c = glowColorOverride or data.config[key].glowColor
-        local alpha = visibilityAlpha
-        data.customFrame[key].glowTexture:SetVertexColor(c.r or 1, c.g or 1, c.b or 1, alpha)
+        data.customFrame[key].glowTexture:SetVertexColor(c.r or 1, c.g or 1, c.b or 1, glowAlpha)
     end
 
     -- All 8 border pieces use borderColor (check override first)
-    local borderColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "statusBar.borderColor")
+    local borderColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, key .. ".borderColor")
     local bc = borderColorOverride or data.config[key].borderColor
     local br, bg, bb = bc.r or 0, bc.g or 0, bc.b or 0
-    local ba = visibilityAlpha
-    if data.customFrame[key].borderCornerTL then data.customFrame[key].borderCornerTL:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame[key].borderCornerTR then data.customFrame[key].borderCornerTR:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame[key].borderCornerBR then data.customFrame[key].borderCornerBR:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame[key].borderCornerBL then data.customFrame[key].borderCornerBL:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame[key].borderEdgeTop    then data.customFrame[key].borderEdgeTop:SetVertexColor(br, bg, bb, ba)    end
-    if data.customFrame[key].borderEdgeRight  then data.customFrame[key].borderEdgeRight:SetVertexColor(br, bg, bb, ba)  end
-    if data.customFrame[key].borderEdgeBottom then data.customFrame[key].borderEdgeBottom:SetVertexColor(br, bg, bb, ba) end
-    if data.customFrame[key].borderEdgeLeft   then data.customFrame[key].borderEdgeLeft:SetVertexColor(br, bg, bb, ba)   end
+    if data.customFrame[key].borderCornerTL then data.customFrame[key].borderCornerTL:SetVertexColor(br, bg, bb, borderAlpha) end
+    if data.customFrame[key].borderCornerTR then data.customFrame[key].borderCornerTR:SetVertexColor(br, bg, bb, borderAlpha) end
+    if data.customFrame[key].borderCornerBR then data.customFrame[key].borderCornerBR:SetVertexColor(br, bg, bb, borderAlpha) end
+    if data.customFrame[key].borderCornerBL then data.customFrame[key].borderCornerBL:SetVertexColor(br, bg, bb, borderAlpha) end
+    if data.customFrame[key].borderEdgeTop    then data.customFrame[key].borderEdgeTop:SetVertexColor(br, bg, bb, borderAlpha)    end
+    if data.customFrame[key].borderEdgeRight  then data.customFrame[key].borderEdgeRight:SetVertexColor(br, bg, bb, borderAlpha)  end
+    if data.customFrame[key].borderEdgeBottom then data.customFrame[key].borderEdgeBottom:SetVertexColor(br, bg, bb, borderAlpha) end
+    if data.customFrame[key].borderEdgeLeft   then data.customFrame[key].borderEdgeLeft:SetVertexColor(br, bg, bb, borderAlpha)   end
 end
 
 
@@ -3700,6 +4206,10 @@ eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
 eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
 eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
 eventFrame:RegisterEvent("PLAYER_ALIVE")
+eventFrame:RegisterEvent("UNIT_HEALTH")
+eventFrame:RegisterEvent("UNIT_TARGET")
+eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
+eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 
 
 local function eventHandlers(event, frame, meta)
@@ -3716,29 +4226,29 @@ local function eventHandlers(event, frame, meta)
         )
     end
     if event == "SPELL_UPDATE_CHARGES" then
-        local isActive = C_Spell.GetSpellCharges(frame.meta.activeSpellID).isActive
-        -- clear any active cooldown and reapply (This helps when a spell gains its final charge in the middle of a cooldown. It will clear, rather than compeltely the cooldown duration that means nothing at that point)
-        if not isActive then
-            if frame and frame.cooldown then frame.cooldown:Clear() end
-            if frame and frame.statusBar then frame.statusBar:SetValue(0) end
-            FrameTrackerManager:DriveFrameUpdate(
-                frame, {
-                    resolveDuration = false,
-                    syncChargeText = true
-                },
-                nil,
-                'spellupdateCharges'
-            )
-        else
-            FrameTrackerManager:DriveFrameUpdate(
-                frame, {
-                    resolveDuration = true,
-                    syncChargeText = true
-                },
-                nil,
-                'spellupdateCharges'
-            )
-        end
+        if frame and frame.cooldown then frame.cooldown:Clear() end
+        if frame and frame.statusBar then frame.statusBar:SetValue(0) end
+        FrameTrackerManager:DriveFrameUpdate(
+            frame, {
+                resolveDuration = true,
+                syncChargeText = true
+            },
+            nil,
+            'spellupdateCharges'
+        )
+        -- local isActive = C_Spell.GetSpellCharges(frame.meta.activeSpellID).isActive
+        -- -- clear any active cooldown and reapply (This helps when a spell gains its final charge in the middle of a cooldown. It will clear, rather than compeltely the cooldown duration that means nothing at that point)
+        -- if not isActive then
+        -- else
+        --     FrameTrackerManager:DriveFrameUpdate(
+        --         frame, {
+        --             resolveDuration = true,
+        --             syncChargeText = true
+        --         },
+        --         nil,
+        --         'spellupdateCharges'
+        --     )
+        -- end
     end
     if event == "UNIT_POWER_UPDATE" then
     end
@@ -3864,33 +4374,76 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         return
     end
 
+    if event == "PLAYER_FOCUS_CHANGED" or event == "PLAYER_TARGET_CHANGED" then
+        SpellStyler.ConditionalEngine:EvaluateAll()
+    end
+
+
+    if event == "UNIT_HEALTH" or event == "UNIT_TARGET" then
+        local unitTarget = ...
+        if unitTarget == 'player' or unitTarget == 'focus' or unitTarget == 'target' then
+            SpellStyler.ConditionalEngine:EvaluateAll()
+        end
+    end
 
     if event == "PLAYER_TOTEM_UPDATE" then
-        -- local slot = ...
-        -- local haveTotem, totemName, startTime, duration, icon, modRate, spellID = GetTotemInfo(slot)
-        -- local matchedFrameBySlot
-        -- for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["buffs"]) do
-        --     if customFrame.meta.isTotem then --totemSlot ~= nil and customFrame.meta.totemSlot ~= 0 and customFrame.meta.totemSlot == slot then
-        --         matchedFrameBySlot = customFrame
-        --     end
-        -- end
-        -- local totemDuration = GetTotemDuration(slot)
-        -- if matchedFrameBySlot then
-        --     -- Duration objects are nil when the totem is not active. Attempt to use this as the indicator for totem type buffs
-        --     matchedFrameBySlot.meta.isTotemActive = totemDuration ~= nil
-        --     matchedFrameBySlot.meta.buffStatus = totemDuration ~= nil and 'active' or 'absent'
-        --     FrameTrackerManager:DriveFrameUpdate(
-        --         matchedFrameBySlot,
-        --         {
-        --             resolveDuration = true,
-        --             syncChargeText = true
-        --         },
-        --         {
-        --             durationObject = totemDuration
-        --         },
-        --         'PLAYER_TOTEM_UPDATE'
-        --     )
-        -- end
+        local slot = ...
+        local totemDuration = GetTotemDuration(slot)
+
+        -- If there is no duration in this slot, CLEAR the associated frame and remove the binding/saved frame
+        if not totemDuration then
+            local frame = FrameTrackerManager._activeTotemSlots[slot]
+            if frame then
+                if frame.meta.dualFrameStatus ~= 'hideBase' then
+                    FrameTrackerManager:ClearTotemBarDuration(frame)
+                end
+                if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then
+                    FrameTrackerManager:ClearTotemBarDuration(frame.variantFrame)
+                end
+            end
+            FrameTrackerManager._activeTotemSlots[slot] = nil
+        end
+        -- Use a small delay to let the spell queue populate
+        C_Timer.After(0.01, function()
+            -- Step 1: Check if there's a queued spell that should be associated with this slot
+            local queuedSpellID = FrameTrackerManager:GetNextTotemQueueSpell()
+            if queuedSpellID then
+                local match = FrameTrackerManager:MatchTrackerFrame(queuedSpellID)
+                if match and match.customFrame then
+                    
+                    -- If this slot already has a different frame, clear its totem bar first
+                    local existingFrame = FrameTrackerManager._activeTotemSlots[slot]
+                    if existingFrame and existingFrame ~= match.customFrame then
+                        if existingFrame.meta.dualFrameStatus ~= 'hideBase' then
+                            FrameTrackerManager:ClearTotemBarDuration(existingFrame)
+                        end
+                        if existingFrame.variantFrame and existingFrame.meta.dualFrameStatus ~= 'hideVariant' then
+                            FrameTrackerManager:ClearTotemBarDuration(existingFrame.variantFrame)
+                        end
+                    end
+                    
+                    -- Associate this frame with this slot and store slot on frame
+                    FrameTrackerManager._activeTotemSlots[slot] = match.customFrame
+                    -- Store slot number on frame metadata for later retrieval
+                    FrameTrackerManager:SetMetaOnBaseAndVariant(match.customFrame, "totemSlot", slot)
+                    FrameTrackerManager:RemoveSpellFromTotemQueue(queuedSpellID)
+                end
+            end
+            
+            -- Step 2: Apply or clear duration for whatever frame is in this slot
+            local frame = FrameTrackerManager._activeTotemSlots[slot]
+            if frame then
+                if totemDuration then
+                    -- Totem is active (or just started), apply the duration
+                    if frame.meta.dualFrameStatus ~= 'hideBase' then
+                        FrameTrackerManager:ApplyTotemBarDuration(frame, totemDuration)
+                    end
+                    if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then
+                        FrameTrackerManager:ApplyTotemBarDuration(frame.variantFrame, totemDuration)
+                    end
+                end
+            end
+        end)
     end
 
     if event == "SPELL_UPDATE_CHARGES" then
@@ -4105,6 +4658,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                                     nil,
                                     "unitSpellcastSucceeded_spellUnchanged"
                                 )
+                            end
+                            
+                            -- Check if this spell should track totem duration
+                            if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
+                                FrameTrackerManager:AddSpellToTotemQueue(spellID)
                             end
                         end
                     end

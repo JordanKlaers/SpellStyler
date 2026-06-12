@@ -48,7 +48,9 @@
 		"StaticPopupDialogs",
 		"StaticPopup_Show",
 		"MAX_TOTEMS",
-		"includes"
+		"includes",
+		"UIDropDownMenu_DisableDropDown",
+		"xx"
 	],
 	"Lua.type.weakUnionCheck": true
 }

@@ -76,6 +76,7 @@ local function AddNewTrackerValueConfig(data)
         name = data.name,
         defaultIconTexturePath = data.defaultIconTexturePath,
         isItem = data.isItem or false,  -- Flag to identify item trackers (for icon lookup)
+        scale = 1,
         position = {
             anchorPoint = "center",
             relativeToFrame = nil,
@@ -144,7 +145,7 @@ local function AddNewTrackerValueConfig(data)
             x = 0,
             y = 0,
             font = "default",  -- Font selection: "default" = use global, or specific font name
-            fontFlags = "default",  -- Font flags: "default" = use global, or flags string like "OUTLINE,MONOCHROME"
+            fontFlags = "default",  -- Font flags: "default" = use global, or single flag: "OUTLINE", "THICKOUTLINE", "MONOCHROME"
             color = {
                 r = 1,
                 g = 1,
@@ -156,7 +157,7 @@ local function AddNewTrackerValueConfig(data)
             display = true,
             size = 14,
             font = "default",  -- Font selection: "default" = use global, or specific font name
-            fontFlags = "default",  -- Font flags: "default" = use global, or flags string like "OUTLINE,MONOCHROME"
+            fontFlags = "default",  -- Font flags: "default" = use global, or single flag: "OUTLINE", "THICKOUTLINE", "MONOCHROME"
             color = {
                 r = 1,
                 g = 1,
@@ -170,7 +171,7 @@ local function AddNewTrackerValueConfig(data)
             display = true,
             size = 12,
             font = "default",  -- Font selection: "default" = use global, or specific font name
-            fontFlags = "default",  -- Font flags: "default" = use global, or flags string like "OUTLINE,MONOCHROME"
+            fontFlags = "default",  -- Font flags: "default" = use global, or single flag: "OUTLINE", "THICKOUTLINE", "MONOCHROME"
             color = {
                 r = 1,
                 g = 1,
@@ -252,6 +253,30 @@ local function AddNewTrackerValueConfig(data)
 		specialVisibilityConditions = {},
         devNotes = {
 
+        },
+        totemBar = {
+            attemptToTrack = false,
+            displayState = 'never', --always, active, never
+            defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
+            customBarTexture = "",
+            onlyRenderBar = false,
+            barOrientation = "horizontal",
+            fillOrEmpty = "regular",
+            progressDirection = "standard",
+            textureRotation = 0,
+            defaultFillValue = "empty",
+            color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
+            backgroundColor = { r = 0, g = 0, b = 0, a = 0.65 },
+            glowColor = { r = 1, g = 1, b = 1, a = 0.25 },
+            borderColor = { r = 0, g = 0, b = 0, a = 1 },
+            borderScale = 0.5,
+            scale = 1,
+            x = 0,
+            y = 0,
+            width = iconSize * 5,
+            height = iconSize / 2,
+            anchorParent = "RIGHT",
+            anchorSelf = "LEFT",
         }
     }
 end
@@ -1031,6 +1056,26 @@ function State:ResolveFontFlags(specificFlags, fallbackFlags)
     if not specificFlags or specificFlags == "default" then
         if fontSettings and fontSettings.globalFontFlags then
             return fontSettings.globalFontFlags
+        end
+    end
+    
+    -- Migration: Convert old comma-separated format to new single-value format
+    -- WoW's SetFont only accepts a single flag string, not comma-separated values
+    if specificFlags and type(specificFlags) == "string" and specificFlags:find(",") then
+        -- Extract the first flag from comma-separated list
+        -- Prioritize THICKOUTLINE > OUTLINE > MONOCHROME
+        if specificFlags:find("THICKOUTLINE") then
+            return "THICKOUTLINE"
+        elseif specificFlags:find("OUTLINE") then
+            return "OUTLINE"
+        elseif specificFlags:find("MONOCHROME") then
+            return "MONOCHROME"
+        else
+            -- Invalid old format, use global default
+            if fontSettings and fontSettings.globalFontFlags then
+                return fontSettings.globalFontFlags
+            end
+            return "OUTLINE"
         end
     end
     

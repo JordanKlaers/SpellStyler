@@ -95,12 +95,15 @@ function GlowUtil:SetupProcGlow(frame, config)
     -- Remove any previous instance
     if frame._procGlow then frame._procGlow:Hide() end
 
-    local holder = CreateFrame("Frame", nil, frame)
+    local holder = CreateFrame("Frame", "proc_glow_frame_holder", frame)
     holder:SetPoint("CENTER")
     holder:SetSize(w * scale, h * scale)
     holder:SetFrameLevel(frame:GetFrameLevel() + 5)
+    holder.meta = {
+        config = config
+    }
 
-    local tex = holder:CreateTexture(nil, "OVERLAY")
+    local tex = holder:CreateTexture("proc_glow_texture", "OVERLAY")
     holder.ProcLoopFlipbook = tex
     tex:SetAtlas("UI-HUD-ActionBar-Proc-Loop-Flipbook")
     tex:SetAllPoints(holder)
@@ -108,17 +111,17 @@ function GlowUtil:SetupProcGlow(frame, config)
     -- not the yellow tones baked into the atlas art. Pass desaturated=false
     -- explicitly if you want the raw atlas colour instead.
     tex:SetDesaturated(true)
-    tex:SetVertexColor(config.r or 1, config.g or 1, config.b or 1, 1)
+    tex:SetVertexColor(config.r or 1, config.g or 1, config.b or 1, config.a or 1)
 
-    local ag = tex:CreateAnimationGroup()
+    local ag = tex:CreateAnimationGroup("proc_glow_animation_group")
     ag:SetLooping("REPEAT")
     holder.ProcLoop = ag
 
-    local aa = ag:CreateAnimation("Alpha")
+    local aa = ag:CreateAnimation("Alpha", "proc_glow_alpha")
     aa:SetDuration(0.001)   aa:SetOrder(0)
     aa:SetFromAlpha(1)      aa:SetToAlpha(1)
 
-    local af = ag:CreateAnimation("FlipBook")
+    local af = ag:CreateAnimation("FlipBook", "proc_glow_alpha")
     af:SetChildKey("ProcLoopFlipbook")
     af:SetDuration(1)   af:SetOrder(0)
     af:SetFlipBookRows(6)   af:SetFlipBookColumns(5)   af:SetFlipBookFrames(30)
@@ -134,14 +137,20 @@ end
 
 --- Start the proc-glow animation.  `duration` (seconds) is optional;
 --- omit it to loop until StopProcGlow is called.
-function GlowUtil:PlayProcGlow(frame, duration)
+function GlowUtil:PlayProcGlow(frame, duration, overrideColor)
     local holder = frame._procGlow
     if not holder then return end
+    holder:SetAlpha(overrideColor and overrideColor.a or holder.meta.config.a)
+    if overrideColor then
+        holder.ProcLoopFlipbook:SetVertexColor(overrideColor.r, overrideColor.g, overrideColor.b)
+    end
     holder:Show()
     holder.ProcLoop:Play()
-    if duration then
-        C_Timer.After(duration, function() GlowUtil:StopProcGlow(frame) end)
-    end
+    pcall(function()
+        if duration then
+            C_Timer.After(duration, function() GlowUtil:StopProcGlow(frame) end)
+        end
+    end)
 end
 
 --- Stop and hide the proc-glow animation.
