@@ -364,24 +364,16 @@ pcall(function()
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+                -- local secretCharge = secretwrap(22)
                 -- local a = C_CurveUtil.CreateCurve()
                 -- a:SetType(Enum.LuaCurveType.Step)
-                -- a:AddPoint(0, 10)
-                -- a:AddPoint(1, 90)
-                -- local b = C_CurveUtil.CreateCurve()
-                -- b:SetType(Enum.LuaCurveType.Step)
-                -- b:AddPoint(0, 90)
-                -- b:AddPoint(1, 10)
+                -- a:AddPoint(0, 0)
+                -- a:AddPoint(22, 1)
                 -- DevTool:AddData({
                 --     a = {
-                --         low = "0 - 10",
-                --         high  = "100 - 90",
-                --         result = UnitHealthPercent("target", true, a)
-                --     },
-                --     b = {
-                --         low = "0 - 90",
-                --         high  = "100 - 10",
-                --         result = UnitHealthPercent("target", true, b)
+                --         low = "0 - 0",
+                --         high  = "22 - 1",
+                --         result = a:Evaluate(secretCharge)
                 --     }
                 -- }, "curve test")
                 -- local unitHealthCurveValue = UnitHealthPercent("target", true, SpellStyler.Util:CurveComparison(100, 9, 1, "<="))

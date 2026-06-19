@@ -139,7 +139,9 @@ end
 --- omit it to loop until StopProcGlow is called.
 function GlowUtil:PlayProcGlow(frame, duration, overrideColor)
     local holder = frame._procGlow
-    if not holder then return end
+    if not holder then
+        return
+    end
     holder:SetAlpha(overrideColor and overrideColor.a or holder.meta.config.a)
     if overrideColor then
         holder.ProcLoopFlipbook:SetVertexColor(overrideColor.r, overrideColor.g, overrideColor.b)

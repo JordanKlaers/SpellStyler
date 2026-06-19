@@ -415,7 +415,11 @@ function ConditionalEngine:CacheFramePropertyOverrides(frame, conditionalKey, pr
     -- Store each override by its property path for this specific conditional
     for _, override in ipairs(propertyOverrides) do
         if override.property and override.value ~= nil then
-            self._framePropertyOverrides[frame][conditionalKey][override.property] = override.value
+            self._framePropertyOverrides[frame][conditionalKey][override.property] = {
+                value = override.value,
+                baseAlpha = override.baseAlpha or nil,
+                cloneAlpha = override.cloneAlpha or nil
+            }
         end
     end
 end
@@ -427,7 +431,7 @@ end
 --- Used by ApplyVisibility methods to check for active conditional overrides.
 --- @param frame table The tracker frame
 --- @param propertyPath string Property path like "statusBar.color"
---- @return any|nil The cached override value, or nil if not set
+--- @return any|nil, number|nil, number|nil The cached override value, or nil if not set
 function ConditionalEngine:GetCachedPropertyOverride(frame, propertyPath)
     if not frame or not self._framePropertyOverrides[frame] then
         return nil
@@ -440,10 +444,11 @@ function ConditionalEngine:GetCachedPropertyOverride(frame, propertyPath)
     for conditionalKey, overrides in pairs(self._framePropertyOverrides[frame]) do
         if overrides[propertyPath] ~= nil then
             result = overrides[propertyPath]
+            return result.value, result.baseAlpha, result.cloneAlpha
         end
     end
     
-    return result
+    return nil 
 end
 
 --- Clear all cached property overrides for a specific conditional on a frame.
@@ -558,6 +563,14 @@ function ConditionalEngine:CalculateCurveValue(healthConfig, overrideValue, base
     end
 end
 
+function ConditionalEngine:CanPropertyBeSecret(property)
+    local secretAllowed = {
+        'iconSettings.opacity',
+        'iconSettings.frameStrataValue'
+    }
+end
+
+
 --- Applies property overrides from a special visibility condition to a tracker frame.
 --- Routes overrides to variant frame only if conditional uses Charges, otherwise to both frames.
 --- Computes dynamic curve values for UnitHealth conditionals before caching.
@@ -593,8 +606,13 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
     local usesUnitHealth = (healthConfig ~= nil)
     
     for _, override in ipairs(propertyOverrides) do
-        local actualValue = override.value
         local overrideValue = override.value
+
+        --[[
+            If a property is passed to a method that does NOT accept secret values when tainted, then a special implementation is requried
+                - 
+        ]]
+
         -- Automatically use curve calculation for all property overrides when UnitHealth conditional is used
         if usesUnitHealth and healthConfig then
             local baseValueDefault = nil
@@ -610,22 +628,22 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
             else
                 baseValueDefault = SpellStyler.State:AccessNestedValue(trackerValue, override.property, nil, 'get')
                 -- curves can only accept numbers, ensure its a number being passed (TODO: remove or create solution for unsupported methods that are called as a result of the property override options)
-                overrideValue = tonumber(override.value) or 0
+                local valueAsNumber = tonumber(overrideValue)
+                if valueAsNumber ~= nil  then
+                    overrideValue = valueAsNumber
+                end
             end
 
             local isColor = (override.property and string.lower(override.property):find("color")) ~= nil
-            local success, error = pcall(function()
-                actualValue = self:CalculateCurveValue(healthConfig, overrideValue, baseValueDefault, isColor or false)
-            end)
+            overrideValue = self:CalculateCurveValue(healthConfig, overrideValue, baseValueDefault, isColor or false)
         end
         
         table.insert(computedOverrides, {
             property = override.property,
-            value = actualValue,
+            value = overrideValue,
             duration = override.duration  -- Preserve duration for temporary overrides
         })
     end
-    
     -- Apply and cache COMPUTED overrides to all target frames
     for _, targetFrame in ipairs(targetFrames) do
         ConditionalEngine:CacheFramePropertyOverrides(targetFrame, conditionalKey, computedOverrides)
@@ -638,41 +656,6 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
             frame.meta.baseSpellID,
             frame.meta.trackerType
         )
-        
-        -- For visibility-related properties, also trigger ApplyVisibility methods
-        -- These use the cached alpha states and override values
-        local hasIconOverride = ConditionalEngine:GetPropertyOverride(computedOverrides, "iconColor")
-        local hasStatusBarOverride = ConditionalEngine:GetPropertyOverride(computedOverrides, "statusBar.color")
-        
-        if hasIconOverride then
-            for _, targetFrame in ipairs(targetFrames) do
-                if ConditionalEngine._frameAlphaCache[targetFrame] then
-                    SpellStyler.FrameTrackerManager.ApplyVisibility.Icon({
-                        displayState = trackerValue.iconSettings.iconDisplayState,
-                        whenAvailableToCastAlpha = ConditionalEngine._frameAlphaCache[targetFrame].whenAvailable,
-                        whenOnCooldownAlpha = ConditionalEngine._frameAlphaCache[targetFrame].whenActive,
-                        customFrame = targetFrame,
-                        config = trackerValue
-                    })
-                end
-            end
-        end
-        
-        if hasStatusBarOverride then
-            for _, targetFrame in ipairs(targetFrames) do
-                if ConditionalEngine._frameAlphaCache[targetFrame] then
-                    SpellStyler.FrameTrackerManager.ApplyVisibility.StatusBar({
-                        progressBarAlpha = ConditionalEngine._frameAlphaCache[targetFrame].progressBar,
-                        fullBarAlpha = ConditionalEngine._frameAlphaCache[targetFrame].fullBar,
-                        customFrame = targetFrame,
-                        displayState = trackerValue.statusBar.displayState,
-                        statusBarConfig = trackerValue.statusBar,
-                        config = SpellStyler.State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType),
-                        isFull = trackerValue.statusBar and trackerValue.statusBar.defaultFillValue == 'full'
-                    })
-                end
-            end
-        end
     end
 end
 
@@ -691,6 +674,60 @@ setmetatable(ConditionalEngine._conditionalStates, { __mode = "k" })  -- Weak ke
 --     }
 --   }
 -- }
+function ConditionalEngine:ClearEvaluationCache(frame, conditionalKey)
+    -- Clear evaluation state to force re-evaluation
+    if self._conditionalStates[frame] then
+        self._conditionalStates[frame][conditionalKey] = {
+            previousConditionalResult = nil
+        }
+    end
+    
+    -- CRITICAL: Also clear property override caches for this conditional
+    -- Without this, old property values persist even after settings change
+    self:ClearFramePropertyOverrides(frame, conditionalKey)
+    if frame.variantFrame then
+        self:ClearFramePropertyOverrides(frame.variantFrame, conditionalKey)
+    end
+end
+
+--- Clears ALL conditional caches for a frame (both evaluation and property overrides).
+--- Used when conditional name changes or major settings updates occur.
+--- @param frame table The tracker frame
+function ConditionalEngine:ClearAllConditionalCaches(frame)
+    if not frame then return end
+    
+    -- Clear evaluation states
+    if self._conditionalStates[frame] then
+        self._conditionalStates[frame] = nil
+    end
+    
+    -- Clear property overrides
+    self:ClearAllFramePropertyOverrides(frame)
+    if frame.variantFrame then
+        self:ClearAllFramePropertyOverrides(frame.variantFrame)
+    end
+end
+
+--- Generates a conditional key using the same priority logic as EvaluateAll.
+--- Priority: customName > conditionalName > "Condition {index}"
+--- Used by State.lua to ensure key consistency across all cache operations.
+--- @param specialVisibilityCondition table The conditional config entry
+--- @param conditionalIndex number The conditional's index in the array
+--- @return string The generated conditional key
+function ConditionalEngine:GenerateConditionalKey(specialVisibilityCondition, conditionalIndex)
+    if not specialVisibilityCondition then return "Condition " .. tostring(conditionalIndex or 0) end
+    
+    local conditionalKey = specialVisibilityCondition.customName
+    if not conditionalKey or conditionalKey == "" then
+        conditionalKey = specialVisibilityCondition.conditionalName
+    end
+    if not conditionalKey or conditionalKey == "" then
+        conditionalKey = "Condition " .. tostring(conditionalIndex or 0)
+    end
+    
+    return conditionalKey
+end
+
 
 function ConditionalEngine:EvaluateAll()
     local State = SpellStyler.State
@@ -723,18 +760,13 @@ function ConditionalEngine:EvaluateAll()
                         -- now loop over each condition and see if it has properties assigned that might need to be updated if the condition is true
                         for conditionalIndex, specialVisibilityCondition in ipairs(specialVisibilityConditions) do
                             local conditionalName = specialVisibilityCondition.conditionalName
+                            
                             if conditionalName and conditionalName ~= ""
                             and specialVisibilityCondition.propertyOverrides
                             and #specialVisibilityCondition.propertyOverrides > 0 then
-                                -- Generate a unique key for this conditional
-                                -- Priority: customName > conditionalName > "Condition {index}"
-                                local conditionalKey = specialVisibilityCondition.customName
-                                if not conditionalKey or conditionalKey == "" then
-                                    conditionalKey = conditionalName
-                                end
-                                if not conditionalKey or conditionalKey == "" then
-                                    conditionalKey = "Condition " .. tostring(conditionalIndex)
-                                end
+                                -- Generate conditional key using helper for consistency
+                                -- IMPORTANT: This must match the key generation in State.lua
+                                local conditionalKey = self:GenerateConditionalKey(specialVisibilityCondition, conditionalIndex)
                                 
                                 local context = { spellID = activeSpellID, trackerType = trackerType }
                                 local conditionalResult, requiresConstantUpdate = EvaluateConditional(conditionalName, self.liveValues, context)
@@ -745,14 +777,20 @@ function ConditionalEngine:EvaluateAll()
                                 if not self._conditionalStates[customFrame][conditionalKey] then
                                     self._conditionalStates[customFrame][conditionalKey] = {}
                                 end
+                                
                                 -- save the most recent evaluation then check if there was a difference
                                 local previousConditionalResult = self._conditionalStates[customFrame][conditionalKey].previousConditionalResult
+                                
                                 if (previousConditionalResult ~= conditionalResult and conditionalResult == true) or (conditionalResult == true and requiresConstantUpdate) then
                                     -- it became true, so all properties can be applied
                                     self:ApplyFramePropertyOverrides(customFrame, conditionalKey, specialVisibilityCondition.propertyOverrides, trackerValue, conditionalName)
                                     
 
                                     -- Unable to do temporary property override when a condition requires constant updates (because its unable to decern between true and false, like checking unit health with a curve object (values are secret))
+                                    --[[
+                                        If a conditional requires constant updates due to its result being a secret value, then what that means is:
+                                            Some  properties are passed to methods that do not support secret values, therefore a secret frame (not the whole thing, just the component that is having a property updated) will need a second isntance, with the new property value, and it will use alpha, to show the correct  version (almost like the charge based conditional properties, but a second frame, rather than the statusBar anchor approach)
+                                    ]]
                                     if not requiresConstantUpdate then
                                         for _, override in ipairs(specialVisibilityCondition.propertyOverrides) do
                                             -- Creat the timer for the specific property override IF its a temporaryOverride property

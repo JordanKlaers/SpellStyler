@@ -840,9 +840,19 @@ function State:RemoveSpecialVisibilityCondition(baseSpellID, trackerType, index)
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions then return end
+    
+    -- CRITICAL: Clear all caches since entire conditional is being removed
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+        and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    
+    if frame and SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:ClearAllConditionalCaches(frame)
+    end
+    
+    -- Remove the conditional from database
     table.remove(entry.specialVisibilityConditions, index)
     
-    -- Re-evaluate conditionals
+    -- Re-evaluate conditionals with fresh caches
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end
@@ -861,6 +871,20 @@ function State:SetSpecialVisibilityConditionProperty(baseSpellID, trackerType, i
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[index] then return end
+    
+    -- Check if customName is changing (which changes the conditional key)
+    local isCustomNameChange = (path == "customName")
+    
+    if isCustomNameChange then
+        -- Clear all caches since key will change
+        local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+            and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+        
+        if frame and SpellStyler.ConditionalEngine then
+            SpellStyler.ConditionalEngine:ClearAllConditionalCaches(frame)
+        end
+    end
+    
     State:AccessNestedValue(entry.specialVisibilityConditions[index], path, value, "set")
 
     -- Re-evaluate conditionals
@@ -911,6 +935,15 @@ function State:RemovePropertyOverride(baseSpellID, trackerType, condIndex, overr
     local cond = entry.specialVisibilityConditions[condIndex]
     if not cond.propertyOverrides or not cond.propertyOverrides[overrideIndex] then return end
     
+    -- Clear cache for this specific conditional before removing property
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+        and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    
+    if frame and SpellStyler.ConditionalEngine then
+        local conditionalKey = SpellStyler.ConditionalEngine:GenerateConditionalKey(cond, condIndex)
+        SpellStyler.ConditionalEngine:ClearEvaluationCache(frame, conditionalKey)
+    end
+    
     -- Remove the property override from state
     table.remove(cond.propertyOverrides, overrideIndex)
     
@@ -931,40 +964,22 @@ function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, ove
     
     -- Update database (persistent storage)
     cond.propertyOverrides[overrideIndex][field] = value
-
-    -- ALSO update runtime cache if it exists (meaning conditional is currently true)
-    -- This avoids needing to re-run EvaluateAll just to sync cache with database changes
-    if SpellStyler.ConditionalEngine and field == "value" then
-        local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
-            and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-        
-        if frame then
-            -- Derive conditionalKey using same logic as EvaluateAll
-            local conditionalKey = cond.customName
-            if not conditionalKey or conditionalKey == "" then
-                conditionalKey = cond.conditionalName
-            end
-            if not conditionalKey or conditionalKey == "" then
-                conditionalKey = "Condition " .. tostring(condIndex)
-            end
-            
-            local propertyPath = cond.propertyOverrides[overrideIndex].property
-            
-            -- Update cache for base frame if it exists
-            if SpellStyler.ConditionalEngine._framePropertyOverrides[frame]
-                and SpellStyler.ConditionalEngine._framePropertyOverrides[frame][conditionalKey]
-                and propertyPath then
-                SpellStyler.ConditionalEngine._framePropertyOverrides[frame][conditionalKey][propertyPath] = value
-            end
-            
-            -- Update cache for variant frame if it exists
-            if frame.variantFrame 
-                and SpellStyler.ConditionalEngine._framePropertyOverrides[frame.variantFrame]
-                and SpellStyler.ConditionalEngine._framePropertyOverrides[frame.variantFrame][conditionalKey]
-                and propertyPath then
-                SpellStyler.ConditionalEngine._framePropertyOverrides[frame.variantFrame][conditionalKey][propertyPath] = value
-            end
-        end
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+        and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    
+    -- Generate consistent conditional key using helper method
+    local conditionalKey = SpellStyler.ConditionalEngine:GenerateConditionalKey(cond, condIndex)
+    
+    -- Clear evaluation and property override caches for this specific conditional
+    -- This ensures fresh evaluation with the new field value
+    if frame and SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:ClearEvaluationCache(frame, conditionalKey)
+    end
+    
+    -- CRITICAL: Re-evaluate conditionals to apply the new property override
+    -- Without this, property overrides are cleared but never re-applied!
+    if SpellStyler.ConditionalEngine then
+        SpellStyler.ConditionalEngine:EvaluateAll()
     end
 
     -- Trigger frame update to apply the new value
@@ -976,9 +991,21 @@ function State:SetSpecialVisibilityConditionConditionalName(baseSpellID, tracker
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
     if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
+    
+    -- CRITICAL: When conditional name changes, the conditionalKey changes too!
+    -- Must clear ALL caches for this frame to remove old key's property overrides
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+        and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    
+    if frame and SpellStyler.ConditionalEngine then
+        -- Clear all conditional caches since the key is changing
+        SpellStyler.ConditionalEngine:ClearAllConditionalCaches(frame)
+    end
+    
+    -- Now update the conditional name in database
     entry.specialVisibilityConditions[condIndex].conditionalName = conditionalName
     
-    -- Trigger live evaluation update
+    -- Trigger live evaluation update with fresh caches
     if SpellStyler.ConditionalEngine then
         SpellStyler.ConditionalEngine:EvaluateAll()
     end

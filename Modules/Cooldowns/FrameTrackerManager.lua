@@ -45,18 +45,24 @@ FrameTrackerManager._activeTotemSlots = {}  -- Maps active totem slots to frames
 local isInitialized = false
 
 local function ApplyGlowNotificationSetup(frame, trackerConfig)
+    -- TODO something is missing here for adding the glowColor override
     if not SpellStyler.GlowUtil then return end
+
+    local gn = trackerConfig and trackerConfig.glowNotification
     local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "glowNotification.glowColor")
-    local gn = overrideColor or trackerConfig and trackerConfig.glowNotification
-    if not gn then return end
-    local gc = gn.glowColor or {}
+    if overrideColor then
+        gn = {
+            glowColor = overrideColor,
+            glowStyle = 'thick'
+        }
+    end
     local cfg = {
-        r          = gc.r or 1,
-        g          = gc.g or 1,
-        b          = gc.b or 1,
-        a          = gc.a or 1,
+        r          = gn.glowColor.r or 1,
+        g          = gn.glowColor.g or 1,
+        b          = gn.glowColor.b or 1,
+        a          = gn.glowColor.a or 1,
         scale      = 1.85,
-        desaturated = false,
+        desaturated = true,
     }
     if gn.glowStyle == 'thick' then
         SpellStyler.GlowUtil:SetupProcGlow(frame, cfg)
@@ -1802,9 +1808,16 @@ FrameTrackerManager.FrameUpdater = {
     end,
     Alerts = function(data)
         local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.frame, "glowNotification.glowColor")
-        if data.alerts.display == false and not overrideColor then return end
+        if data.alerts.display == false and not overrideColor then
+            if data.frame._procGlow then
+                data.frame._procGlow:Hide()
+            end
+            return
+        end
         -- Re-attach the glow animation child with the latest glowNotification config
+
         ApplyGlowNotificationSetup(data.frame, data.trackerConfig)
+
         if overrideColor then
            SpellStyler.GlowUtil:PlayProcGlow(data.frame, nil, overrideColor)
         else

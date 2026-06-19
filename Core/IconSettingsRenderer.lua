@@ -1971,7 +1971,6 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                         info.value   = def.path
                         info.checked = (override.property == def.path)
                         info.func    = function(btn)
-                            -- DevTool:AddData(btn.value, "but value")
                             -- TODO: If the property is the glow notification call a method to add or update the glowNotification to work via alpha rather than duration
                             SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "property", btn.value)
                             local newDef = _PROP_DEF_BY_PATH[btn.value]
