@@ -231,3 +231,6 @@ Version 1.7.0
 	- Updates the conditional property overrides to properly support the "glow notification" option.
 	- Adds notification that some conditions may not support temporary property overrides. Only displays for the conditions for which its disable, to give an explination
 	- Removed custom label and custom texture from property overrides because its not possible to support those property overrides for conditions that use curves (A blizzard api method for working with secrets) Will need to reimplement a restricted implementation if anyone wants these
+
+Version 1.8.0
+	- Updates to the conditional system to better implement glow notification properties for a conditional and unit health conditional evaluations
