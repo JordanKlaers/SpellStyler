@@ -1428,6 +1428,8 @@ FrameTrackerManager.FrameBuilder = {
         local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
         local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
         if not frame._inContainer then
+            frame.meta.w = iconW
+            frame.meta.h = iconH
             frame:SetSize(iconW, iconH)
         end
         frame:SetFrameStrata(data.trackerConfig.iconSettings.frameStrataLevel or "MEDIUM")
@@ -1757,6 +1759,8 @@ FrameTrackerManager.FrameUpdater = {
         
         -- Apply size (skip when frame is managed by a container)
         if not data.frame._inContainer then
+            data.frame.meta.w = data.icon.width
+            data.frame.meta.h = data.icon.height
             data.frame:SetSize(data.icon.width, data.icon.height)
         end
     end,

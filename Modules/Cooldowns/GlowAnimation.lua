@@ -90,7 +90,7 @@ end
 function GlowUtil:SetupProcGlow(frame, config)
     config = config or {}
     local scale = config.scale or 1.85
-    local w, h  = frame:GetWidth(), frame:GetHeight()
+    local w, h  = frame.meta.w, frame.meta.h
 
     -- Remove any previous instance
     if frame._procGlow then frame._procGlow:Hide() end

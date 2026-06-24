@@ -118,45 +118,45 @@ UIParent:GetRect
 
 ### Tracked Entry Property to WoW API Mapping
 
-| Category | Config Property | Frame API Method | SecretArguments (SA) | Note |
-| :--- | :--- | :--- | :--- | :--- |
-| **Root** | `scale` | `frame:SetScale` | **AllowedWhenUntainted** | Global tracker scale. |
-| | `position.x`, `y` | `frame:SetPoint` | **AllowedWhenUntainted** | Relative position offsets. |
-| | `position.anchorPoint`| `frame:SetPoint` | **AllowedWhenUntainted** | Anchor point string. |
-| **Icon** | `iconSettings.opacity`| `frame:SetAlpha` | AllowedWhenTainted | Overall frame transparency. |
-| | `iconSettings.width` / `height`| `frame:SetSize` | **AllowedWhenUntainted** | Precise pixel dimensions. |
-| | `iconSettings.frameStrataLevel`| `frame:SetFrameStrata` | **NotAllowed** | Global UI layer (e.g., MEDIUM). |
-| | `iconSettings.frameStrataValue`| `frame:SetFrameLevel` | AllowedWhenTainted | Sub-layer within the strata. |
-| | `iconSettings.iconTexturePath` | `icon:SetTexture` | AllowedWhenTainted | Custom icon override. |
-| | `iconSettings.zoom` | `icon:SetTexCoord` | **AllowedWhenUntainted** | Edge cropping percentages. |
-| | `iconSettings.desaturated` | `icon:SetDesaturated` | AllowedWhenTainted | Grayscale toggle. |
-| | `iconColor.r`, `g`, `b` | `icon:SetVertexColor` | AllowedWhenTainted | Tinting the icon. |
-| | `iconColor.a` | `iconContainer:SetAlpha` | AllowedWhenTainted | Icon-only transparency. |
-| | `iconSettings.hideDefaultSweep`| `cooldown:SetDrawSwipe` | N/A | Toggles radial sweep visibility. |
-| | `iconSettings.hideCooldownBling`| `cooldown:SetEdgeScale` | N/A | Scale of the cooldown flash. |
-| | `iconSettings.borderSize` | `borderFrame:SetSize` | **AllowedWhenUntainted** | Outer border thickness. |
-| | `iconSettings.borderColor` | `borderFrame:SetBackdropBorderColor` | AllowedWhenTainted | Outer border color. |
-| **Bars** | `statusBar.displayState` | `statusBar:Show` / `Hide` | AllowedWhenTainted | Toggles bar visibility. |
-| (Applies to | `statusBar.width` / `height` | `statusBar:SetSize` | **AllowedWhenUntainted** | Bar pixel dimensions. |
-| `statusBar`, | `statusBar.color` | `statusBar:SetStatusBarColor` | AllowedWhenTainted | Fill color. |
-| `visualChargeBar`,| `statusBar.customBarTexture` | `statusBar:SetStatusBarTexture` | AllowedWhenTainted | Fill texture. |
-| `totemBar`) | `statusBar.barOrientation` | `statusBar:SetOrientation` | N/A | Horizontal vs Vertical. |
-| | `statusBar.rotation` | `statusBar:SetRotation` | AllowedWhenTainted | Rotating the bar texture. |
-| | `statusBar.backgroundColor` | `bgTexture:SetVertexColor` | AllowedWhenTainted | Empty bar color. |
-| | `statusBar.glowColor` | `glowTexture:SetVertexColor` | AllowedWhenTainted | Edge glow color/alpha. |
-| | `statusBar.borderColor` | `borderPieces:SetVertexColor` | AllowedWhenTainted | Multi-piece border tinting. |
-| | `statusBar.borderScale` | `borderPieces:SetScale` | **AllowedWhenUntainted** | Thickness of the piece-border. |
-| | `statusBar.x`, `y` | `statusBar:SetPoint` | **AllowedWhenUntainted** | Position relative to icon. |
-| | `statusBar.duration` (Live) | `statusBar:SetTimerDuration` | **AllowedWhenUntainted** | **CRITICAL:** Real-time countdown. |
-| **Charges** | `visualChargeBar.minValue` / `maxValue` | `statusBar:SetMinMaxValues` | AllowedWhenTainted | Defines charge thresholds. |
-| | `chargeBasedDisplay.chargeValue` (Live) | `anchorBar:SetValue` | AllowedWhenTainted | Input for secret charge count. |
-| | `countText.display` | `count:Show` / `Hide` | AllowedWhenTainted | Numerical count visibility. |
-| | `countText.color` | `count:SetTextColor` | AllowedWhenTainted | Stack/Charge text color. |
-| | `countText.size` | `count:SetFont` | **AllowedWhenUntainted** | Number font size. |
-| **Text** | `customLabel.text` | `customLabel:SetText` | AllowedWhenTainted | Custom user text. |
-| | `customLabel.font` | `customLabel:SetFont` | **AllowedWhenUntainted** | Font file selection. |
-| | `customLabel.color` | `customLabel:SetTextColor` | AllowedWhenTainted | Label color. |
-| | `cooldownText.display` | `cooldown:SetHideCountdownNumbers` | N/A | Blizzard numerical sweep. |
-| | `cooldownText.color` | `cdText:SetTextColor` | AllowedWhenTainted | Countdown text color. |
-| **Misc** | `glowNotification.shouldDisplay` | `glowFrame:Show` / `Hide` | AllowedWhenTainted | Proc notification visibility. |
-| | `itemID` | `C_Item.GetItemCooldown` | **AllowedWhenUntainted** | Duration object generation. |
+| Config Property | Frame API Method | SecretArguments (SA) | Note |
+| :--- | :--- | :--- | :--- |
+| `scale` | `frame:SetScale` | **AllowedWhenUntainted** | Global tracker scale. |
+| `position.x`, `y` | `frame:SetPoint` | **AllowedWhenUntainted** | Relative position offsets. |
+| `position.anchorPoint`| `frame:SetPoint` | **AllowedWhenUntainted** | Anchor point string. |
+| `iconSettings.opacity`| `frame:SetAlpha` | AllowedWhenTainted | Overall frame transparency. |
+| `iconSettings.width` / `height`| `frame:SetSize` | **AllowedWhenUntainted** | Precise pixel dimensions. |
+| `iconSettings.frameStrataLevel`| `frame:SetFrameStrata` | **NotAllowed** | Global UI layer (e.g., MEDIUM). |
+| `iconSettings.frameStrataValue`| `frame:SetFrameLevel` | AllowedWhenTainted | Sub-layer within the strata. |
+| `iconSettings.iconTexturePath` | `icon:SetTexture` | AllowedWhenTainted | Custom icon override. |
+| `iconSettings.zoom` | `icon:SetTexCoord` | **AllowedWhenUntainted** | Edge cropping percentages. |
+| `iconSettings.desaturated` | `icon:SetDesaturated` | AllowedWhenTainted | Grayscale toggle. |
+| `iconColor.r`, `g`, `b` | `icon:SetVertexColor` | AllowedWhenTainted | Tinting the icon. |
+| `iconColor.a` | `iconContainer:SetAlpha` | AllowedWhenTainted | Icon-only transparency. |
+| `iconSettings.hideDefaultSweep`| `cooldown:SetDrawSwipe` | N/A | Toggles radial sweep visibility. |
+| `iconSettings.hideCooldownBling`| `cooldown:SetEdgeScale` | N/A | Scale of the cooldown flash. |
+| `iconSettings.borderSize` | `borderFrame:SetSize` | **AllowedWhenUntainted** | Outer border thickness. |
+| `iconSettings.borderColor` | `borderFrame:SetBackdropBorderColor` | AllowedWhenTainted | Outer border color. |
+| `statusBar.displayState` | `statusBar:Show` / `Hide` | AllowedWhenTainted | Toggles bar visibility. |
+| `statusBar.width` / `height` | `statusBar:SetSize` | **AllowedWhenUntainted** | Bar pixel dimensions. |
+| `statusBar.color` | `statusBar:SetStatusBarColor` | AllowedWhenTainted | Fill color. |
+| `statusBar.customBarTexture` | `statusBar:SetStatusBarTexture` | AllowedWhenTainted | Fill texture. |
+| `statusBar.barOrientation` | `statusBar:SetOrientation` | N/A | Horizontal vs Vertical. |
+| `statusBar.rotation` | `statusBar:SetRotation` | AllowedWhenTainted | Rotating the bar texture. |
+| `statusBar.backgroundColor` | `bgTexture:SetVertexColor` | AllowedWhenTainted | Empty bar color. |
+| `statusBar.glowColor` | `glowTexture:SetVertexColor` | AllowedWhenTainted | Edge glow color/alpha. |
+| `statusBar.borderColor` | `borderPieces:SetVertexColor` | AllowedWhenTainted | Multi-piece border tinting. |
+| `statusBar.borderScale` | `borderPieces:SetScale` | **AllowedWhenUntainted** | Thickness of the piece-border. |
+| `statusBar.x`, `y` | `statusBar:SetPoint` | **AllowedWhenUntainted** | Position relative to icon. |
+| `statusBar.duration` (Live) | `statusBar:SetTimerDuration` | **AllowedWhenUntainted** | **CRITICAL:** Real-time countdown. |
+| `visualChargeBar.minValue` / `maxValue` | `statusBar:SetMinMaxValues` | AllowedWhenTainted | Defines charge thresholds. |
+| `chargeBasedDisplay.chargeValue` (Live) | `anchorBar:SetValue` | AllowedWhenTainted | Input for secret charge count. |
+| `countText.display` | `count:Show` / `Hide` | AllowedWhenTainted | Numerical count visibility. |
+| `countText.color` | `count:SetTextColor` | AllowedWhenTainted | Stack/Charge text color. |
+| `countText.size` | `count:SetFont` | **AllowedWhenUntainted** | Number font size. |
+| `customLabel.text` | `customLabel:SetText` | AllowedWhenTainted | Custom user text. |
+| `customLabel.font` | `customLabel:SetFont` | **AllowedWhenUntainted** | Font file selection. |
+| `customLabel.color` | `customLabel:SetTextColor` | AllowedWhenTainted | Label color. |
+| `cooldownText.display` | `cooldown:SetHideCountdownNumbers` | N/A | Blizzard numerical sweep. |
+| `cooldownText.color` | `cdText:SetTextColor` | AllowedWhenTainted | Countdown text color. |
+| `glowNotification.shouldDisplay` | `glowFrame:Show` / `Hide` | AllowedWhenTainted | Proc notification visibility. |
+| `itemID` | `C_Item.GetItemCooldown` | **AllowedWhenUntainted** | Duration object generation. |

@@ -234,3 +234,6 @@ Version 1.7.0
 
 Version 1.8.0
 	- Updates to the conditional system to better implement glow notification properties for a conditional and unit health conditional evaluations
+
+Version 1.8.1
+	- Updates glow notification to not use frame width method that is secret in combat. Caches the value before hand instead.

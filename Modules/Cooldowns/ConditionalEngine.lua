@@ -431,7 +431,7 @@ end
 --- Used by ApplyVisibility methods to check for active conditional overrides.
 --- @param frame table The tracker frame
 --- @param propertyPath string Property path like "statusBar.color"
---- @return any|nil, number|nil, number|nil The cached override value, or nil if not set
+--- @return any|nil, number|nil, number|nil, boolean|nil --The cached override value, or nil if not set
 function ConditionalEngine:GetCachedPropertyOverride(frame, propertyPath)
     if not frame or not self._framePropertyOverrides[frame] then
         return nil
@@ -444,7 +444,7 @@ function ConditionalEngine:GetCachedPropertyOverride(frame, propertyPath)
     for conditionalKey, overrides in pairs(self._framePropertyOverrides[frame]) do
         if overrides[propertyPath] ~= nil then
             result = overrides[propertyPath]
-            return result.value, result.baseAlpha, result.cloneAlpha
+            return result.value, result.baseAlpha, result.cloneAlpha, ConditionalEngine:CanPropertyBeSecret(propertyPath)
         end
     end
     
@@ -565,9 +565,34 @@ end
 
 function ConditionalEngine:CanPropertyBeSecret(property)
     local secretAllowed = {
-        'iconSettings.opacity',
-        'iconSettings.frameStrataValue'
+        ['iconSettings.opacity'] = true,                 -- frame:SetAlpha
+        ['iconSettings.frameStrataValue'] = true,        -- frame:SetFrameLevel
+        ['iconSettings.iconTexturePath'] = true,         -- icon:SetTexture
+        ['iconSettings.desaturated'] = true,             -- icon:SetDesaturated
+        ['iconColor'] = true,                          -- icon:SetVertexColor
+        ['iconColor.r'] = true,                          -- icon:SetVertexColor
+        ['iconColor.g'] = true,                          -- icon:SetVertexColor
+        ['iconColor.b'] = true,                          -- icon:SetVertexColor
+        ['iconColor.a'] = true,                          -- iconContainer:SetAlpha
+        ['iconSettings.borderColor'] = true,             -- borderFrame:SetBackdropBorderColor
+        ['statusBar.displayState'] = true,               -- statusBar:Show / Hide
+        ['statusBar.color'] = true,                      -- statusBar:SetStatusBarColor
+        ['statusBar.customBarTexture'] = true,           -- statusBar:SetStatusBarTexture
+        ['statusBar.rotation'] = true,                   -- statusBar:SetRotation
+        ['statusBar.backgroundColor'] = true,            -- bgTexture:SetVertexColor
+        ['statusBar.glowColor'] = true,                  -- glowTexture:SetVertexColor
+        ['statusBar.borderColor'] = true,                -- borderPieces:SetVertexColor
+        ['visualChargeBar.minValue'] = true,             -- statusBar:SetMinMaxValues
+        ['visualChargeBar.maxValue'] = true,             -- statusBar:SetMinMaxValues
+        ['chargeBasedDisplay.chargeValue'] = true,       -- anchorBar:SetValue
+        ['countText.display'] = true,                    -- count:Show / Hide
+        ['countText.color'] = true,                      -- count:SetTextColor
+        ['customLabel.text'] = true,                     -- customLabel:SetText
+        ['customLabel.color'] = true,                    -- customLabel:SetTextColor
+        ['cooldownText.color'] = true,                   -- cdText:SetTextColor
+        ['glowNotification.shouldDisplay'] = true        -- glowFrame:Show / Hide
     }
+    return secretAllowed[property] or false
 end
 
 
