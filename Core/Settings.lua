@@ -4,7 +4,7 @@ local State = SpellStyler.State
 -- NewSettings.lua
 -- Simple border demo using the finalized border frame values
 
-local settingsMenu
+SpellStyler.settingsMenu = nil
 local borderFrames = {}
 
 -- View management
@@ -32,7 +32,7 @@ local function CreateBorderFrame(parent, name, point, xOff, yOff, l, r, t, b, ro
     frame:SetBackdropBorderColor(0, 0, 0, 0)
     frame:EnableMouse(false)
     frame:SetMovable(false)
-    frame:SetFrameLevel(settingsMenu:GetFrameLevel() + 2)
+    frame:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 2)
     local tex = frame:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(frame)
     tex:SetTexture(2406979)
@@ -49,7 +49,7 @@ local pendingShowAfterCombat = false
 
 
 local function ShowBorderDemo()
-    if settingsMenu and settingsMenu:IsShown() then return end
+    if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then return end
     -- Can't open (or create) protected frames while in combat; queue for after.
     if InCombatLockdown() then
         if not pendingShowAfterCombat then
@@ -58,24 +58,24 @@ local function ShowBorderDemo()
         return
     end
 
-    if not settingsMenu then
-        settingsMenu = CreateFrame("Frame", "ss_BorderDemo", UIParent, "BackdropTemplate")
-        settingsMenu:Hide()  -- hide immediately so Show() later triggers OnShow hooks
+    if not SpellStyler.settingsMenu then
+        SpellStyler.settingsMenu = CreateFrame("Frame", "ss_BorderDemo", UIParent, "BackdropTemplate")
+        SpellStyler.settingsMenu:Hide()  -- hide immediately so Show() later triggers OnShow hooks
 		local width = 400
-        settingsMenu:SetSize(width, 600)
-        settingsMenu:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        settingsMenu:SetBackdrop({ bgFile = 374155 })
-        settingsMenu:SetBackdropColor(1, 1, 1, 1)
-        settingsMenu:EnableMouse(true)
-        settingsMenu:SetMovable(true)
-		settingsMenu:SetFrameStrata("DIALOG") -- or "DIALOG"
-		settingsMenu:SetFrameLevel(10) 
-        settingsMenu:RegisterForDrag("LeftButton")
-        settingsMenu:SetScript("OnDragStart", settingsMenu.StartMoving)
-        settingsMenu:SetScript("OnDragStop", settingsMenu.StopMovingOrSizing)
+        SpellStyler.settingsMenu:SetSize(width, 600)
+        SpellStyler.settingsMenu:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+        SpellStyler.settingsMenu:SetBackdrop({ bgFile = 374155 })
+        SpellStyler.settingsMenu:SetBackdropColor(1, 1, 1, 1)
+        SpellStyler.settingsMenu:EnableMouse(true)
+        SpellStyler.settingsMenu:SetMovable(true)
+		SpellStyler.settingsMenu:SetFrameStrata("DIALOG") -- or "DIALOG"
+		SpellStyler.settingsMenu:SetFrameLevel(10) 
+        SpellStyler.settingsMenu:RegisterForDrag("LeftButton")
+        SpellStyler.settingsMenu:SetScript("OnDragStart", SpellStyler.settingsMenu.StartMoving)
+        SpellStyler.settingsMenu:SetScript("OnDragStop", SpellStyler.settingsMenu.StopMovingOrSizing)
         
         -- Disable dragging when menu is hidden
-        settingsMenu:SetScript("OnHide", function()
+        SpellStyler.settingsMenu:SetScript("OnHide", function()
             if SpellStyler.IconSettingsRenderer and SpellStyler.IconSettingsRenderer.DisableDraggingForAllFrames then
                 SpellStyler.IconSettingsRenderer:DisableDraggingForAllFrames()
             end
@@ -83,10 +83,10 @@ local function ShowBorderDemo()
         
         -- Portrait frame: above the background backdrop, below the border frames.
         -- Created before the border frames so equal-level border children render on top.
-        local portraitHolder = CreateFrame("Frame", nil, settingsMenu)
+        local portraitHolder = CreateFrame("Frame", nil, SpellStyler.settingsMenu)
         portraitHolder:SetSize(80, 80)
-        portraitHolder:SetPoint("TOPLEFT", settingsMenu, "TOPLEFT", -2, 9)
-        portraitHolder:SetFrameLevel(settingsMenu:GetFrameLevel() + 1)
+        portraitHolder:SetPoint("TOPLEFT", SpellStyler.settingsMenu, "TOPLEFT", -2, 9)
+        portraitHolder:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 1)
 
         local portraitTex = portraitHolder:CreateTexture(nil, "ARTWORK")
         portraitTex:SetAllPoints(portraitHolder)
@@ -105,35 +105,35 @@ local function ShowBorderDemo()
         portraitTex:AddMaskTexture(circleMask)
 
         -- Add border children
-        borderFrames[1] = CreateBorderFrame(settingsMenu, "TopLeftCorner", "TOPLEFT", -22, 22,      0.000, 0.28,  0.316, 0.59,  0,     110, 108)
-        borderFrames[2] = CreateBorderFrame(settingsMenu, "TopRightCorner", "TOPRIGHT", 54, 28.99,  0.800, 1,     0.002, 0.255, 0,     80, 100)
-        borderFrames[3] = CreateBorderFrame(settingsMenu, "LineLeft", "LEFT", -22, -28,             0.000, 0.14,  0.221, 0.290, 0,     55, 485)
-        borderFrames[4] = CreateBorderFrame(settingsMenu, "LineRight", "RIGHT", 23, -13,            0.000, 0.14,  0.221, 0.290, 180,   55, 485)
-        borderFrames[5] = CreateBorderFrame(settingsMenu, "TopBar", "BOTTOM", 2, -27.9,             0.075, 0.45,  0.002, 0.255, 180,     350, 100)
-        borderFrames[6] = CreateBorderFrame(settingsMenu, "Corner1", "BOTTOMRIGHT", -373, -28,      0.800, 1,     0.002, 0.255, -180,     80, 100)
-        borderFrames[7] = CreateBorderFrame(settingsMenu, "Corner2", "BOTTOMLEFT", 374, -28,       1,     0.800, 0.002, 0.255, -180,     80, 100)
-        borderFrames[8] = CreateBorderFrame(settingsMenu, "TopBar", "TOP", 31, 29,                  0.075, 0.45,  0.002, 0.255, 0,     286, 100)
+        borderFrames[1] = CreateBorderFrame(SpellStyler.settingsMenu, "TopLeftCorner", "TOPLEFT", -22, 22,      0.000, 0.28,  0.316, 0.59,  0,     110, 108)
+        borderFrames[2] = CreateBorderFrame(SpellStyler.settingsMenu, "TopRightCorner", "TOPRIGHT", 54, 28.99,  0.800, 1,     0.002, 0.255, 0,     80, 100)
+        borderFrames[3] = CreateBorderFrame(SpellStyler.settingsMenu, "LineLeft", "LEFT", -22, -28,             0.000, 0.14,  0.221, 0.290, 0,     55, 485)
+        borderFrames[4] = CreateBorderFrame(SpellStyler.settingsMenu, "LineRight", "RIGHT", 23, -13,            0.000, 0.14,  0.221, 0.290, 180,   55, 485)
+        borderFrames[5] = CreateBorderFrame(SpellStyler.settingsMenu, "TopBar", "BOTTOM", 2, -27.9,             0.075, 0.45,  0.002, 0.255, 180,     350, 100)
+        borderFrames[6] = CreateBorderFrame(SpellStyler.settingsMenu, "Corner1", "BOTTOMRIGHT", -373, -28,      0.800, 1,     0.002, 0.255, -180,     80, 100)
+        borderFrames[7] = CreateBorderFrame(SpellStyler.settingsMenu, "Corner2", "BOTTOMLEFT", 374, -28,       1,     0.800, 0.002, 0.255, -180,     80, 100)
+        borderFrames[8] = CreateBorderFrame(SpellStyler.settingsMenu, "TopBar", "TOP", 31, 29,                  0.075, 0.45,  0.002, 0.255, 0,     286, 100)
 
         -- Add title text (wrapped in a Frame so SetFrameLevel is available)
-        local titleFrame = CreateFrame("Frame", nil, settingsMenu)
+        local titleFrame = CreateFrame("Frame", nil, SpellStyler.settingsMenu)
         titleFrame:SetSize(200, 30)
-        titleFrame:SetPoint("TOP", settingsMenu, "TOP", 20, 0)
-        titleFrame:SetFrameLevel(settingsMenu:GetFrameLevel() + 3)
+        titleFrame:SetPoint("TOP", SpellStyler.settingsMenu, "TOP", 20, 0)
+        titleFrame:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
         local title = titleFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         title:SetAllPoints(titleFrame)
         title:SetText("Spell Styler")
         title:SetTextColor(1, 0.82, 0)
         
         -- Add close button
-        local closeBtn = CreateFrame("Button", nil, settingsMenu, "UIPanelCloseButton")
-        closeBtn:SetPoint("TOPRIGHT", settingsMenu, "TOPRIGHT", -3, -2)
+        local closeBtn = CreateFrame("Button", nil, SpellStyler.settingsMenu, "UIPanelCloseButton")
+        closeBtn:SetPoint("TOPRIGHT", SpellStyler.settingsMenu, "TOPRIGHT", -3, -2)
         closeBtn:SetScript("OnClick", function()
             if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
-            settingsMenu:Hide()
+            SpellStyler.settingsMenu:Hide()
         end)
 
         -- ESC key handler
-        settingsMenu:SetScript("OnKeyDown", function(self, key)
+        SpellStyler.settingsMenu:SetScript("OnKeyDown", function(self, key)
             if key == "ESCAPE" then
                 if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
                 self:Hide()
@@ -142,15 +142,15 @@ local function ShowBorderDemo()
 
         -- Allow the frame to receive keyboard events but let most keys propagate
         -- to the game (so WASD and other movement keys still work).
-        settingsMenu:EnableKeyboard(true)
+        SpellStyler.settingsMenu:EnableKeyboard(true)
         pcall(function() 
-            settingsMenu:SetPropagateKeyboardInput(true)
+            SpellStyler.settingsMenu:SetPropagateKeyboardInput(true)
         end)
 
         -- Create an inset frame the settings
-        insetSettingsContainer = CreateFrame("Frame", nil, settingsMenu, "BackdropTemplate")
-        insetSettingsContainer:SetPoint("TOPLEFT", settingsMenu, "TOPLEFT", 5, -80)
-        insetSettingsContainer:SetPoint("BOTTOMRIGHT", settingsMenu, "BOTTOMRIGHT", -5, 35)
+        insetSettingsContainer = CreateFrame("Frame", nil, SpellStyler.settingsMenu, "BackdropTemplate")
+        insetSettingsContainer:SetPoint("TOPLEFT", SpellStyler.settingsMenu, "TOPLEFT", 5, -80)
+        insetSettingsContainer:SetPoint("BOTTOMRIGHT", SpellStyler.settingsMenu, "BOTTOMRIGHT", -5, 35)
         insetSettingsContainer:SetBackdrop({
             bgFile = 374154,
             edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
@@ -160,18 +160,12 @@ local function ShowBorderDemo()
         insetSettingsContainer:SetBackdropColor(0.15, 0.15, 0.15, 0.85)
         insetSettingsContainer:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
 
-        -- Add "Update" button (refreshes all tracker hooks and viewer visibility)
-        local updateBtn = CreateFrame("Button", nil, insetSettingsContainer, "UIPanelButtonTemplate")
-        updateBtn:SetSize(70, 22)
-        updateBtn:SetPoint("BOTTOMRIGHT", settingsMenu, "BOTTOMRIGHT", -10, 5)
-        updateBtn:SetText("Update")
-        updateBtn:SetFrameLevel(settingsMenu:GetFrameLevel() + 3)
 
         local cdmToggleBtn = CreateFrame("Button", nil, insetSettingsContainer, "UIPanelButtonTemplate")
         cdmToggleBtn:SetSize(100, 22)
-        cdmToggleBtn:SetPoint("BOTTOMLEFT", settingsMenu, "BOTTOMLEFT", 10, 5)
+        cdmToggleBtn:SetPoint("BOTTOMLEFT", SpellStyler.settingsMenu, "BOTTOMLEFT", 10, 5)
         cdmToggleBtn:SetText("Toggle CDM")
-        cdmToggleBtn:SetFrameLevel(settingsMenu:GetFrameLevel() + 3)
+        cdmToggleBtn:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
         cdmToggleBtn:SetScript("OnClick", function()
             pcall(function()
                 if CooldownViewerSettings:IsShown() then
@@ -582,30 +576,13 @@ local function ShowBorderDemo()
         SwitchToView("icons")
 
         -- Store references globally so other modules can update the settings menu
-        SpellStyler.settingsMenu = settingsMenu
         SpellStyler.settingsContentFrame = settingsContentFrame
         SpellStyler.SwitchSettingsView = SwitchToView
 
-        -- Now that settingsContentFrame exists, wire up the Update button
-        updateBtn:SetScript("OnClick", function()
-            -- Only "buffs" is a valid scan-based tracker type; "essential" and
-            -- "utility" were legacy types migrated into "spells" and must not be
-            -- passed here (doing so caused phantom frames to be created).
-            SpellStyler.FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
-            if SpellStyler.Containers then
-                SpellStyler.Containers:ApplyViewerVisibility("buffs")
-            end
-            -- Re-render the icon list so new/removed trackers appear
-            SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
-            -- Enable dragging for any newly created frames
-            if SpellStyler.IconSettingsRenderer.EnableDraggingForAllFrames then
-                SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
-            end
-        end)
 
         -- ============================
-        -- Tab bar: parented to UIParent so it can sit BEHIND settingsMenu.
-        -- Children of settingsMenu cannot have a lower FrameLevel than the menu
+        -- Tab bar: parented to UIParent so it can sit BEHIND SpellStyler.settingsMenu.
+        -- Children of SpellStyler.settingsMenu cannot have a lower FrameLevel than the menu
         -- itself, so we parent to UIParent and manage visibility manually.
         -- ============================
         local tabFaceW = 100
@@ -614,15 +591,19 @@ local function ShowBorderDemo()
 
         local tabBar = CreateFrame("Frame", nil, UIParent)
         tabBar:SetWidth(tabFaceW + 55)
-        tabBar:SetFrameLevel(settingsMenu:GetFrameLevel() - 1)  -- one level BEHIND settingsMenu
-        tabBar:SetPoint("TOPLEFT", settingsMenu, "TOPRIGHT", 0, -100)
+        tabBar:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() - 1)  -- one level BEHIND SpellStyler.settingsMenu
+        tabBar:SetPoint("TOPLEFT", SpellStyler.settingsMenu, "TOPRIGHT", 0, -100)
 
-        -- Keep tabBar visible only while settingsMenu is shown
-        settingsMenu:HookScript("OnShow", function()
+        -- Keep tabBar visible only while SpellStyler.settingsMenu is shown
+        SpellStyler.settingsMenu:HookScript("OnShow", function()
             tabBar:Show()
             SpellStyler.IconSettingsRenderer:ReactivateKeyboard()
             if SpellStyler.Containers then
                 SpellStyler.Containers:SetEditMode(true)
+            end
+            -- Re-render icon list when menu opens
+            if SpellStyler.IconSettingsRenderer and settingsContentFrame then
+                SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
             end
             -- Override icon visibility if enabled
             if State.GetGlobalSettings then
@@ -632,7 +613,7 @@ local function ShowBorderDemo()
                 end
             end
         end)
-        settingsMenu:HookScript("OnHide", function()
+        SpellStyler.settingsMenu:HookScript("OnHide", function()
             tabBar:Hide()
             if SpellStyler.Containers then SpellStyler.Containers:SetEditMode(false) end
             -- Restore normal icon visibility
@@ -670,7 +651,7 @@ local function ShowBorderDemo()
 	-- When the settings menu is open and the user clicks a tracker frame in the
 	-- game world, switch to the Spells tab and select that icon.
 	SpellStyler._selectIconInSettings = function(uniqueID, trackerType)
-		if not (settingsMenu and settingsMenu:IsShown()) then return end
+		if not (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown()) then return end
 		SwitchToView("icons")
 		SpellStyler.IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
 	end
@@ -685,7 +666,7 @@ local function ShowBorderDemo()
 			SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
 		end
 	end
-    settingsMenu:Show()
+    SpellStyler.settingsMenu:Show()
 end
 
 -- Combat-delay event frame: opens settings after combat, force-closes on combat enter
@@ -697,8 +678,8 @@ combatDelayFrame:SetScript("OnEvent", function(self, event, ...)
         local isInCombat = ...
         if isInCombat then
             if SpellStyler.IconSettingsRenderer.keyboardFrame then SpellStyler.IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
-            if settingsMenu and settingsMenu:IsShown() then
-                settingsMenu:Hide()
+            if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
+                SpellStyler.settingsMenu:Hide()
                 pendingShowAfterCombat = true -- automatically reopen if it was forced closed
             end
         else
@@ -709,7 +690,8 @@ combatDelayFrame:SetScript("OnEvent", function(self, event, ...)
             end
             if FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat then
                 FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = false
-                FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
+                -- FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
+                FrameTrackerManager:FreshCreateFrames()
             end
         end
     end

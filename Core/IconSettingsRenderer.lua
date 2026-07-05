@@ -3138,6 +3138,26 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 	settingsPanel:SetBackdropColor(0.08, 0.08, 0.08, 0.8)
 	settingsPanel:SetBackdropBorderColor(1, 0, 0, 1)  -- RED border for debugging
 	
+
+    local settingsPanelScrollFrame = CreateFrame("ScrollFrame", nil, settingsPanel, "UIPanelScrollFrameTemplate")
+    settingsPanelScrollFrame:SetPoint("TOPLEFT", 10, -10)
+    settingsPanelScrollFrame:SetPoint("BOTTOMRIGHT", -10, 10)
+    -- ORANGE border for debugging (ScrollFrame doesn't support SetBackdrop, so create a child frame)
+    -- local scrollFrameBorder = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
+    -- scrollFrameBorder:SetAllPoints(settingsPanelScrollFrame)
+    -- scrollFrameBorder:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
+    -- scrollFrameBorder:SetBackdropBorderColor(1, 0.5, 0, 1)
+    -- scrollFrameBorder:SetFrameLevel(settingsPanelScrollFrame:GetFrameLevel() + 10)  -- Ensure it's on top
+    if SpellStyler and SpellStyler.Cooldowns and type(IconSettingsRenderer.SetConsistentScrollingBehavior) == "function" then
+        IconSettingsRenderer:SetConsistentScrollingBehavior(settingsPanelScrollFrame)
+    end
+
+    -- Hide the vertical scrollbar
+	local scrollBar = _G[settingsPanelScrollFrame:GetName() and (settingsPanelScrollFrame:GetName().."ScrollBar") or nil] or settingsPanelScrollFrame.ScrollBar
+	if scrollBar then
+		scrollBar:Hide()
+		scrollBar.Show = function() end -- prevent it from being shown by template code
+	end
 	
 	
     -- Render icons directly into the scroll child in a single column
@@ -3166,6 +3186,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
             plusBtn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, -iconPadding)
             plusBtn:SetScript("OnClick", function()
                 _lastSelectedIcon = nil
+                settingsPanelScrollFrame:SetVerticalScroll(0)
                 SpellStyler.AddSpells:RenderAddSpellsView(settingsScrollChild)
             end)
         end
@@ -3244,25 +3265,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
     end
 	
 
-    local settingsPanelScrollFrame = CreateFrame("ScrollFrame", nil, settingsPanel, "UIPanelScrollFrameTemplate")
-    settingsPanelScrollFrame:SetPoint("TOPLEFT", 10, -10)
-    settingsPanelScrollFrame:SetPoint("BOTTOMRIGHT", -10, 10)
-    -- ORANGE border for debugging (ScrollFrame doesn't support SetBackdrop, so create a child frame)
-    -- local scrollFrameBorder = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
-    -- scrollFrameBorder:SetAllPoints(settingsPanelScrollFrame)
-    -- scrollFrameBorder:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
-    -- scrollFrameBorder:SetBackdropBorderColor(1, 0.5, 0, 1)
-    -- scrollFrameBorder:SetFrameLevel(settingsPanelScrollFrame:GetFrameLevel() + 10)  -- Ensure it's on top
-    if SpellStyler and SpellStyler.Cooldowns and type(IconSettingsRenderer.SetConsistentScrollingBehavior) == "function" then
-        IconSettingsRenderer:SetConsistentScrollingBehavior(settingsPanelScrollFrame)
-    end
-
-    -- Hide the vertical scrollbar
-	local scrollBar = _G[settingsPanelScrollFrame:GetName() and (settingsPanelScrollFrame:GetName().."ScrollBar") or nil] or settingsPanelScrollFrame.ScrollBar
-	if scrollBar then
-		scrollBar:Hide()
-		scrollBar.Show = function() end -- prevent it from being shown by template code
-	end
+    
 
     local scrollChild = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
     scrollChild:SetSize(settingsPanel:GetWidth() - 20, settingsPanel:GetHeight() - 20)

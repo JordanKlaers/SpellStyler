@@ -370,12 +370,8 @@ pcall(function()
                 -- a:AddPoint(0, 0)
                 -- a:AddPoint(22, 1)
                 -- DevTool:AddData({
-                --     a = {
-                --         low = "0 - 0",
-                --         high  = "22 - 1",
-                --         result = a:Evaluate(secretCharge)
-                --     }
-                -- }, "curve test")
+                --     a = C_UnitAuras.GetPlayerAuraBySpellID(104316)
+                -- }, "C_UnitAuras.GetPlayerAuraBySpellID")
                 -- local unitHealthCurveValue = UnitHealthPercent("target", true, SpellStyler.Util:CurveComparison(100, 9, 1, "<="))
                 -- DevTool:AddData({
                 --     SpellStyler = SpellStyler,

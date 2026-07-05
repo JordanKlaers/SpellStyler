@@ -237,3 +237,8 @@ Version 1.8.0
 
 Version 1.8.1
 	- Updates glow notification to not use frame width method that is secret in combat. Caches the value before hand instead.
+
+Version 1.9.0
+	- Removes the "update" button, it wasnt clear what it actually did. Its purpose was to resync the settings menu and buff frames but this happens automatically now. It had no other effect.
+	- Updates how spell icons are set on load to attempt to be more correct.
+	- Updates the override visibility to persist through changes while the settings menu is open

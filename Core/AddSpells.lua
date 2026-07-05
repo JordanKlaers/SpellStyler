@@ -345,12 +345,16 @@ function AddSpells:RenderAddSpellsView(parent)
         else
             -- Track spell by baseSpellID
             trackingID = C_Spell.GetBaseSpell(selectedSpell.spellID)
+            local overrideSpellID = C_Spell.GetOverrideSpell(selectedSpell.spellID)
+            -- Get icon from override spell for correct initial appearance
+            local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
+            local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedSpell.iconID
             trackerConfig = State:AddTrackerValue({
                 baseSpellID             = trackingID,
-                overrideSpellID         = C_Spell.GetOverrideSpell(selectedSpell.spellID),
+                overrideSpellID         = overrideSpellID,
                 trackerType             = "spells",
                 name                    = selectedSpell.name,
-                defaultIconTexturePath  = selectedSpell.iconID,
+                defaultIconTexturePath  = iconTexture,
             })
         end
         
@@ -421,6 +425,10 @@ function AddSpells:RenderAddSpellsView(parent)
 
     local gridChild = CreateFrame("Frame", nil, gridSF)
     gridSF:SetScrollChild(gridChild)
+    
+    -- Reset scroll position and enable scrolling
+    gridSF:SetVerticalScroll(0)
+    gridSF:EnableMouseWheel(true)
 
     -- ── Build buttons for every spell and item ────────────────────────
     local spells = AddSpells:GetCurrentSpecSpells()

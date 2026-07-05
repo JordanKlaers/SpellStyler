@@ -1156,3 +1156,17 @@ function State:OverrideAllIconsVisible(shouldOverride)
         end
     end
 end
+
+function State:GetShouldOverrideVisibility()
+    local shouldOverrideVisibility = false
+    if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
+        local State = SpellStyler.State
+        if State and State.GetGlobalSettings then
+            local gs = State:GetGlobalSettings()
+            if gs and gs.visibilitySettings and gs.visibilitySettings.showAllWhenSettingsOpen then
+                shouldOverrideVisibility = true
+            end
+        end
+    end
+    return shouldOverrideVisibility
+end
