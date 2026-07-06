@@ -2759,12 +2759,20 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
     local baseSpellID = FrameTrackerManager:ResolveCDMBaseSpellID(cdm_frame)
     local classSpecialization = State:GetCurrentSpecID()
     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+    -- Skip if mock cooldown is active
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    if frame.meta.mockCooldownActive then
+        return
+    end
+    local totemSlot = cdm_frame:GetTotemSlot()
+    FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentAuraInstanceID', cdm_frame:GetAuraSpellInstanceID() or 0)
+    FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentTotemSlot', cdm_frame:GetTotemSlot() or 0)
     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
     if hasSpecialization and baseSpellID and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
         -- Track active buffs for conditional engine
         if trackerType == "buffs" then
             local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-            if customFrame and customFrame.meta and customFrame.meta.currentAuraInstanceID and customFrame.meta.currentAuraInstanceID ~= 0 then
+            if customFrame and customFrame.meta and ((customFrame.meta.currentAuraInstanceID and customFrame.meta.currentAuraInstanceID ~= 0) or (customFrame.meta.currentTotemSlot and customFrame.meta.currentTotemSlot ~= 0)) then
                 -- Buff is active
                 if SpellStyler.ConditionalEngine then
                     local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
@@ -2772,11 +2780,6 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
                     SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
                 end
             end
-        end
-        -- Skip if mock cooldown is active
-        local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-        if frame.meta.mockCooldownActive then
-            return
         end
         
         if trackerType == "buffs" then
@@ -2797,8 +2800,8 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
             -- shown (buff active). When hidden, the frame may still hold a stale
             -- non-zero ID from its previous application, which would incorrectly
             -- make Set Icon Visibility think the buff is still active.
-            FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentAuraInstanceID', cdm_frame:GetAuraSpellInstanceID() or 0)
-            if frame.meta.currentAuraInstanceID ~= 0 then
+            
+            if frame.meta.currentAuraInstanceID ~= 0 or frame.meta.currentTotemSlot ~= 0 then
                 FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'buffStatus', 'present')
             else
                 FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'buffStatus', 'absent')
@@ -2806,7 +2809,7 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
 
             if SpellStyler.ConditionalEngine then
                 local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
-                activeBuffs[baseSpellID] = frame.meta.currentAuraInstanceID ~= 0
+                activeBuffs[baseSpellID] = frame.meta.currentAuraInstanceID ~= 0 or frame.meta.currentTotemSlot ~= 0
                 SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
             end
 
@@ -2818,6 +2821,7 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
             -- Build combined caller string for debugging
             local callerStr = table.concat(callers, ", ")
             
+            local durationObject = totemSlot and GetTotemDuration(totemSlot)
             if frame.meta.dualFrameStatus ~= 'hideBase' then
                 FrameTrackerManager:DriveFrameUpdate(
                     frame,
@@ -2825,8 +2829,9 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
                         resolveDuration = true,
                         syncChargeText = true
                     },
-
-                    nil,
+                    totemSlot and {
+                        durationObject = durationObject
+                    } or nil,
                     "hookCallback_" .. callerStr
                 )
             end
@@ -2837,8 +2842,9 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
                         resolveDuration = true,
                         syncChargeText = true
                     },
-
-                    nil,
+                    totemSlot and {
+                        durationObject = durationObject
+                    } or nil,
                     "hookCallback_" .. callerStr
                 )
             end
@@ -2904,12 +2910,12 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
             local function hookCallback(self, caller)
                 ProcessCDMFrameCallback(self, trackerType, caller)
             end
-
             if cdm_frame.RefreshApplications then hooksecurefunc(cdm_frame, "RefreshApplications", function(self) hookCallback(self, 'RefreshApplications') end) end
             if cdm_frame.OnAuraInstanceInfoSet then hooksecurefunc(cdm_frame, "OnAuraInstanceInfoSet", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
             if cdm_frame.SetAuraInstanceInfo then hooksecurefunc(cdm_frame, "SetAuraInstanceInfo", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
             if cdm_frame.OnUnitAuraAddedEvent then hooksecurefunc(cdm_frame, "OnUnitAuraAddedEvent", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
             if cdm_frame.OnUnitAuraUpdatedEvent then hooksecurefunc(cdm_frame, "OnUnitAuraUpdatedEvent", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
+            if cdm_frame.SetTotemData then hooksecurefunc(cdm_frame, "SetTotemData", function(self) hookCallback(self, 'SetTotemData') end) end
 
             
             local sourceCooldown = cdm_frame.Cooldown or cdm_frame.cooldown
@@ -2919,6 +2925,10 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
             if sourceCooldown and not cdm_frame.hasHookedCooldown then
                 cdm_frame.hasHookedCooldown = true
                 hooksecurefunc(sourceCooldown, "SetCooldown", function(self) hookCallback(cdm_frame, 'SetCooldown_buffs') end)
+            end
+            if sourceCooldown and not cdm_frame.hasHookedCooldownDuration then
+                cdm_frame.hasHookedCooldownDuration = true
+                hooksecurefunc(sourceCooldown, "SetCooldownFromDurationObject", function(self) hookCallback(cdm_frame, 'SetCooldownFromDurationObject_buffs') end)
             end
         end
     end
@@ -3146,6 +3156,7 @@ function FrameTrackerManager:TeardownSpecFrames()
             if cdmFrame then
                 cdmFrame._spellStyler_hasHookedFrame = nil
                 cdmFrame.hasHookedCooldown = nil
+                cdmFrame.hasHookedCooldownDuration = nil
             end
         end
     end
@@ -3358,7 +3369,7 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     
     -- Buffs: simple aura presence check
     if trackerType == 'buffs' then
-        local hasAura = frame.meta.currentAuraInstanceID and frame.meta.currentAuraInstanceID ~= 0
+        local hasAura = (frame.meta.currentAuraInstanceID and frame.meta.currentAuraInstanceID ~= 0) or (frame.meta.currentTotemSlot and frame.meta.currentTotemSlot ~= 0)
         
         return hasAura and 0 or 1, 
                hasAura and 1 or 0, 
@@ -3759,7 +3770,7 @@ FrameTrackerManager.ApplyVisibility = {
     ]]
     CooldownSwipe = function(context)
         -- Hide swipe for buffs without an aura OR for totems that aren't active
-        if not context.shouldDisplay or (context.trackerType == "buffs" and not context.customFrame.meta.isTotemActive and (context.customFrame.meta.currentAuraInstanceID == 0 or context.customFrame.meta.currentAuraInstanceID == nil)) then
+        if not context.shouldDisplay or (context.trackerType == "buffs" and not context.customFrame.meta.isTotemActive and (context.customFrame.meta.currentAuraInstanceID == 0 or context.customFrame.meta.currentAuraInstanceID == nil) and (not context.customFrame.meta.currentTotemSlot or context.customFrame.meta.currentTotemSlot == 0)) then
             context.customFrame.cooldown:SetDrawEdge(false)
             context.customFrame.cooldown:SetDrawBling(false)
             context.customFrame.cooldown:SetDrawSwipe(false)
@@ -4421,7 +4432,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_TOTEM_UPDATE" then
         local slot = ...
         local totemDuration = GetTotemDuration(slot)
-
         -- If there is no duration in this slot, CLEAR the associated frame and remove the binding/saved frame
         if not totemDuration then
             local frame = FrameTrackerManager._activeTotemSlots[slot]
