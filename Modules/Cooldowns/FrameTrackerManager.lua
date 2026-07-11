@@ -37,8 +37,8 @@ FrameTrackerManager.SpellStyler_frames = {
 
 FrameTrackerManager._driveQueue     = {}
 FrameTrackerManager._processCDMQueue = {}
+FrameTrackerManager._freshCreateQueue = { pending = false, callers = nil }  -- Debounce queue for FreshCreateFrames
 FrameTrackerManager._totemLogQueue  = {}
-FrameTrackerManager._pendingFrameCreation = {}  -- Frames waiting to be created after dependency resolution
 FrameTrackerManager._totemSpellQueue = {}  -- Queue of spell casts waiting to be matched with PLAYER_TOTEM_UPDATE: { spellID = expirationTime }
 FrameTrackerManager._activeTotemSlots = {}  -- Maps active totem slots to frames: { slotIndex = frame }
 
@@ -131,24 +131,13 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
     local viewer = SpellStyler.Containers:GetCooldownManagerViewer(trackerType)
     if not viewer or not viewer.itemFramePool then return end
 
-    local existingTrackers = State:GetAllTrackerValues(trackerType)
-    if existingTrackers then
-        for spellID, trackerValue in pairs(existingTrackers) do
-            trackerValue.isEnabled = false
-            local frame = FrameTrackerManager.SpellStyler_frames[trackerType][spellID]
-            if frame then
-                frame:Hide()
-                frame:ClearAllPoints()
-                FrameTrackerManager.SpellStyler_frames[trackerType][spellID] = nil
-            end
-        end
-    end
 
     
     FrameTrackerManager.cooldownManagerFrames[trackerType] = {}
     wipe(FrameTrackerManager.cooldownIDToBaseSpellID)
 
-    
+    local count = viewer.itemFramePool:GetNumActive()
+    FrameTrackerManager.totalFrames = count
     -- ── Step 2: Enumerate only the currently active pool frames ──
     for cdmFrame in viewer.itemFramePool:EnumerateActive() do
         local spellID = nil
@@ -163,6 +152,10 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             if cooldownID then
                 FrameTrackerManager.cooldownIDToBaseSpellID[cooldownID] = spellID
             end
+            -- Keep our own lookup table populated for HookAllBuffCooldownFrames.
+            FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] = cdmFrame
+
+
             -- Resolve texture from the override spell to get the correct initial icon
             -- For spells that change based on stance/form, we need the override spell's icon
             local icon = cdmFrame.Icon or cdmFrame.icon
@@ -170,8 +163,7 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             local spellDataForIcon = C_Spell.GetSpellInfo(overrideSpellID) or C_Spell.GetSpellInfo(spellID) or {}
             local texture = (icon and icon.GetTexture and icon:GetTexture()) or spellDataForIcon.iconID
 
-            -- Keep our own lookup table populated for HookAllBuffCooldownFrames.
-            FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] = cdmFrame
+            
 
             -- ── Step 3: State entry ──
             if State:CheckIsAlreadyTracker(spellID, trackerType) then
@@ -196,157 +188,19 @@ function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType
             if trackerConfig then
                 -- Wipe devNotes before creating frame (fresh start for error tracking)
                 State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
-                -- Queue for creation instead of creating immediately
-                table.insert(FrameTrackerManager._pendingFrameCreation, {
-                    baseSpellID = spellID,
-                    trackerConfig = trackerConfig,
-                    trackerType = trackerType
-                })
+                FrameTrackerManager:CreateCompleteFrame(spellID, trackerConfig, trackerType)
             end
         end
     end
 
-    -- Apply any saved viewer visibility setting
-    SpellStyler.Containers:ApplyViewerVisibility("buffs")
-    SpellStyler.Containers:ApplyViewerVisibility("essential")
-    SpellStyler.Containers:ApplyViewerVisibility("utility")
+    -- delete any of the frames that are no longer in the cooldown manager
+    for spellID, spellStylerBuffFrame in pairs(FrameTrackerManager.SpellStyler_frames[trackerType]) do
+        if not FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] then
+            FrameTrackerManager:DestroyTrackerFrame(spellID, trackerType)
+        end
+    end
 end
 
---- Builds a tree structure organizing frames by their anchor dependencies
---- Frames anchored to UIParent are roots, others are organized under their anchor targets
---- @return table Tree structure with frames and their anchor children
-function FrameTrackerManager:BuildAnchorDependencyTree()
-    local pending = {}
-    local tree = {}
-    local processed = {}
-    
-    -- Copy pending frames to working list
-    for _, frameData in ipairs(self._pendingFrameCreation) do
-        table.insert(pending, frameData)
-    end
-    
-    -- Helper to get anchor target key from a frame's config
-    local function GetAnchorKey(frameData)
-        local pos = frameData.trackerConfig.position
-        if not pos or not pos.relativeToFrame then
-            return "UIParent"
-        end
-        
-        local relativeToFrame = pos.relativeToFrame
-        -- Handle numeric baseSpellID (new format)
-        if type(relativeToFrame) == "number" then
-            -- Look up the trackerType for this baseSpellID
-            -- Check all tracker types to find where this ID exists
-            for _, tType in ipairs({"buffs", "spells", "items"}) do
-                if SpellStyler.State then
-                    local trackerValue = SpellStyler.State:GetSpecificTrackerValue(relativeToFrame, tType)
-                    if trackerValue and trackerValue.trackerType then
-                        return tType .. ":" .. relativeToFrame
-                    end
-                end
-            end
-            -- If we can't find it, default to UIParent
-            return "UIParent"
-        elseif type(relativeToFrame) == "string" then
-            return relativeToFrame
-        elseif type(relativeToFrame) == "table" then
-            if relativeToFrame.uniqueID and relativeToFrame.trackerType then
-                return relativeToFrame.trackerType .. ":" .. relativeToFrame.uniqueID
-            end
-        end
-        return "UIParent"
-    end
-    
-    -- Helper to get frame key
-    local function GetFrameKey(frameData)
-        return frameData.trackerType .. ":" .. frameData.baseSpellID
-    end
-    
-    -- Helper to create tree node
-    local function CreateTreeNode(frameData)
-        return {
-            baseSpellID = frameData.baseSpellID,
-            trackerConfig = frameData.trackerConfig,
-            trackerType = frameData.trackerType,
-            anchorChildren = {}
-        }
-    end
-    
-    -- First pass: find all frames anchored to UIParent (roots)
-    local remainingFrames = {}
-    for _, frameData in ipairs(pending) do
-        local anchorKey = GetAnchorKey(frameData)
-        if anchorKey == "UIParent" or anchorKey == "Mouse" then
-            local node = CreateTreeNode(frameData)
-            table.insert(tree, node)
-            processed[GetFrameKey(frameData)] = node
-        else
-            table.insert(remainingFrames, frameData)
-        end
-    end
-    
-    -- Continue looping until all frames are assigned or we can't make progress
-    local maxIterations = 100  -- Prevent infinite loops
-    local iteration = 0
-    while #remainingFrames > 0 and iteration < maxIterations do
-        iteration = iteration + 1
-        local stillPending = {}
-        local madeProgress = false
-        
-        for _, frameData in ipairs(remainingFrames) do
-            local anchorKey = GetAnchorKey(frameData)
-            local parentNode = processed[anchorKey]
-            
-            if parentNode then
-                -- Found the parent, add as child
-                local node = CreateTreeNode(frameData)
-                table.insert(parentNode.anchorChildren, node)
-                processed[GetFrameKey(frameData)] = node
-                madeProgress = true
-            else
-                -- Parent not found yet, keep in pending
-                table.insert(stillPending, frameData)
-            end
-        end
-        
-        remainingFrames = stillPending
-        
-        -- If we didn't make progress, we have circular dependencies or invalid anchors
-        -- Create these frames as roots anchored to UIParent
-        if not madeProgress and #remainingFrames > 0 then
-            for _, frameData in ipairs(remainingFrames) do
-                local node = CreateTreeNode(frameData)
-                table.insert(tree, node)
-                processed[GetFrameKey(frameData)] = node
-            end
-            break
-        end
-    end
-    return tree
-end
-
---- Recursively creates frames from the dependency tree
---- Creates parent frames first, then their anchor children
---- @param tree table The dependency tree structure
-function FrameTrackerManager:CreateFramesFromDependencyTree(tree)
-    local function CreateNodeAndChildren(node)
-        -- Create this frame
-        self:CreateCompleteFrame(node.baseSpellID, node.trackerConfig, node.trackerType)
-        
-        -- Recursively create all anchor children
-        for _, childNode in ipairs(node.anchorChildren) do
-            CreateNodeAndChildren(childNode)
-        end
-    end
-    
-    -- Create all root frames and their descendants
-    for _, rootNode in ipairs(tree) do
-        CreateNodeAndChildren(rootNode)
-    end
-    
-    -- Clear the pending list
-    wipe(self._pendingFrameCreation)
-end
 
 function FrameTrackerManager:CreateNonBuffTrackerFrames()
     for _, trackerType in ipairs({ "spells", "items" }) do
@@ -370,15 +224,12 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                     end
                 end
                 
-                if shouldCreate then
+                if shouldCreate and not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
                     -- Wipe devNotes before creating frame (fresh start for error tracking)
                     State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
-                    -- Queue for creation instead of creating immediately
-                    table.insert(FrameTrackerManager._pendingFrameCreation, {
-                        baseSpellID = baseSpellID,
-                        trackerConfig = trackerConfig,
-                        trackerType = trackerType
-                    })
+                    FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, trackerType)
+                elseif not trackerConfig.isEnabled and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+                    FrameTrackerManager:DestroyTrackerFrame(baseSpellID, trackerType)
                 end
             end
         end
@@ -1729,8 +1580,12 @@ FrameTrackerManager.FrameUpdater = {
                 }
             }
             FrameTrackerManager:SetFramePosition(data.frame, positionData)
-                
-            
+            local isDraggingDisabled = State:GetTrackerValueConfigProperty(data.frame.meta.baseSpellID, data.frame.meta.trackerType, "iconSettings.disableDragging")
+            if isDraggingDisabled then
+                SpellStyler.IconSettingsRenderer:DisableDraggingForSpecificFrame(data.frame)
+            elseif not isDraggingDisabled and SpellStyler.settingsMenu:IsShown() then
+                SpellStyler.IconSettingsRenderer:EnableDraggingForSpecificFrame(data.frame)
+            end
         end)
     end,
     Icon = function(data)
@@ -2172,11 +2027,16 @@ FrameTrackerManager.FrameUpdater = {
         -- Apply totem bar visibility based on slot association and live duration
         -- Check if this frame is associated with any totem slot
         local associatedSlot = nil
-        for slot, frame in pairs(FrameTrackerManager._activeTotemSlots) do
-            if frame == data.frame then
-                associatedSlot = slot
-                break
+        for slot, frames in pairs(FrameTrackerManager._activeTotemSlots) do
+            if type(frames) == "table" then
+                for _, frame in ipairs(frames) do
+                    if frame == data.frame then
+                        associatedSlot = slot
+                        break
+                    end
+                end
             end
+            if associatedSlot then break end
         end
         
         -- Calculate alpha values from live totem duration if associated with a slot
@@ -2678,15 +2538,28 @@ function FrameTrackerManager:DestroyTrackerFrame(baseSpellID, trackerType)
     local frame = frames[baseSpellID]
     if not frame then return end
 
-    -- 1. Stop any running cooldown sweep so OnCooldownDone closure never fires.
-    if frame.cooldown then
-        pcall(function() frame.cooldown:Clear() end)
+    -- Helper to destroy a single frame (base or variant)
+    local function DestroyFrame(f)
+        if not f then return end
+        -- 1. Stop any running cooldown sweep so OnCooldownDone closure never fires.
+        if f.cooldown then
+            pcall(function() f.cooldown:Clear() end)
+        end
+        -- 2. Make invisible.
+        pcall(function() f:Hide() end)
+        pcall(function() f:ClearAllPoints() end)
+        -- 3. Detach from UIParent hierarchy (becomes completely unreachable).
+        pcall(function() f:SetParent(nil) end)
     end
-    -- 2. Make invisible.
-    pcall(function() frame:Hide() end)
-    pcall(function() frame:ClearAllPoints() end)
-    -- 3. Detach from UIParent hierarchy (becomes completely unreachable).
-    pcall(function() frame:SetParent(nil) end)
+    
+    -- Destroy base frame
+    DestroyFrame(frame)
+    
+    -- Destroy variant frame if it exists
+    if frame.variantFrame then
+        DestroyFrame(frame.variantFrame)
+    end
+    
     -- 4. Remove from the event-handler lookup table.
     frames[baseSpellID] = nil
 end
@@ -2706,50 +2579,6 @@ function FrameTrackerManager:GetSpellCharges(SpellIdentifier)
 end
 
 
-
--- Set up hooks on BuffIconCooldownViewer to mirror cooldown updates
-function FrameTrackerManager:SetupCooldownManagerHooks()
-    local viewer = SpellStyler.Containers:GetCooldownManagerViewer("buffs")
-    if not viewer then
-        C_Timer.After(1, function() self:SetupCooldownManagerHooks() end)
-        return
-    end
-
-    -- Hook SetAlpha on the viewer so Blizzard can't override our visibility setting.
-    -- Recursion guard prevents the hook from re-entering itself when we call SetAlpha.
-    if not viewer._spellStyler_alphaHooked then
-        viewer._spellStyler_alphaHooked = true
-        hooksecurefunc(viewer, "SetAlpha", function(self, alpha)
-            if self._spellStyler_settingViewerAlpha then return end
-            if SpellStyler.Containers:GetViewerHidden("buffs") and alpha ~= 0 then
-                self._spellStyler_settingViewerAlpha = true
-                self:SetAlpha(0)
-                self._spellStyler_settingViewerAlpha = false
-            end
-        end)
-    end
-
-
-    if InCombatLockdown() then
-        FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = true
-    else
-        local success, err = pcall(function()
-            self:HookAllBuffCooldownFrames("buffs")
-        end)
-        if err then
-            FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = true
-        end
-    end
-
-    -- Apply saved container layouts now that all tracker frames exist
-    if SpellStyler.Containers then
-        local containers = SpellStyler.Containers:GetDB()
-        for containerName in pairs(containers) do
-            SpellStyler.Containers:LayoutContainer(containerName)
-        end
-    end
-end
-
 --- Internal: executes the actual CDM frame processing after the debounce window closes.
 --- Called by ProcessCDMFrameCallback after coalescing multiple rapid-fire hook invocations.
 --- @param cdm_frame table The Blizzard cooldown manager frame
@@ -2759,20 +2588,28 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
     local baseSpellID = FrameTrackerManager:ResolveCDMBaseSpellID(cdm_frame)
     local classSpecialization = State:GetCurrentSpecID()
     --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
-    -- Skip if mock cooldown is active
+    
+    -- Guard: Frame must exist before we can access it
+    -- This can be nil during FreshCreateFrames() when frames are cleared but CDM hooks still fire
+    -- OR when ResolveCDMBaseSpellID returns nil/wrong ID
+    -- OR when the spell isn't tracked in the current spec
     local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    if not frame then
+        return
+    end
+    
+    -- Skip if mock cooldown is active
     if frame.meta.mockCooldownActive then
         return
     end
-    local totemSlot = cdm_frame:GetTotemSlot()
+    SpellStyler.donk = cdm_frame 
     FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentAuraInstanceID', cdm_frame:GetAuraSpellInstanceID() or 0)
-    FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentTotemSlot', cdm_frame:GetTotemSlot() or 0)
     local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
     if hasSpecialization and baseSpellID and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
         -- Track active buffs for conditional engine
         if trackerType == "buffs" then
             local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-            if customFrame and customFrame.meta and ((customFrame.meta.currentAuraInstanceID and customFrame.meta.currentAuraInstanceID ~= 0) or (customFrame.meta.currentTotemSlot and customFrame.meta.currentTotemSlot ~= 0)) then
+            if customFrame and customFrame.meta and ((customFrame.meta.currentAuraInstanceID and customFrame.meta.currentAuraInstanceID ~= 0)) then
                 -- Buff is active
                 if SpellStyler.ConditionalEngine then
                     local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
@@ -2801,7 +2638,7 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
             -- non-zero ID from its previous application, which would incorrectly
             -- make Set Icon Visibility think the buff is still active.
             
-            if frame.meta.currentAuraInstanceID ~= 0 or frame.meta.currentTotemSlot ~= 0 then
+            if frame.meta.currentAuraInstanceID ~= 0 then
                 FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'buffStatus', 'present')
             else
                 FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'buffStatus', 'absent')
@@ -2809,7 +2646,7 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
 
             if SpellStyler.ConditionalEngine then
                 local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
-                activeBuffs[baseSpellID] = frame.meta.currentAuraInstanceID ~= 0 or frame.meta.currentTotemSlot ~= 0
+                activeBuffs[baseSpellID] = frame.meta.currentAuraInstanceID ~= 0
                 SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
             end
 
@@ -2821,7 +2658,6 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
             -- Build combined caller string for debugging
             local callerStr = table.concat(callers, ", ")
             
-            local durationObject = totemSlot and GetTotemDuration(totemSlot)
             if frame.meta.dualFrameStatus ~= 'hideBase' then
                 FrameTrackerManager:DriveFrameUpdate(
                     frame,
@@ -2829,9 +2665,7 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
                         resolveDuration = true,
                         syncChargeText = true
                     },
-                    totemSlot and {
-                        durationObject = durationObject
-                    } or nil,
+                    nil,
                     "hookCallback_" .. callerStr
                 )
             end
@@ -2842,9 +2676,7 @@ local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
                         resolveDuration = true,
                         syncChargeText = true
                     },
-                    totemSlot and {
-                        durationObject = durationObject
-                    } or nil,
+                    nil,
                     "hookCallback_" .. callerStr
                 )
             end
@@ -2885,8 +2717,6 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
     
     local viewer = SpellStyler.Containers:GetCooldownManagerViewer(trackerType)
     if not viewer then return end
-        
-    FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType)
 
     for slotIndex, cdm_frame in pairs(FrameTrackerManager.cooldownManagerFrames[trackerType]) do
         -- Only hook frames that haven't been hooked yet
@@ -2906,30 +2736,41 @@ function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
                 end
             end)
             
-            -- Local wrapper that calls the module-level ProcessCDMFrameCallback
             local function hookCallback(self, caller)
-                ProcessCDMFrameCallback(self, trackerType, caller)
+                --TODO revert to ProcessCDMFrameCallback
+                _ExecuteProcessCDM(self, trackerType, { caller })
             end
-            if cdm_frame.RefreshApplications then hooksecurefunc(cdm_frame, "RefreshApplications", function(self) hookCallback(self, 'RefreshApplications') end) end
-            if cdm_frame.OnAuraInstanceInfoSet then hooksecurefunc(cdm_frame, "OnAuraInstanceInfoSet", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
-            if cdm_frame.SetAuraInstanceInfo then hooksecurefunc(cdm_frame, "SetAuraInstanceInfo", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
-            if cdm_frame.OnUnitAuraAddedEvent then hooksecurefunc(cdm_frame, "OnUnitAuraAddedEvent", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
-            if cdm_frame.OnUnitAuraUpdatedEvent then hooksecurefunc(cdm_frame, "OnUnitAuraUpdatedEvent", function(self) hookCallback(self, 'OnAuraInstanceInfoSet') end) end
-            if cdm_frame.SetTotemData then hooksecurefunc(cdm_frame, "SetTotemData", function(self) hookCallback(self, 'SetTotemData') end) end
-
-            
+            local function hookGuard(method, frame)
+                if frame[method] and not frame["hasHooked_" .. method] then
+                    hooksecurefunc(frame, method, function(self) hookCallback(self, method) end)
+                end
+            end
+            for _, methodName in ipairs({ "RefreshApplications", "OnAuraInstanceInfoSet", "SetAuraInstanceInfo", "OnUnitAuraAddedEvent", "OnUnitAuraUpdatedEvent", "SetTotemData", "SetCooldown", "SetCooldownFromDurationObject" }) do
+                hookGuard(methodName, cdm_frame)
+            end
             local sourceCooldown = cdm_frame.Cooldown or cdm_frame.cooldown
-            
+            for _, methodName in ipairs({ "SetCooldown", "SetCooldownFromDurationObject" }) do
+                hookGuard(methodName, sourceCooldown)
+            end
 
-            local donkFrame
-            if sourceCooldown and not cdm_frame.hasHookedCooldown then
-                cdm_frame.hasHookedCooldown = true
-                hooksecurefunc(sourceCooldown, "SetCooldown", function(self) hookCallback(cdm_frame, 'SetCooldown_buffs') end)
-            end
-            if sourceCooldown and not cdm_frame.hasHookedCooldownDuration then
-                cdm_frame.hasHookedCooldownDuration = true
-                hooksecurefunc(sourceCooldown, "SetCooldownFromDurationObject", function(self) hookCallback(cdm_frame, 'SetCooldownFromDurationObject_buffs') end)
-            end
+            hooksecurefunc(cdm_frame, "SetTotemData", function(...)
+                local spellID = cdm_frame.cooldownInfo.spellID
+                FrameTrackerManager:AddSpellToTotemQueue(spellID, "buffs")
+                
+                -- Count queue entries for debugging
+                local count = 0
+                for _ in pairs(FrameTrackerManager._totemSpellQueue) do
+                    count = count + 1
+                end
+                
+                -- Get the entry we just added
+                local justAdded = FrameTrackerManager._totemSpellQueue[spellID]
+            end)
+            hooksecurefunc(cdm_frame, "ClearTotemData", function(...)
+                local a = { ... }
+                -- Remove from totem queue when cleared
+                -- FrameTrackerManager:RemoveSpellFromTotemQueue(cdm_frame.cooldownInfo.spellID, trackerType)
+            end)
         end
     end
 end
@@ -2939,10 +2780,17 @@ end
 -- ============================================================================
 
 --- Adds a spell to the totem tracking queue with a 200ms expiration window.
+--- Uses composite key (spellID_trackerType) to support multiple trackers for the same spell.
 --- @param spellID number The spell ID to track
-function FrameTrackerManager:AddSpellToTotemQueue(spellID)
+--- @param trackerType string The tracker type ("buffs", "spells", etc.)
+function FrameTrackerManager:AddSpellToTotemQueue(spellID, trackerType)
     local expirationTime = GetTime() + 0.2  -- 200ms window
-    FrameTrackerManager._totemSpellQueue[spellID] = expirationTime
+    local key = spellID .. "_" .. trackerType
+    FrameTrackerManager._totemSpellQueue[key] = {
+        spellID = spellID,
+        trackerType = trackerType,
+        expirationTime = expirationTime
+    }
 end
 
 --- Removes expired entries from the totem spell queue.
@@ -2951,9 +2799,9 @@ function FrameTrackerManager:CleanupExpiredTotemQueueEntries()
     local currentTime = GetTime()
     local removedCount = 0
     
-    for spellID, expirationTime in pairs(FrameTrackerManager._totemSpellQueue) do
-        if currentTime > expirationTime then
-            FrameTrackerManager._totemSpellQueue[spellID] = nil
+    for key, queueData in pairs(FrameTrackerManager._totemSpellQueue) do
+        if currentTime > queueData.expirationTime then
+            FrameTrackerManager._totemSpellQueue[key] = nil
             removedCount = removedCount + 1
         end
     end
@@ -2963,24 +2811,27 @@ end
 
 --- Removes a specific spell from the totem queue and cleans up any expired entries.
 --- @param spellID number The spell ID to remove
-function FrameTrackerManager:RemoveSpellFromTotemQueue(spellID)
-    FrameTrackerManager._totemSpellQueue[spellID] = nil
+--- @param trackerType string The tracker type ("buffs", "spells", etc.)
+function FrameTrackerManager:RemoveSpellFromTotemQueue(spellID, trackerType)
+    local key = spellID .. "_" .. trackerType
+    FrameTrackerManager._totemSpellQueue[key] = nil
     FrameTrackerManager:CleanupExpiredTotemQueueEntries()
 end
 
 --- Checks if there are any spells in the totem queue (non-expired).
---- @return number|nil The first valid spell ID found, or nil if queue is empty
+--- @return number|nil spellID The first valid spell ID found, or nil if queue is empty
+--- @return string|nil trackerType The tracker type of the spell, or nil if queue is empty
 function FrameTrackerManager:GetNextTotemQueueSpell()
     FrameTrackerManager:CleanupExpiredTotemQueueEntries()
     
     local currentTime = GetTime()
-    for spellID, expirationTime in pairs(FrameTrackerManager._totemSpellQueue) do
-        if currentTime <= expirationTime then
-            return spellID
+    for key, queueData in pairs(FrameTrackerManager._totemSpellQueue) do
+        if currentTime <= queueData.expirationTime then
+            return queueData.spellID, queueData.trackerType
         end
     end
     
-    return nil
+    return nil, nil
 end
 
 --- Clears the totem bar for a tracker frame when a totem expires.
@@ -3001,8 +2852,7 @@ function FrameTrackerManager:ClearTotemBarDuration(frame)
         
         -- Mark totem as inactive in metadata and clear slot
         if frame.meta then
-            frame.meta.isTotemActive = false
-            frame.meta.totemSlot = nil
+            frame.meta.currentTotemSlot = nil
         end
         
         -- Calculate fullBarAlpha: should be visible when inactive if defaultFillValue is 'full' (inverse behavior)
@@ -3047,10 +2897,6 @@ function FrameTrackerManager:ApplyTotemBarDuration(frame, totemDuration)
             and Enum.StatusBarTimerDirection.ElapsedTime
             or Enum.StatusBarTimerDirection.RemainingTime
         
-        -- Mark totem as active in metadata
-        if frame.meta then
-            frame.meta.isTotemActive = true
-        end
         
         -- Clear and apply the totem duration
         frame.totemBar:SetValue(0)
@@ -3770,7 +3616,7 @@ FrameTrackerManager.ApplyVisibility = {
     ]]
     CooldownSwipe = function(context)
         -- Hide swipe for buffs without an aura OR for totems that aren't active
-        if not context.shouldDisplay or (context.trackerType == "buffs" and not context.customFrame.meta.isTotemActive and (context.customFrame.meta.currentAuraInstanceID == 0 or context.customFrame.meta.currentAuraInstanceID == nil) and (not context.customFrame.meta.currentTotemSlot or context.customFrame.meta.currentTotemSlot == 0)) then
+        if not context.shouldDisplay or (context.trackerType == "buffs" and (context.customFrame.meta.currentAuraInstanceID == 0 or context.customFrame.meta.currentAuraInstanceID == nil) and (not context.customFrame.meta.currentTotemSlot or context.customFrame.meta.currentTotemSlot == 0)) then
             context.customFrame.cooldown:SetDrawEdge(false)
             context.customFrame.cooldown:SetDrawBling(false)
             context.customFrame.cooldown:SetDrawSwipe(false)
@@ -4137,7 +3983,7 @@ end
 
 --- @param spellID number
 --- @return ApplyCooldownDurationData|nil
-function FrameTrackerManager:MatchTrackerFrame(spellID)
+function FrameTrackerManager:MatchTrackerFrame(spellID, trackerType)
     local match = nil
     --[[
         -- This should match the values used by apply Cooldown Duration
@@ -4150,7 +3996,16 @@ function FrameTrackerManager:MatchTrackerFrame(spellID)
         }
     ]]
     local currentSpellToBaseSpellID = C_Spell.GetBaseSpell(spellID)
-    for _, tType in ipairs({"essential", "utility", "spells", "items", "buffs"}) do
+    local lookThrough
+    local type = 'all tracker types'
+    if trackerType ~= nil then
+        lookThrough = { trackerType }
+        type = trackerType
+    else
+        lookThrough = {"essential", "utility", "spells", "items", "buffs"}
+    end
+
+    for _, tType in ipairs(lookThrough) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
             for baseSpellID, trackedFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 --match found, update the return data
@@ -4170,7 +4025,19 @@ function FrameTrackerManager:MatchTrackerFrame(spellID)
     return match
 end
 
-function FrameTrackerManager:FreshCreateFrames()
+FrameTrackerManager._pendingFreshCreate = false
+
+
+--- Internal: executes the actual frame recreation after the debounce window closes.
+--- Called by FreshCreateFrames after coalescing multiple rapid-fire calls.
+--- @param callers table Array of caller labels collected during the debounce window
+local function _ExecuteFreshCreateFrames(callers)
+    local inCombat = InCombatLockdown() or UnitAffectingCombat("player")
+    if inCombat then
+        FrameTrackerManager._pendingFreshCreate = true
+        return
+    end
+    FrameTrackerManager._pendingFreshCreate = false
     --[[
         - Clear any existing frames
         - scan cooldown manager frames to queue frame creation copies (for buffs)
@@ -4179,24 +4046,24 @@ function FrameTrackerManager:FreshCreateFrames()
         - Generate all frames (including duplicates depending on the conditionals applied that have charges)
     ]]
     
-    -- Step 1: Clear all existing frames
-    for trackerType, frames in pairs(FrameTrackerManager.SpellStyler_frames) do
-        for spellID, frame in pairs(frames) do
-            if frame then
-                frame:Hide()
-                frame:ClearAllPoints()
-                FrameTrackerManager.SpellStyler_frames[trackerType][spellID] = nil
+    FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames("buffs")
+    FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
+
+    FrameTrackerManager:CreateNonBuffTrackerFrames()  -- Queues spell/item frames
+    
+    
+    for _, trackerType in ipairs({ "spells", "items", "buffs" }) do
+        local trackerValues = State:GetAllTrackerValues(trackerType)
+        if trackerValues then
+            for baseSpellID, trackerConfig in pairs(trackerValues) do
+                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                if trackerConfig.isEnabled and frame then
+                    -- reposition all frames so that they can be properly anchored now that all frames are created
+                    SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
+                end
             end
         end
     end
-    
-    -- Step 2: Queue all frames for creation (buffs + spells/items)
-    FrameTrackerManager:SetupCooldownManagerHooks()  -- Scans and queues buff frames
-    FrameTrackerManager:CreateNonBuffTrackerFrames()  -- Queues spell/item frames
-    
-    -- Step 3: Build dependency tree and create frames in correct order
-    local tree = FrameTrackerManager:BuildAnchorDependencyTree()
-    FrameTrackerManager:CreateFramesFromDependencyTree(tree)
     
     -- Step 4: Evaluate all conditionals after frames are created
     if SpellStyler.ConditionalEngine then
@@ -4204,13 +4071,55 @@ function FrameTrackerManager:FreshCreateFrames()
             SpellStyler.ConditionalEngine:EvaluateAll()
         end)
     end
+
+    if SpellStyler.IconSettingsRenderer and SpellStyler.settingsContentFrame then
+        SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+    end
+    if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
+        SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
+    end
+
+    -- Apply any saved viewer visibility setting
+    SpellStyler.Containers:ApplyViewerVisibility("buffs")
+    SpellStyler.Containers:ApplyViewerVisibility("essential")
+    SpellStyler.Containers:ApplyViewerVisibility("utility")
+
+    -- Apply saved container layouts now that all tracker frames exist
+    if SpellStyler.Containers then
+        local containers = SpellStyler.Containers:GetDB()
+        for containerName in pairs(containers) do
+            SpellStyler.Containers:LayoutContainer(containerName)
+        end
+    end
+end
+
+--- Handles FreshCreateFrames calls with debouncing.
+--- Multiple rapid calls are coalesced into a single execution.
+--- @param caller string Debug label for the source of the call
+function FrameTrackerManager:FreshCreateFrames(caller)
+    local q = FrameTrackerManager._freshCreateQueue
+    if not q.pending then
+        -- First call in this window: open the timer.
+        q.pending = true
+        q.callers = { caller or "unknown" }
+        C_Timer.After(0.5, function()
+            if q.pending then
+                _ExecuteFreshCreateFrames(q.callers)
+                q.pending = false
+                q.callers = nil
+            end
+        end)
+    else
+        -- Subsequent call within the same window: merge.
+        table.insert(q.callers, caller or "unknown")
+    end
 end
 
 function FrameTrackerManager:Initalize()
     if isInitialized or not hasPlayerEnetedWorld then return end
     isInitialized = true
 
-    FrameTrackerManager:FreshCreateFrames()
+    FrameTrackerManager:FreshCreateFrames("Initalize")
 end
 
 -- Event frame for UNIT_AURA and PLAYER_ENTERING_WORLD
@@ -4348,30 +4257,68 @@ end
 FrameTrackerManager.CooldownManagerSettings = {}
 
 -- Event Registry
-local function OnCooldownViewerSettingsDataChanged(caller, b, c ,d)
-    local inCombat = InCombatLockdown() or UnitAffectingCombat("player")
-    if caller == "SpellStyler" and not inCombat and _G["CooldownViewerSettings"]:IsShown() then
-        C_Timer.After(0.2, function()
-            FrameTrackerManager:FreshCreateFrames()
-            -- Re-render icon list in settings menu
-            if SpellStyler.IconSettingsRenderer and SpellStyler.settingsContentFrame then
-                SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-            end
-            if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
-                SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
+-- local function OnCooldownViewerSettingsDataChanged(caller, b, c ,d)
+--     if caller == "SpellStyler" and _G["CooldownViewerSettings"]:IsShown() then
+--         C_Timer.After(0.2, function()
+--             FrameTrackerManager:FreshCreateFrames("OnCooldownViewerSettingsDataChanged")
+--             -- Re-render icon list in settings menu
+--         end)
+--     end
+--     return
+-- end
+
+-- EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", OnCooldownViewerSettingsDataChanged, "SpellStyler")
+
+FrameTrackerManager.totalFrames = 0
+
+-- Tables to track unique function keys called on BuffIconCooldownViewer
+FrameTrackerManager.keysInCombat = {}
+FrameTrackerManager.keysOutOfCombat = {}
+
+local attempts = 0
+local function hookCDMUpdater()
+    C_Timer.After(2, function()
+        local f = _G["BuffIconCooldownViewer"]
+        if not f and attempts < 5 then
+            attempts = attempts + 1
+            hookCDMUpdater()
+            return
+        end
+        -- for key, val in pairs(f) do
+        --     if type(val) == "function" then
+        --         hooksecurefunc(f, key, function(...)
+        --             local inCombat = InCombatLockdown() or UnitAffectingCombat("player")
+        --             if inCombat then
+        --                 -- Track unique keys called during combat
+        --                 if not FrameTrackerManager.keysInCombat[key] then
+        --                     FrameTrackerManager.keysInCombat[key] = true
+        --                 end
+        --             else
+        --                 -- Track unique keys called out of combat
+        --                 if not FrameTrackerManager.keysOutOfCombat[key] then
+        --                     FrameTrackerManager.keysOutOfCombat[key] = true
+        --                 end
+        --             end
+        --         end)    
+        --     end
+        -- end
+        -- DevTool:AddData(f, "f")
+        --OnAcquireItemFrame
+        hooksecurefunc(f, "RefreshLayout", function(...)
+            local frameAcquired = { ... }
+            if _G["CooldownViewerSettings"]:IsShown() then
+                FrameTrackerManager:FreshCreateFrames("RefreshLayout")
             end
         end)
-    end        
+    end)
 end
-
-EventRegistry:RegisterCallback("CooldownViewerSettings.OnDataChanged", OnCooldownViewerSettingsDataChanged, "SpellStyler")
-
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnetedWorld = true
         FrameTrackerManager:Initalize()
         pcall(forceUpdateAllFrames)
+        hookCDMUpdater()
     end
     if event == "PLAYER_ALIVE" then
         pcall(forceUpdateAllFrames)
@@ -4432,56 +4379,102 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_TOTEM_UPDATE" then
         local slot = ...
         local totemDuration = GetTotemDuration(slot)
-        -- If there is no duration in this slot, CLEAR the associated frame and remove the binding/saved frame
+        local totemQueue = ""
+        for spell, queueData in pairs(FrameTrackerManager._totemSpellQueue) do
+            totemQueue = totemQueue .. " - " .. queueData.trackerType .. "|" .. spell
+        end
+
+        -- If there is no duration in this slot, CLEAR all associated frames and remove the binding/saved frames
         if not totemDuration then
-            local frame = FrameTrackerManager._activeTotemSlots[slot]
-            if frame then
-                if frame.meta.dualFrameStatus ~= 'hideBase' then
-                    FrameTrackerManager:ClearTotemBarDuration(frame)
-                end
-                if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then
-                    FrameTrackerManager:ClearTotemBarDuration(frame.variantFrame)
+            local frames = FrameTrackerManager._activeTotemSlots[slot]
+            if frames then
+                for _, frame in ipairs(frames) do
+                    if frame.meta.dualFrameStatus ~= 'hideBase' then
+                        FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentTotemSlot', 0)
+                        FrameTrackerManager:ClearTotemBarDuration(frame)
+                    end
+                    if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then
+                        FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentTotemSlot', 0)
+                        FrameTrackerManager:ClearTotemBarDuration(frame.variantFrame)
+                    end
                 end
             end
-            FrameTrackerManager._activeTotemSlots[slot] = nil
+            FrameTrackerManager._activeTotemSlots[slot] = {}
         end
         -- Use a small delay to let the spell queue populate
         C_Timer.After(0.01, function()
-            -- Step 1: Check if there's a queued spell that should be associated with this slot
-            local queuedSpellID = FrameTrackerManager:GetNextTotemQueueSpell()
-            if queuedSpellID then
-                local match = FrameTrackerManager:MatchTrackerFrame(queuedSpellID)
-                if match and match.customFrame then
-                    
-                    -- If this slot already has a different frame, clear its totem bar first
-                    local existingFrame = FrameTrackerManager._activeTotemSlots[slot]
-                    if existingFrame and existingFrame ~= match.customFrame then
-                        if existingFrame.meta.dualFrameStatus ~= 'hideBase' then
-                            FrameTrackerManager:ClearTotemBarDuration(existingFrame)
-                        end
-                        if existingFrame.variantFrame and existingFrame.meta.dualFrameStatus ~= 'hideVariant' then
-                            FrameTrackerManager:ClearTotemBarDuration(existingFrame.variantFrame)
-                        end
-                    end
-                    
-                    -- Associate this frame with this slot and store slot on frame
-                    FrameTrackerManager._activeTotemSlots[slot] = match.customFrame
-                    -- Store slot number on frame metadata for later retrieval
-                    FrameTrackerManager:SetMetaOnBaseAndVariant(match.customFrame, "totemSlot", slot)
-                    FrameTrackerManager:RemoveSpellFromTotemQueue(queuedSpellID)
-                end
+            -- Initialize frames array for this slot if needed
+            if not FrameTrackerManager._activeTotemSlots[slot] then
+                FrameTrackerManager._activeTotemSlots[slot] = {}
             end
             
-            -- Step 2: Apply or clear duration for whatever frame is in this slot
-            local frame = FrameTrackerManager._activeTotemSlots[slot]
-            if frame then
-                if totemDuration then
-                    -- Totem is active (or just started), apply the duration
-                    if frame.meta.dualFrameStatus ~= 'hideBase' then
-                        FrameTrackerManager:ApplyTotemBarDuration(frame, totemDuration)
+            -- Step 1: Check if there's a queued spell that should be associated with this slot
+            local queuedSpellID, queuedTrackerType = FrameTrackerManager:GetNextTotemQueueSpell()
+            while queuedSpellID ~= nil and queuedTrackerType ~= nil do
+                local match = FrameTrackerManager:MatchTrackerFrame(queuedSpellID, queuedTrackerType)
+                if match and match.customFrame then
+                    FrameTrackerManager:SetMetaOnBaseAndVariant(match.customFrame, 'currentTotemSlot',  slot)
+                    -- Check if this frame is already associated with this slot
+                    local alreadyAssociated = false
+                    for _, existingFrame in ipairs(FrameTrackerManager._activeTotemSlots[slot]) do
+                        if existingFrame == match.customFrame then
+                            alreadyAssociated = true
+                            break
+                        end
                     end
-                    if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then
-                        FrameTrackerManager:ApplyTotemBarDuration(frame.variantFrame, totemDuration)
+                    
+                    if not alreadyAssociated then
+                        -- Add this frame to the slot's frame array
+                        table.insert(FrameTrackerManager._activeTotemSlots[slot], match.customFrame)
+                        -- Store slot number on frame metadata for later retrieval
+                        FrameTrackerManager:SetMetaOnBaseAndVariant(match.customFrame, "currentTotemSlot", slot)
+                    end
+                    
+                    FrameTrackerManager:RemoveSpellFromTotemQueue(queuedSpellID, queuedTrackerType)
+                end
+                queuedSpellID, queuedTrackerType = FrameTrackerManager:GetNextTotemQueueSpell()
+            end
+            
+            -- Step 2: Apply or clear duration for ALL frames associated with this slot
+            local frames = FrameTrackerManager._activeTotemSlots[slot]
+            if frames and #frames > 0 then
+                for _, frame in ipairs(frames) do
+                    if totemDuration then
+                        -- Totem is active (or just started), apply the duration
+                        if frame.meta.dualFrameStatus ~= 'hideBase' then
+                            if frame.meta.trackerType == 'buffs' then
+                                FrameTrackerManager:DriveFrameUpdate(
+                                    frame,
+                                    {
+                                        resolveDuration = true,
+                                        syncChargeText = true
+                                    },
+                                    {
+                                        durationObject = totemDuration
+                                    },
+                                    "totemDuration_for_buffs"
+                                )
+                            else
+                                FrameTrackerManager:ApplyTotemBarDuration(frame, totemDuration)
+                            end
+                        end
+                        if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then
+                            if frame.meta.trackerType == 'buffs' then
+                                FrameTrackerManager:DriveFrameUpdate(
+                                    frame.variantFrame,
+                                    {
+                                        resolveDuration = true,
+                                        syncChargeText = true
+                                    },
+                                    {
+                                        durationObject = totemDuration
+                                    },
+                                    "totemDuration_for_buffs"
+                                )
+                            else
+                                FrameTrackerManager:ApplyTotemBarDuration(frame.variantFrame, totemDuration)
+                            end
+                        end
                     end
                 end
             end
@@ -4647,9 +4640,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         if match.customFrame.meta.mockCooldownActive then
                             return
                         end
-                        
+                        local activeSpellID = spellID
                         local override = C_Spell.GetOverrideSpell(spellID)
                         if override ~= spellID and not match.customFrame.meta.isItem then
+                            activeSpellID = override
                             local spellInfoUpdate = C_Spell.GetSpellInfo(override)
                             --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
                             --Save the override spell onto the frame though to be able to check future casts
@@ -4702,12 +4696,11 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                                     nil,
                                     "unitSpellcastSucceeded_spellUnchanged"
                                 )
-                            end
-                            
-                            -- Check if this spell should track totem duration
-                            if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
-                                FrameTrackerManager:AddSpellToTotemQueue(spellID)
-                            end
+                            end 
+                        end
+                        -- Check if this spell should track totem duration
+                        if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
+                            FrameTrackerManager:AddSpellToTotemQueue(activeSpellID, match.customFrame.meta.trackerType)
                         end
                     end
                     
@@ -4815,4 +4808,9 @@ globalVisibilityFrame:RegisterEvent("PLAYER_REGEN_DISABLED")  -- entering combat
 globalVisibilityFrame:RegisterEvent("PLAYER_REGEN_ENABLED")   -- leaving combat
 globalVisibilityFrame:SetScript("OnEvent", function(self, event)
     State:ApplyGlobalVisibility()
+    if event == "PLAYER_REGEN_ENABLED" then
+        if FrameTrackerManager._pendingFreshCreate then
+            FrameTrackerManager:FreshCreateFrames("PLAYER_REGEN_ENABLED_pending")
+        end
+    end
 end)

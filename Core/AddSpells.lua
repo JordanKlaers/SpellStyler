@@ -322,40 +322,52 @@ function AddSpells:RenderAddSpellsView(parent)
         -- Determine if selected item is a spell or an item
         local isItem = selectedSpell.itemID ~= nil
         local trackingID, trackerConfig
-        
+        local trackerConfig
+
         if isItem then
             -- Get the spell ID from the item (for event tracking and cooldown)
             local spellName, spellID = C_Item.GetItemSpell(selectedSpell.itemID)
-            
-            -- Track item by spellID as the database key
-            trackingID = spellID
-            
-            -- Get the item icon texture path directly
-            local iconTexture = C_Item.GetItemIconByID(selectedSpell.itemID)
-            
-            trackerConfig = State:AddTrackerValue({
-                itemID                  = selectedSpell.itemID,       -- Store actual itemID
-                baseSpellID             = spellID,                    -- Use spellID as the key
-                overrideSpellID         = spellID,                    -- Also use spellID for activeSpellID
-                trackerType             = "items",                    -- Use dedicated "items" tracker type
-                name                    = selectedSpell.name,
-                defaultIconTexturePath  = iconTexture,                -- Store actual texture path, not itemID
-                isItem                  = true,                       -- Flag to identify this as an item tracker
-            })
+            local existingTrackerConfig = SpellStyler.State:GetSpecificTrackerValue(spellID, "items")
+            if existingTrackerConfig then
+                trackerConfig = existingTrackerConfig
+                SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'isEnabled', true)
+            else
+                -- Track item by spellID as the database key
+                trackingID = spellID
+                
+                -- Get the item icon texture path directly
+                local iconTexture = C_Item.GetItemIconByID(selectedSpell.itemID)
+                
+                trackerConfig = State:AddTrackerValue({
+                    itemID                  = selectedSpell.itemID,       -- Store actual itemID
+                    baseSpellID             = spellID,                    -- Use spellID as the key
+                    overrideSpellID         = spellID,                    -- Also use spellID for activeSpellID
+                    trackerType             = "items",                    -- Use dedicated "items" tracker type
+                    name                    = selectedSpell.name,
+                    defaultIconTexturePath  = iconTexture,                -- Store actual texture path, not itemID
+                    isItem                  = true,                       -- Flag to identify this as an item tracker
+                })
+            end
         else
-            -- Track spell by baseSpellID
             trackingID = C_Spell.GetBaseSpell(selectedSpell.spellID)
-            local overrideSpellID = C_Spell.GetOverrideSpell(selectedSpell.spellID)
-            -- Get icon from override spell for correct initial appearance
-            local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
-            local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedSpell.iconID
-            trackerConfig = State:AddTrackerValue({
-                baseSpellID             = trackingID,
-                overrideSpellID         = overrideSpellID,
-                trackerType             = "spells",
-                name                    = selectedSpell.name,
-                defaultIconTexturePath  = iconTexture,
-            })
+            local existingTrackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackingID, "spells")
+            if existingTrackerConfig then
+                trackerConfig = existingTrackerConfig
+                SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "spells", 'isEnabled', true)
+            else
+                -- Track spell by baseSpellID
+                local overrideSpellID = C_Spell.GetOverrideSpell(selectedSpell.spellID)
+                -- Get icon from override spell for correct initial appearance
+                local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
+                local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedSpell.iconID
+                trackerConfig = State:AddTrackerValue({
+                    baseSpellID             = trackingID,
+                    overrideSpellID         = overrideSpellID,
+                    trackerType             = "spells",
+                    name                    = selectedSpell.name,
+                    defaultIconTexturePath  = iconTexture,
+                })
+            end
         end
         
         if not trackerConfig then return end

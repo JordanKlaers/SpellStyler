@@ -363,27 +363,27 @@ pcall(function()
 	local donkFrame
 	texScanFrame:SetScript("OnEvent", function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
-			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                -- local secretCharge = secretwrap(22)
-                -- local a = C_CurveUtil.CreateCurve()
-                -- a:SetType(Enum.LuaCurveType.Step)
-                -- a:AddPoint(0, 0)
-                -- a:AddPoint(22, 1)
-                -- DevTool:AddData({
-                --     a = C_UnitAuras.GetPlayerAuraBySpellID(104316)
-                -- }, "C_UnitAuras.GetPlayerAuraBySpellID")
-                -- local unitHealthCurveValue = UnitHealthPercent("target", true, SpellStyler.Util:CurveComparison(100, 9, 1, "<="))
-                -- DevTool:AddData({
-                --     SpellStyler = SpellStyler,
-                --     SpellStyler_CharDB = SpellStyler_CharDB,
-                --     unitHealthCurveValue = unitHealthCurveValue,
-                --     isSecret = issecretvalue(unitHealthCurveValue)
-                -- }, "SpellStyler")
-			end
-
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
-			if key == "S" and IsShiftKeyDown() and IsControlKeyDown() then
+			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+                -- Convert tables to sorted arrays for display
+                local inCombatKeys = {}
+                for k in pairs(SpellStyler.FrameTrackerManager.keysInCombat) do
+                    table.insert(inCombatKeys, k)
+                end
+                table.sort(inCombatKeys)
                 
+                local outOfCombatKeys = {}
+                for k in pairs(SpellStyler.FrameTrackerManager.keysOutOfCombat) do
+                    table.insert(outOfCombatKeys, k)
+                end
+                table.sort(outOfCombatKeys)
+                
+                DevTool:AddData({
+                    SpellStylerBuffFrames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
+                    CDMFrames = SpellStyler.FrameTrackerManager.cooldownManagerFrames,
+                    BuffIconCooldownViewer_InCombatKeys = inCombatKeys,
+                    BuffIconCooldownViewer_OutOfCombatKeys = outOfCombatKeys
+                }, "debug")
 			end
 		end)
 		texScanFrame:SetScript("OnKeyUp", function(self, key) end)

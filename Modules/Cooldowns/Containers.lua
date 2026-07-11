@@ -813,10 +813,29 @@ function Containers:SetViewerHidden(trackerType, hidden)
 end
 
 function Containers:ApplyViewerVisibility(trackerType)
-    local viewer = Containers:GetCooldownManagerViewer(trackerType)
-    if not viewer then return end
-    -- Use alpha instead of Hide/Show so the viewer still exists and fires
-    -- cooldown events; hiding it would break cooldown data collection.
+    local viewer = SpellStyler.Containers:GetCooldownManagerViewer(trackerType)
+    if not viewer then
+        C_Timer.After(1, function() self:ApplyViewerVisibility(trackerType) end)
+        return
+    end
+
+    -- Hook SetAlpha on the viewer so Blizzard can't override our visibility setting.
+    -- Recursion guard prevents the hook from re-entering itself when we call SetAlpha.
+    if not viewer._spellStyler_alphaHooked then
+        viewer._spellStyler_alphaHooked = true
+        hooksecurefunc(viewer, "SetAlpha", function(self, alpha)
+            if self._spellStyler_settingViewerAlpha then return end
+            if SpellStyler.Containers:GetViewerHidden(trackerType) and alpha ~= 0 then
+                self._spellStyler_settingViewerAlpha = true
+                if Containers:GetViewerHidden(trackerType) then
+                    self:SetAlpha(0)
+                else
+                    self:SetAlpha(1)
+                end
+                self._spellStyler_settingViewerAlpha = false
+            end
+        end)
+    end
     if Containers:GetViewerHidden(trackerType) then
         viewer:SetAlpha(0)
     else

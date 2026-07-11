@@ -371,37 +371,13 @@ function State:HandleTalentChange()
     -- detected. By the time this deferred call runs both tables are empty.
     -- Reset them again defensively in case HandleTalentChange is ever called
     -- from a path that didn't go through TeardownSpecFrames.
-    FrameTrackerManager:TeardownSpecFrames()
+
+    -- FrameTrackerManager:TeardownSpecFrames()
+    -- Re-hook all buff cooldown frames
+    FrameTrackerManager:FreshCreateFrames("talent_change")
+    
 	local specDB = SpellStyler_CharDB.classSpecializations[State:GetCurrentSpecID()]
 	State:SetCorrectOverride(specDB)
-    -- Re-hook all buff cooldown frames
-    for _, tType in ipairs({"buffs"}) do
-        FrameTrackerManager:HookAllBuffCooldownFrames(tType)
-        if SpellStyler.Containers then
-            SpellStyler.Containers:ApplyViewerVisibility(tType)
-        end
-    end
-	FrameTrackerManager:CreateNonBuffTrackerFrames()
-	
-	-- Build dependency tree and create frames in correct order
-	local tree = FrameTrackerManager:BuildAnchorDependencyTree()
-	FrameTrackerManager:CreateFramesFromDependencyTree(tree)
-	
-    -- Re-layout containers for the newly active spec
-    if SpellStyler.Containers then
-        local containers = SpellStyler.Containers:GetDB()
-        for containerName in pairs(containers) do
-            SpellStyler.Containers:LayoutContainer(containerName)
-        end
-    end
-
-    -- Update settings menu if it's open
-    if SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() and SpellStyler.settingsContentFrame then
-        SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-        if SpellStyler.IconSettingsRenderer and SpellStyler.IconSettingsRenderer.EnableDraggingForAllFrames then
-            SpellStyler.IconSettingsRenderer:EnableDraggingForAllFrames()
-        end
-    end
 end
 
 -- ============================================================================
@@ -778,24 +754,31 @@ end
 
 
 function State:CopySettings(copyInfo)
-    local key = ''
+    local keys = {}
     if copyInfo.category == 'Icon Settings' then
-        key = 'iconSettings'
-    elseif copyInfo.category == 'Bar Timer' then
-        key = 'statusBar'
-    elseif copyInfo.category == 'Cooldown Text' then
-        key = 'countText'
-    elseif copyInfo.category == 'Count/Charge Text' then
-        key = 'cooldownText'
+        keys = {'iconSettings'}
+    elseif copyInfo.category == 'Spell Cooldown / Buff Duration' then
+        keys = {'cooldownText', 'statusBar'}
+    elseif copyInfo.category == 'Charge/Count based display' then
+        keys = {'chargeBasedDisplay'}
+    elseif copyInfo.category == 'Glow notification' then
+        keys = {'glowNotification'}
+    elseif copyInfo.category == 'Spell Charges / Buff Stacks' then
+        keys = {'countText', 'visualChargeBar'}
+    elseif copyInfo.category == 'Totem Tracking' then
+        keys = {'totemBar'}
     elseif copyInfo.category == 'Custom Label (Accessibility)' then
-        key = 'customLabel'
+        keys = {'customLabel'}
     end
 
     local sourceConfig = State:GetSpecificTrackerValue(copyInfo.sourceBaseSpellID, copyInfo.sourceTrackerType)
-    -- Deep-copy so the target gets its own independent table, not a shared
-    -- reference that would cause writes on one spell to silently affect the other.
-    local valueCopy = DeepCopy(sourceConfig[key])
-    State:SetTrackerValueConfigProperty(copyInfo.targetBaseSpellID, copyInfo.targetTrackerType, key, valueCopy)
+    
+    -- Deep-copy each key from source to target
+    -- Each key gets its own independent table to prevent shared references
+    for _, key in ipairs(keys) do
+        local valueCopy = DeepCopy(sourceConfig[key])
+        State:SetTrackerValueConfigProperty(copyInfo.targetBaseSpellID, copyInfo.targetTrackerType, key, valueCopy)
+    end
 end
 
 

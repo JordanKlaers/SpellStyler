@@ -691,7 +691,7 @@ combatDelayFrame:SetScript("OnEvent", function(self, event, ...)
             if FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat then
                 FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = false
                 -- FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
-                FrameTrackerManager:FreshCreateFrames()
+                FrameTrackerManager:FreshCreateFrames("AttemptToScanBuffsAfterLeavingCombat")
             end
         end
     end

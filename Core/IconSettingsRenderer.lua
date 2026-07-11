@@ -953,8 +953,8 @@ function IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl,
                     
                     if frame then
                         local info = UIDropDownMenu_CreateInfo()
-                        info.text = entry.name or tostring(entry.uniqueID)
-                        info.value = entry.uniqueID
+                        info.text = entry.name or tostring(entry.uniqueID) 
+                        info.value = entry.uniqueID -- This is the baseSpellID or the key that the trackerConfig is saved to in state
                         -- Compare stored baseSpellID against entry's uniqueID
                         info.checked = (tostring(currentValue) == tostring(entry.uniqueID))
                         info.func = function(btn)
@@ -1182,6 +1182,12 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     tooltip = "Enabling this will hide the leading gold slice on the cooldown animation swipe",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideCooldownBling") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideCooldownBling", value) end,
+                },
+                {
+                    type = "checkbox",
+                    label = "Disable Dragging",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.disableDragging") == true end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.disableDragging", value) end,
                 }
                 
             }
@@ -1189,7 +1195,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
         -- Status bar
         {
             type = "header",
-            text = "Spell Cooldown / Buff Duration",
+            text = config.trackerType == 'buffs' and "Buff/Totem Duration" or "Spell/Item Cooldown Duration",
             state = 'collapsed',
             section = (function()
                 local section = {
@@ -1363,7 +1369,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             }
         },
 
-        {
+        config.trackerType ~= 'buffs' and {
             type = "header",
             text = "Totem Tracking",
             state = 'collapsed',
@@ -2372,6 +2378,18 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 				-- can ever reach it again). DB entry is preserved.
 				if SpellStyler.FrameTrackerManager then
 					SpellStyler.FrameTrackerManager:DestroyTrackerFrame(uniqueID, trackerType)
+                    for _, trackerType in ipairs({ "spells", "items", "buffs" }) do
+                        local trackerValues = State:GetAllTrackerValues(trackerType)
+                        if trackerValues then
+                            for baseSpellID, trackerConfig in pairs(trackerValues) do
+                                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                                if trackerConfig.isEnabled and frame then
+                                    -- reposition all frames so that they can be properly anchored now that all frames are created
+                                    SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
+                                end
+                            end
+                        end
+                    end
 				end
 				
 				-- Clear the selected icon state
@@ -3320,165 +3338,209 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
     
     for trackerType, frames in pairs(FrameTrackerManager.SpellStyler_frames) do
         for baseSpellID, frame in pairs(frames) do
-            if frame and not frame._inContainer then
-                -- Enable dragging for base frame
-                frame:EnableMouse(true)
-                frame:RegisterForDrag("LeftButton")
-                
-                local dragStart = function(self)
-                    -- Save original anchor configuration before StartMoving() clears it
-                    local savedPos = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "position")
-                    self._savedAnchorBeforeDrag = {
-                        anchorPoint = savedPos.anchorPoint,
-                        relativeToFrame = savedPos.relativeToFrame,
-                        relativeAnchorPoint = savedPos.relativeAnchorPoint,
-                        x = savedPos.x,
-                        y = savedPos.y
-                    }
-                    self:StartMoving()
-                    -- Notify settings panel that this icon was selected
-                    if onFrameClickCallback then
-                        onFrameClickCallback(baseSpellID, trackerType)
-                    end
-                end
-                local dragEnd = function(self)
-                    self:StopMovingOrSizing()
-                    
-                    -- Get the current offset directly from GetPoint
-                    local point, relativeTo, relativePoint, offsetX, offsetY = self:GetPointByName('CENTER')
-                    
-                    -- offsetX is good as-is, but offsetY needs adjustment for statusBar chain
-                    local adjustedOffsetY = offsetY
-                    
-                    local anchorModeData = self.meta and self.meta.anchorModeData
-
-                    if anchorModeData and (anchorModeData.type == "both" or anchorModeData.type == "barA") then
-                        -- Frame is anchored CENTER to BarA texture TOP, need to calculate root position
-                        if anchorModeData.type == "both" and self.chargeAnchorBarA and self.chargeAnchorBarB then
-                            -- Both bars: need to account for both texture heights
-                            local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
-                            local _, barBTextureHeight = self.chargeAnchorBarB:GetStatusBarTexture():GetSize()
-                            local _, barAHeight        = self.chargeAnchorBarA:GetSize()
-                            local _, barBHeight        = self.chargeAnchorBarB:GetSize()
-                            
-                            local barAPoint = anchorModeData.pointA or "BOTTOM"
-                            if barAPoint == "TOP" then
-                                adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
-                            else
-                                adjustedOffsetY = adjustedOffsetY - barATextureHeight
-                            end
-                            
-                            
-                            local barBPoint = anchorModeData.point
-                            if barBPoint == "TOP" then
-                                adjustedOffsetY = adjustedOffsetY + barBHeight - barBTextureHeight
-                            else
-                                adjustedOffsetY = adjustedOffsetY - barBTextureHeight
-                            end
-                        elseif anchorModeData.type == "barA" and self.chargeAnchorBarA then
-                            local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
-                            local _, barAHeight        = self.chargeAnchorBarA:GetSize()
-
-                            local barAPoint = anchorModeData.point
-                            if barAPoint == "TOP" then
-                                adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
-                            else
-                                adjustedOffsetY = adjustedOffsetY - barATextureHeight
-                            end
-                        end
-                    end
-                    
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.x", offsetX)
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.y", adjustedOffsetY)
-                    
-                    if FrameTrackerManager and FrameTrackerManager.ApplyStaticFrameProperties then
-                        FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
-                    end
-                end
-                
-                local mouseHoverTooltip = function(self)
-                    self:EnableMouseWheel(true)
-                    -- Show tooltip with size info
-                    GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                    GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
-                    GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
-                    local width = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
-                    local height = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
-                    GameTooltip:AddLine(string.format("Size: %dx%d", width, height), 1, 1, 0)
-                    GameTooltip:AddLine("Drag to reposition", 0.5, 0.8, 1)
-                    GameTooltip:Show()
-                end
-
-                local selectInMenu = function(self, button)
-                    if button == "LeftButton" and onFrameClickCallback then
-                        onFrameClickCallback(baseSpellID, trackerType)
-                    end
-                end
-
-                local scrollSize = function(self, delta)
-                    -- Get current size
-                    local currentWidth = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
-                    local currentHeight = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
-                    
-                    -- Calculate new size (scroll up = increase, scroll down = decrease)
-                    local sizeChange = delta * 2
-                    local newWidth = math.max(16, math.min(200, currentWidth + sizeChange))
-                    local newHeight = math.max(16, math.min(200, currentHeight + sizeChange))
-                    
-                    -- Apply new size
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width", newWidth)
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height", newHeight)
-                    
-                    -- Update tooltip with new size
-                    if GameTooltip:IsOwned(self) then
-                        GameTooltip:ClearLines()
-                        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                        GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
-                        GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
-                        GameTooltip:AddLine(string.format("Size: %dx%d", newWidth, newHeight), 1, 1, 0)
-                        GameTooltip:Show()
-                    end
-                end
-
-                frame:SetScript("OnDragStart", dragStart)
-                frame:SetScript("OnDragStop", dragEnd)
-                
-                -- Add click handler to select icon in settings
-                frame:SetScript("OnMouseDown", selectInMenu)
-                -- Add hover handlers for mouse wheel enable/disable
-                frame:SetScript("OnEnter", mouseHoverTooltip)
-                
-                frame:SetScript("OnLeave", function(self)
-                    self:EnableMouseWheel(false)
-                    GameTooltip:Hide()
-                end)
-                
-                -- Handle mouse wheel for resizing
-                frame:SetScript("OnMouseWheel", scrollSize)
-                
-                -- Enable dragging for variant frame if it exists (shares same position as base)
-                if frame.variantFrame and not frame.variantFrame._inContainer then
-                    frame.variantFrame:EnableMouse(true)
-                    frame.variantFrame:RegisterForDrag("LeftButton")
-                    
-                    frame.variantFrame:SetScript("OnDragStart", dragStart)
-                    frame.variantFrame:SetScript("OnDragStop", dragEnd)
-                    
-                    -- Add click handler to select icon in settings
-                    frame.variantFrame:SetScript("OnMouseDown", selectInMenu)
-                    -- Add hover handlers for mouse wheel enable/disable
-                    frame.variantFrame:SetScript("OnEnter", mouseHoverTooltip)
-                    
-                    frame.variantFrame:SetScript("OnLeave", function(self)
-                        self:EnableMouseWheel(false)
-                        GameTooltip:Hide()
-                    end)
-                    frame.variantFrame:SetScript("OnMouseWheel", scrollSize)
-                end
-            end
+            IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
         end
     end
 end
+
+function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
+    if frame and not frame._inContainer then
+        local baseSpellID = frame.meta.baseSpellID
+        local trackerType = frame.meta.trackerType
+        local isDraggingDisabled = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.disableDragging")
+        if isDraggingDisabled then return end
+        -- Enable dragging for base frame
+        frame:EnableMouse(true)
+        frame:RegisterForDrag("LeftButton")
+        
+        local dragStart = function(self)
+            -- Save original anchor configuration before StartMoving() clears it
+            local savedPos = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "position")
+            self._savedAnchorBeforeDrag = {
+                anchorPoint = savedPos.anchorPoint,
+                relativeToFrame = savedPos.relativeToFrame,
+                relativeAnchorPoint = savedPos.relativeAnchorPoint,
+                x = savedPos.x,
+                y = savedPos.y
+            }
+            self:StartMoving()
+            -- Notify settings panel that this icon was selected
+            if onFrameClickCallback then
+                onFrameClickCallback(baseSpellID, trackerType)
+            end
+        end
+        local dragEnd = function(self)
+            self:StopMovingOrSizing()
+            
+            -- Get the current offset directly from GetPoint
+            local point, relativeTo, relativePoint, offsetX, offsetY = self:GetPointByName('CENTER')
+            
+            -- offsetX is good as-is, but offsetY needs adjustment for statusBar chain
+            local adjustedOffsetY = offsetY
+            
+            local anchorModeData = self.meta and self.meta.anchorModeData
+
+            if anchorModeData and (anchorModeData.type == "both" or anchorModeData.type == "barA") then
+                -- Frame is anchored CENTER to BarA texture TOP, need to calculate root position
+                if anchorModeData.type == "both" and self.chargeAnchorBarA and self.chargeAnchorBarB then
+                    -- Both bars: need to account for both texture heights
+                    local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
+                    local _, barBTextureHeight = self.chargeAnchorBarB:GetStatusBarTexture():GetSize()
+                    local _, barAHeight        = self.chargeAnchorBarA:GetSize()
+                    local _, barBHeight        = self.chargeAnchorBarB:GetSize()
+                    
+                    local barAPoint = anchorModeData.pointA or "BOTTOM"
+                    if barAPoint == "TOP" then
+                        adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
+                    else
+                        adjustedOffsetY = adjustedOffsetY - barATextureHeight
+                    end
+                    
+                    
+                    local barBPoint = anchorModeData.point
+                    if barBPoint == "TOP" then
+                        adjustedOffsetY = adjustedOffsetY + barBHeight - barBTextureHeight
+                    else
+                        adjustedOffsetY = adjustedOffsetY - barBTextureHeight
+                    end
+                elseif anchorModeData.type == "barA" and self.chargeAnchorBarA then
+                    local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
+                    local _, barAHeight        = self.chargeAnchorBarA:GetSize()
+
+                    local barAPoint = anchorModeData.point
+                    if barAPoint == "TOP" then
+                        adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
+                    else
+                        adjustedOffsetY = adjustedOffsetY - barATextureHeight
+                    end
+                end
+            end
+            
+            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.x", offsetX)
+            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.y", adjustedOffsetY)
+            
+            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.ApplyStaticFrameProperties then
+                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+            end
+        end
+        
+        local mouseHoverTooltip = function(self)
+            self:EnableMouseWheel(true)
+            -- Show tooltip with size info
+            GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+            GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
+            GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
+            local width = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
+            local height = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
+            GameTooltip:AddLine(string.format("Size: %dx%d", width, height), 1, 1, 0)
+            GameTooltip:AddLine("Drag to reposition", 0.5, 0.8, 1)
+            GameTooltip:Show()
+        end
+
+        local selectInMenu = function(self, button)
+            if button == "LeftButton" and onFrameClickCallback then
+                onFrameClickCallback(baseSpellID, trackerType)
+            end
+        end
+
+        local scrollSize = function(self, delta)
+            -- Get current size
+            local currentWidth = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
+            local currentHeight = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
+            
+            -- Calculate new size (scroll up = increase, scroll down = decrease)
+            local sizeChange = delta * 2
+            local newWidth = math.max(16, math.min(200, currentWidth + sizeChange))
+            local newHeight = math.max(16, math.min(200, currentHeight + sizeChange))
+            
+            -- Apply new size
+            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width", newWidth)
+            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height", newHeight)
+            
+            -- Update tooltip with new size
+            if GameTooltip:IsOwned(self) then
+                GameTooltip:ClearLines()
+                GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+                GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
+                GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
+                GameTooltip:AddLine(string.format("Size: %dx%d", newWidth, newHeight), 1, 1, 0)
+                GameTooltip:Show()
+            end
+        end
+
+        frame:SetScript("OnDragStart", dragStart)
+        frame:SetScript("OnDragStop", dragEnd)
+        
+        -- Add click handler to select icon in settings
+        frame:SetScript("OnMouseDown", selectInMenu)
+        -- Add hover handlers for mouse wheel enable/disable
+        frame:SetScript("OnEnter", mouseHoverTooltip)
+        
+        frame:SetScript("OnLeave", function(self)
+            self:EnableMouseWheel(false)
+            GameTooltip:Hide()
+        end)
+        
+        -- Handle mouse wheel for resizing
+        frame:SetScript("OnMouseWheel", scrollSize)
+        
+        -- Enable dragging for variant frame if it exists (shares same position as base)
+        if frame.variantFrame and not frame.variantFrame._inContainer then
+            frame.variantFrame:EnableMouse(true)
+            frame.variantFrame:RegisterForDrag("LeftButton")
+            
+            frame.variantFrame:SetScript("OnDragStart", dragStart)
+            frame.variantFrame:SetScript("OnDragStop", dragEnd)
+            
+            -- Add click handler to select icon in settings
+            frame.variantFrame:SetScript("OnMouseDown", selectInMenu)
+            -- Add hover handlers for mouse wheel enable/disable
+            frame.variantFrame:SetScript("OnEnter", mouseHoverTooltip)
+            
+            frame.variantFrame:SetScript("OnLeave", function(self)
+                self:EnableMouseWheel(false)
+                GameTooltip:Hide()
+            end)
+            frame.variantFrame:SetScript("OnMouseWheel", scrollSize)
+        end
+    end
+end
+
+function IconSettingsRenderer:DisableDraggingForSpecificFrame(frame)
+    if not frame then return end
+    frame:EnableMouse(false)
+    frame:EnableMouseWheel(false)
+    frame:RegisterForDrag()
+    frame:SetScript("OnDragStart", nil)
+    frame:SetScript("OnDragStop",  nil)
+    frame:SetScript("OnMouseDown", nil)
+    frame:SetScript("OnEnter", nil)
+    frame:SetScript("OnLeave", nil)
+    frame:SetScript("OnMouseWheel", nil)
+
+    -- Hide the drag border indicator
+    if frame._SpellStyler_dragBorder then
+        frame._SpellStyler_dragBorder:Hide()
+    end
+
+    -- Disable dragging for variant frame if it exists
+    if frame.variantFrame then
+        frame.variantFrame:EnableMouse(false)
+        frame.variantFrame:EnableMouseWheel(false)
+        frame.variantFrame:RegisterForDrag()
+        frame.variantFrame:SetScript("OnDragStart", nil)
+        frame.variantFrame:SetScript("OnDragStop",  nil)
+        frame.variantFrame:SetScript("OnMouseDown", nil)
+        frame.variantFrame:SetScript("OnEnter", nil)
+        frame.variantFrame:SetScript("OnLeave", nil)
+        frame.variantFrame:SetScript("OnMouseWheel", nil)
+        
+        if frame.variantFrame._SpellStyler_dragBorder then
+            frame.variantFrame._SpellStyler_dragBorder:Hide()
+        end
+    end
+end
+
 
 function IconSettingsRenderer:DisableDraggingForAllFrames()
     local FrameTrackerManager = SpellStyler.FrameTrackerManager
@@ -3488,39 +3550,7 @@ function IconSettingsRenderer:DisableDraggingForAllFrames()
     
     for trackerType, frames in pairs(FrameTrackerManager.SpellStyler_frames) do
         for baseSpellID, frame in pairs(frames) do
-            if frame then
-                frame:EnableMouse(false)
-                frame:EnableMouseWheel(false)
-                frame:RegisterForDrag()
-                frame:SetScript("OnDragStart", nil)
-                frame:SetScript("OnDragStop",  nil)
-                frame:SetScript("OnMouseDown", nil)
-                frame:SetScript("OnEnter", nil)
-                frame:SetScript("OnLeave", nil)
-                frame:SetScript("OnMouseWheel", nil)
-                
-                -- Hide the drag border indicator
-                if frame._SpellStyler_dragBorder then
-                    frame._SpellStyler_dragBorder:Hide()
-                end
-                
-                -- Disable dragging for variant frame if it exists
-                if frame.variantFrame then
-                    frame.variantFrame:EnableMouse(false)
-                    frame.variantFrame:EnableMouseWheel(false)
-                    frame.variantFrame:RegisterForDrag()
-                    frame.variantFrame:SetScript("OnDragStart", nil)
-                    frame.variantFrame:SetScript("OnDragStop",  nil)
-                    frame.variantFrame:SetScript("OnMouseDown", nil)
-                    frame.variantFrame:SetScript("OnEnter", nil)
-                    frame.variantFrame:SetScript("OnLeave", nil)
-                    frame.variantFrame:SetScript("OnMouseWheel", nil)
-                    
-                    if frame.variantFrame._SpellStyler_dragBorder then
-                        frame.variantFrame._SpellStyler_dragBorder:Hide()
-                    end
-                end
-            end
+            IconSettingsRenderer:DisableDraggingForSpecificFrame(frame)
         end
     end
 end

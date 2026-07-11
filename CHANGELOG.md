@@ -245,3 +245,14 @@ Version 1.9.0
 
 Version 1.10.0
 	- Buffs should automatically process totem info if the buff is a totem, as opposed to it having an aura instance ID
+
+Version 1.11.0
+	- Updated the way the cooldown manager is hooked into to avoid errors with frame creation and the hooks
+	- Updates statemanagement for frame creation and deletion so settings actually persist if you readd a frame
+	- Spell Setting sub menu heads have been updated to once again properly apply settings if you drag them onto other icons in the menu
+
+Version 1.11.1
+	- Updates the method used to hook into the CDM to prevent unecessary updates that caused issues
+	- Updates buff tracking to assume its either a totem or buff since it cant be both
+	- Updates the spell settings menu to reflect the totem/buff combo for buffs
+	- Adds a setting to disable icon dragging (helpful if you anchor a spell under the mouse)
