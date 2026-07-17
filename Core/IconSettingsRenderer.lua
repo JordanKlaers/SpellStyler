@@ -1247,6 +1247,12 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                         getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.y") or 0 end,
                         setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.y", value) end,
                     },
+                    {
+                        type = "checkbox",
+                        label = "Attempt to track totem duration",
+                        getValue = function(self) return config.getValue(self.uniqueID, "statusBar.includeTotemDuration") or false end,
+                        setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.includeTotemDuration", value) end,
+                    },
                 }
                 
                 -- Spread the status bar inputs into the section (JavaScript: [...array])
@@ -1366,26 +1372,6 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                         return IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uid, tType, rerender, config)
                     end
                 }
-            }
-        },
-
-        config.trackerType ~= 'buffs' and {
-            type = "header",
-            text = "Totem Tracking",
-            state = 'collapsed',
-            section = {
-                {
-                    type = "checkbox",
-                    label = "Attempt to track totem duration",
-                    getValue = function(self) return config.getValue(self.uniqueID, "totemBar.attemptToTrack") or false end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "totemBar.attemptToTrack", value) end,
-                },
-                {
-                    type = "customRender",
-                    render = function(container, lastControl, uniqueID, trackerType, rerender)
-                        return IconSettingsRenderer:RenderTotemBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
-                    end
-                },
             }
         },
         -- Custom Label
@@ -1673,88 +1659,6 @@ end
 function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
     -- Build section inputs array for bar display
     local sectionInputs = GetChargeBarInputDefinitions(config)
-    
-    -- Now render all the inputs using the existing rendering logic
-    local currentAnchor = lastControl
-    for _, inputDef in ipairs(sectionInputs) do
-        -- Set uniqueID and trackerType on the input definition so getValue/setValue can access them
-        inputDef.uniqueID = uniqueID
-        inputDef.trackerType = trackerType
-        
-        if inputDef.type == "checkbox" then
-            currentAnchor = CreateCheckbox(container, inputDef, currentAnchor)
-        elseif inputDef.type == "textinput" then
-            currentAnchor = CreateTextInput(container, inputDef, currentAnchor)
-        elseif inputDef.type == "colorpicker" then
-            currentAnchor = CreateColorPicker(container, inputDef, currentAnchor)
-        elseif inputDef.type == "dropdown" then
-            currentAnchor = self:CreateDropdown(container, inputDef, currentAnchor)
-        elseif inputDef.type == "positionbuttons" then
-            -- Set up getX/setX/getY/setY methods based on pathPrefix
-            local pathPrefix = inputDef.pathPrefix or (inputDef.isBarPosition and "statusBar" or "position")
-            inputDef.getX = function(self)
-                return config.getValue(self.uniqueID, pathPrefix .. ".x") or 0
-            end
-            inputDef.getY = function(self)
-                return config.getValue(self.uniqueID, pathPrefix .. ".y") or 0
-            end
-            inputDef.setX = function(self, value)
-                config.setValue(self.uniqueID, pathPrefix .. ".x", value)
-            end
-            inputDef.setY = function(self, value)
-                config.setValue(self.uniqueID, pathPrefix .. ".y", value)
-            end
-            currentAnchor = CreatePositionInputs(container, inputDef, currentAnchor, inputDef.isBarPosition)
-        end
-    end
-    
-    return currentAnchor
-end
-
--- ============================================================================
--- TOTEM BAR SECTION RENDERER
--- Called from the customRender control inside the "Totem Bar" header.
--- Renders status bar display settings for totem duration visualization.
--- ============================================================================
-
--- Helper function to build totem bar input definitions
--- Similar to charge bar but without min/max values (works like cooldown bar)
-local function GetTotemBarInputDefinitions(config)
-    local sectionInputs = {
-        {
-            type = "dropdown",
-            label = "Totem Bar Display:",
-            options = {
-                { label = "Always", value = "always" },
-                { label = "Only when active", value = "active" },
-                { label = "Never", value = "never" },
-            },
-            getValue = function(self) 
-                local val = config.getValue(self.uniqueID, "totemBar.displayState")
-                return val or "never"
-            end,
-            setValue = function(self, value) 
-                config.setValue(self.uniqueID, "totemBar.displayState", value) 
-            end,
-        },
-    }
-    
-    -- Add bar configuration inputs (similar to cooldown bar)
-    local barInputs = CreateStatusBarInputs("totemBar", config, { 
-        includeMockCooldown = false, 
-        includeDisplayState = false,
-        isBarPosition = false 
-    })
-    for _, input in ipairs(barInputs) do
-        table.insert(sectionInputs, input)
-    end
-    
-    return sectionInputs
-end
-
-function IconSettingsRenderer:RenderTotemBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
-    -- Build section inputs array for bar display
-    local sectionInputs = GetTotemBarInputDefinitions(config)
     
     -- Now render all the inputs using the existing rendering logic
     local currentAnchor = lastControl

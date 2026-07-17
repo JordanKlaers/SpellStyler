@@ -256,3 +256,8 @@ Version 1.11.1
 	- Updates buff tracking to assume its either a totem or buff since it cant be both
 	- Updates the spell settings menu to reflect the totem/buff combo for buffs
 	- Adds a setting to disable icon dragging (helpful if you anchor a spell under the mouse)
+
+
+Version 1.11.2
+	- Updates totem tracking again to better handle multiple totems
+	- Updates icon border to share visibility with the icon

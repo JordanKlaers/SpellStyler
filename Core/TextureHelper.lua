@@ -366,24 +366,15 @@ pcall(function()
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
                 -- Convert tables to sorted arrays for display
-                local inCombatKeys = {}
-                for k in pairs(SpellStyler.FrameTrackerManager.keysInCombat) do
-                    table.insert(inCombatKeys, k)
-                end
-                table.sort(inCombatKeys)
+                -- for k in ipairs({1,2,3,4,5}) do
+                --     local durationObj = SpellStyler.FrameTrackerManager._totemSlotHistory[k]
+                --     if durationObj then
+                --         DevTool:AddData({
+                --             hasExpired = durationObj:HasExpired()
+                --         }, "checking expiered for slot " .. k)
+                --     end
+                -- end
                 
-                local outOfCombatKeys = {}
-                for k in pairs(SpellStyler.FrameTrackerManager.keysOutOfCombat) do
-                    table.insert(outOfCombatKeys, k)
-                end
-                table.sort(outOfCombatKeys)
-                
-                DevTool:AddData({
-                    SpellStylerBuffFrames = SpellStyler.FrameTrackerManager.SpellStyler_frames,
-                    CDMFrames = SpellStyler.FrameTrackerManager.cooldownManagerFrames,
-                    BuffIconCooldownViewer_InCombatKeys = inCombatKeys,
-                    BuffIconCooldownViewer_OutOfCombatKeys = outOfCombatKeys
-                }, "debug")
 			end
 		end)
 		texScanFrame:SetScript("OnKeyUp", function(self, key) end)

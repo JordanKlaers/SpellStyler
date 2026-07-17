@@ -321,14 +321,14 @@ function AddSpells:RenderAddSpellsView(parent)
         
         -- Determine if selected item is a spell or an item
         local isItem = selectedSpell.itemID ~= nil
-        local trackingID, trackerConfig
+        local trackingID
         local trackerConfig
 
         if isItem then
             -- Get the spell ID from the item (for event tracking and cooldown)
             local spellName, spellID = C_Item.GetItemSpell(selectedSpell.itemID)
-            local existingTrackerConfig = SpellStyler.State:GetSpecificTrackerValue(spellID, "items")
-            if existingTrackerConfig then
+            local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(spellID, "items")
+            if existingTrackerConfig and foundConfig then
                 trackerConfig = existingTrackerConfig
                 SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'isEnabled', true)
             else
@@ -350,8 +350,8 @@ function AddSpells:RenderAddSpellsView(parent)
             end
         else
             trackingID = C_Spell.GetBaseSpell(selectedSpell.spellID)
-            local existingTrackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackingID, "spells")
-            if existingTrackerConfig then
+            local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(trackingID, "spells")
+            if existingTrackerConfig and foundConfig then
                 trackerConfig = existingTrackerConfig
                 SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "spells", 'isEnabled', true)
             else
@@ -378,6 +378,7 @@ function AddSpells:RenderAddSpellsView(parent)
         
         -- CreateFrameMiddleware creates base frame, variant frame (if needed),
         -- sets up charge infrastructure, and drives updates
+
         FTM:CreateCompleteFrame(trackingID, trackerConfig, trackerType)
 
         -- Remove from the grid so it can't be added twice

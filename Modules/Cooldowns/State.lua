@@ -183,6 +183,7 @@ local function AddNewTrackerValueConfig(data)
             useSpellDisplayCount = false,
         },
         statusBar = {
+            includeTotemDuration = false,
             displayState = "never",  -- "always", "active", "inactive", "never"
             defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
             customBarTexture = "",
@@ -375,7 +376,7 @@ function State:HandleTalentChange()
     -- FrameTrackerManager:TeardownSpecFrames()
     -- Re-hook all buff cooldown frames
     FrameTrackerManager:FreshCreateFrames("talent_change")
-    
+
 	local specDB = SpellStyler_CharDB.classSpecializations[State:GetCurrentSpecID()]
 	State:SetCorrectOverride(specDB)
 end
@@ -445,6 +446,10 @@ function State:MigrateDatabase()
                     trackerValue.statusBar.barFillDirection = nil
                 end
 
+
+                if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar.attemptToTrack then
+                    trackerValue.statusBar.includeTotemDuration = true
+                end
                 -- Legacy: countText.renderAsStatusBar -> visualChargeBar.displayState
                 -- This migration ensures users who had the old checkbox get proper displayState values
                 if trackerValue.countText and trackerValue.countText.renderAsStatusBar ~= nil then
