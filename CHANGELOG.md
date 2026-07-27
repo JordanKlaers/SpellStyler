@@ -261,3 +261,8 @@ Version 1.11.1
 Version 1.11.2
 	- Updates totem tracking again to better handle multiple totems
 	- Updates icon border to share visibility with the icon
+
+Vesrion 1.11.3
+	- Fixes updating on talent changes
+	- Modifies style in the settings menu, only cosmetic
+	- Clears totem information upon death to prevent stale states

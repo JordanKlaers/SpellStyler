@@ -365,6 +365,7 @@ pcall(function()
 		texScanFrame:SetScript("OnKeyDown", function(self, key)
 			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
 			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+                SpellStyler.FrameTrackerManager:TeardownSpecFrames()
                 -- Convert tables to sorted arrays for display
                 -- for k in ipairs({1,2,3,4,5}) do
                 --     local durationObj = SpellStyler.FrameTrackerManager._totemSlotHistory[k]

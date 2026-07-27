@@ -3798,7 +3798,9 @@ local function forceUpdateAllFrames()
             for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 -- Update configuration changes first
                 FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, tType)
-                
+                FrameTrackerManager.lastTotemUpdate = nil
+                FrameTrackerManager.lastSpellCast = nil
+                FrameTrackerManager:SetMetaOnBaseAndVariant(customFrame, "totemDuration", nil)
                 -- Drive frame update for base frame
                 FrameTrackerManager:DriveFrameUpdate(
                     customFrame,
@@ -3927,19 +3929,25 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                         -- Stupid ass shit to make the frame cache the correct value of charges. Holy shock shows a max charge of 1, but then later provides 2. This delay should hopefully ensure it apply the correct value.
                         C_Timer.After(1, function()
                             local config = State:GetSpecificTrackerValue(baseSpellID, tType)
-                            local spellChargesInfo = C_Spell.GetSpellCharges(config.overrideSpellID)
-                            local spellInfo = C_Spell.GetSpellInfo(config.overrideSpellID)
-                            if customFrame.meta.dualFrameStatus ~= 'hideBase' then
-                                eventHandlers(event, customFrame, {
-                                    spellName = spellInfo.name,
-                                    isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
-                                })
+                            local spellChargesInfo
+                            local spellInfo
+                            if config and config.overrideSpellID then
+                                spellChargesInfo = C_Spell.GetSpellCharges(config.overrideSpellID)
+                                spellInfo = C_Spell.GetSpellInfo(config.overrideSpellID)
                             end
-                            if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then
-                                eventHandlers(event, customFrame.variantFrame, {
-                                    spellName = spellInfo.name,
-                                    isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
-                                })
+                            if spellChargesInfo and spellInfo then
+                                if customFrame.meta.dualFrameStatus ~= 'hideBase' then
+                                    eventHandlers(event, customFrame, {
+                                        spellName = spellInfo.name,
+                                        isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
+                                    })
+                                end
+                                if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then
+                                    eventHandlers(event, customFrame.variantFrame, {
+                                        spellName = spellInfo.name,
+                                        isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1
+                                    })
+                                end
                             end
                         end)
                     end
@@ -4135,12 +4143,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             if isSecretSpellID then
             else
                 local match = FrameTrackerManager:MatchTrackerFrame(spellID)
-                FrameTrackerManager.lastSpellCast = {
-                    spellID = spellID,
-                    timestamp = GetTime(),
-                    frame = match.customFrame
-                }
-                FrameTrackerManager:MatchTotemEvent('UNIT_SPELLCAST_SUCCEEDED for totem tracker')
+                if match then
+                    FrameTrackerManager.lastSpellCast = {
+                        spellID = spellID,
+                        timestamp = GetTime(),
+                        frame = match.customFrame
+                    }
+                    FrameTrackerManager:MatchTotemEvent('UNIT_SPELLCAST_SUCCEEDED for totem tracker')
+                end
                 -- Detect talent changes (spell 384255 is the talent change spell)
                 if spellID == 384255 or spellID == 200749 then
                     -- Immediately hide and wipe old frames so that events fired

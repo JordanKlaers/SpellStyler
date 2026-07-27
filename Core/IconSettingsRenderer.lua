@@ -3058,18 +3058,12 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 		edgeSize = 1,
 	})
 	settingsPanel:SetBackdropColor(0.08, 0.08, 0.08, 0.8)
-	settingsPanel:SetBackdropBorderColor(1, 0, 0, 1)  -- RED border for debugging
+	settingsPanel:SetBackdropBorderColor(10, 10, 10, 1)  -- RED border for debugging
 	
 
     local settingsPanelScrollFrame = CreateFrame("ScrollFrame", nil, settingsPanel, "UIPanelScrollFrameTemplate")
     settingsPanelScrollFrame:SetPoint("TOPLEFT", 10, -10)
     settingsPanelScrollFrame:SetPoint("BOTTOMRIGHT", -10, 10)
-    -- ORANGE border for debugging (ScrollFrame doesn't support SetBackdrop, so create a child frame)
-    -- local scrollFrameBorder = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
-    -- scrollFrameBorder:SetAllPoints(settingsPanelScrollFrame)
-    -- scrollFrameBorder:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
-    -- scrollFrameBorder:SetBackdropBorderColor(1, 0.5, 0, 1)
-    -- scrollFrameBorder:SetFrameLevel(settingsPanelScrollFrame:GetFrameLevel() + 10)  -- Ensure it's on top
     if SpellStyler and SpellStyler.Cooldowns and type(IconSettingsRenderer.SetConsistentScrollingBehavior) == "function" then
         IconSettingsRenderer:SetConsistentScrollingBehavior(settingsPanelScrollFrame)
     end
@@ -3194,7 +3188,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
     settingsPanelScrollFrame:SetScrollChild(scrollChild)
     -- YELLOW border for debugging
     scrollChild:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
-    scrollChild:SetBackdropBorderColor(1, 1, 0, 1)
+    scrollChild:SetBackdropBorderColor(0, 0, 0, 0)
     
     -- Store reference for height updates and content rendering
     settingsScrollChild = scrollChild
