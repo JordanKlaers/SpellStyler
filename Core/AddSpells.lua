@@ -42,10 +42,6 @@ function AddSpells:GetCurrentSpecSpells()
                             local si = C_Spell.GetSpellInfo(sid)
                             if si then
                                 local cooldownMS = GetSpellBaseCooldown(sid)
-                                pcall(function()
-                                    -- local duraiton = C_Spell.GetSpellCooldownDuration(sid):GetTotalDuration()
-                                    DevTool:AddData(cooldownMS, info.name)
-                                end)
                                 local chargeInfo = C_Spell.GetSpellCharges(sid)
                                 if (cooldownMS and cooldownMS > 0) or (chargeInfo and chargeInfo.maxCharges > 1) or (chargeInfo and chargeInfo.cooldownDuration > 0) then
                                     table.insert(spells, {
@@ -62,7 +58,6 @@ function AddSpells:GetCurrentSpecSpells()
             end
         end
     end
-    DevTool:AddData(spells, "potential spells")
     return spells
 end
 
