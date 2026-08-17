@@ -77,6 +77,8 @@ local function AddNewTrackerValueConfig(data)
         defaultIconTexturePath = data.defaultIconTexturePath,
         isItem = data.isItem or false,  -- Flag to identify item trackers (for icon lookup)
         scale = 1,
+        isNPCDebuff = data.trackerType == 'buffs' and false or nil,  -- For buffs: track as debuff on target instead of buff on player
+        additionalBuffIDs = {},
         position = {
             anchorPoint = "center",
             relativeToFrame = nil,
@@ -91,6 +93,7 @@ local function AddNewTrackerValueConfig(data)
             a = 1,
         },
         iconSettings = {
+            disableDragging = false,
             displayCharges = data.trackerType == 'buffs' and true or false,
             iconDisplayState = "always", -- "always", "active/cooldown", "inactive/available", "never"
             iconTexturePath = "",
@@ -352,15 +355,13 @@ end
 function State:SetCorrectOverride(specDB)
 	-- make sure the default Icon Texture Path and overrideSpellID match the current spell override when loading in
 	for baseSpellID, trackerValue in pairs(specDB.spells) do
-		pcall(function()
-			local overrideID = baseSpellID
-			pcall(function() overrideID = C_Spell.GetOverrideSpell(baseSpellID) end)
-			local defaultIconTexturePath = overrideID
-			local overrideInfo = C_Spell.GetSpellInfo(overrideID)
-			if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
-			specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
-			specDB.spells[baseSpellID].overrideSpellID = overrideID
-		end)
+        local overrideID = baseSpellID
+        overrideID = C_Spell.GetOverrideSpell(baseSpellID)
+        local defaultIconTexturePath = overrideID
+        local overrideInfo = C_Spell.GetSpellInfo(overrideID)
+        if overrideInfo then defaultIconTexturePath = overrideInfo.iconID end
+        specDB.spells[baseSpellID].defaultIconTexturePath = defaultIconTexturePath
+        specDB.spells[baseSpellID].overrideSpellID = overrideID
 	end
 end
 
@@ -469,10 +470,15 @@ function State:MigrateDatabase()
                     trackerValue.countText.renderAsStatusBar = nil
                 end
 
+                if trackerType == 'buffs' then
+                    if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
+                    if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
+                end
+
                 local defaults = AddNewTrackerValueConfig({
                     baseSpellID            = baseSpellID,
                     trackerType            = trackerType,
-                    name                   = trackerValue.name,
+                    name                   = trackerValue.name or C_Spell.GetSpellName(baseSpellID),
                     defaultIconTexturePath = trackerValue.defaultIconTexturePath,
                     overrideSpellID        = trackerValue.overrideSpellID,
                 })
@@ -491,7 +497,7 @@ function State:MigrateDatabase()
             local spellRemaps = {}
             for uniqueID, trackerValue in pairs(specDB.spells) do
                 local baseID = nil
-                pcall(function() baseID = C_Spell.GetBaseSpell(uniqueID) end)
+                baseID = C_Spell.GetBaseSpell(uniqueID)
                 if baseID and baseID ~= uniqueID then
                     table.insert(spellRemaps, { oldID = uniqueID, newID = baseID, entry = trackerValue })
                 end
@@ -504,7 +510,7 @@ function State:MigrateDatabase()
                     specDB.spells[baseID] = entry
                 end
                 local overrideID = baseID
-                pcall(function() overrideID = C_Spell.GetOverrideSpell(baseID) end)
+                overrideID = C_Spell.GetOverrideSpell(baseID)
                 specDB.spells[baseID].overrideSpellID = overrideID
                 specDB.spells[remap.oldID] = nil
             end
@@ -594,7 +600,21 @@ function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, val
     local db = State:GetDataBase_V2()
     State:AccessNestedValue(db[trackerType][baseSpellID], path, value, "set")
     local trackerValue = db[trackerType][baseSpellID]
-    if trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+    
+    -- For buffs, delete and recreate the specific buff
+    if trackerType == "buffs" and SpellStyler.BuffManager then
+        -- Delete the existing buff container
+        if SpellStyler.BuffManager.buffContainers[baseSpellID] then
+            local containerData = SpellStyler.BuffManager.buffContainers[baseSpellID]
+            
+            -- Hide and clean up aura container
+            if containerData then
+                SpellStyler.BuffManager:UpdateAura(containerData, trackerValue)
+                containerData.auraContainer:UpdateAllAuras()
+            end
+        end
+    elseif trackerValue and FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+        -- For non-buffs, use the existing ApplyStaticFrameProperties approach
         FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
         
         -- Re-evaluate conditionals so variant frame gets proper overrides
@@ -654,8 +674,9 @@ function State:getTrackerValuesListForSettings()
         local trackerValues = State:GetAllTrackerValues(trackerType)
         local group = {}
         for baseSpellID, trackerValue in pairs(trackerValues) do
+            local shouldInclude = trackerValue.isEnabled ~= false
             State:EnsureVisualChargeBarDefaults(trackerValue)
-            if FrameTrackerManager.cooldownManagerFrames[trackerType][baseSpellID] then
+            if shouldInclude then
                 local frame = FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                 local activeSpellID = (frame and frame.meta and frame.meta.activeSpellID) or trackerValue.overrideSpellID or baseSpellID
                 local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
@@ -663,7 +684,7 @@ function State:getTrackerValuesListForSettings()
                 table.insert(group, {
                     uniqueID = baseSpellID,
                     baseSpellID = baseSpellID,
-                    activeSpellID = activeSpellID,
+                    activeSpellID = baseSpellID,
                     trackerType = trackerValue.trackerType,
                     name = displayName,
                     defaultIconTexturePath = trackerValue.defaultIconTexturePath,
@@ -762,7 +783,7 @@ function State:CopySettings(copyInfo)
     local keys = {}
     if copyInfo.category == 'Icon Settings' then
         keys = {'iconSettings'}
-    elseif copyInfo.category == 'Spell Cooldown / Buff Duration' then
+    elseif copyInfo.category == 'Spell Cooldown / Buff Duration' or copyInfo.category == 'Spell/Item Cooldown Duration' then
         keys = {'cooldownText', 'statusBar'}
     elseif copyInfo.category == 'Charge/Count based display' then
         keys = {'chargeBasedDisplay'}

@@ -36,25 +36,23 @@ end
 
 local function EnsureKeyboardFrame()
     if IconSettingsRenderer.keyboardFrame then return end
-    pcall(function()
-        IconSettingsRenderer.keyboardFrame = CreateFrame("Frame", "SpellStylerArrowKeyCapture", UIParent)
-        IconSettingsRenderer.keyboardFrame:SetSize(1, 1)
-        IconSettingsRenderer.keyboardFrame:SetPoint("CENTER")
-        IconSettingsRenderer.keyboardFrame:EnableKeyboard(false)
-        IconSettingsRenderer.keyboardFrame:SetScript("OnKeyDown", function(self, key)
-            if key ~= "UP" and key ~= "DOWN" and key ~= "LEFT" and key ~= "RIGHT" then
-                self:SetPropagateKeyboardInput(true)
-                return
-            end
-            self:SetPropagateKeyboardInput(false)
-            local fn = IsShiftKeyDown() and _shiftBarPosition or _shiftIconPosition
-            if not fn then return end
-            if key == "UP"    then fn("y",  1)
-            elseif key == "DOWN"  then fn("y", -1)
-            elseif key == "LEFT"  then fn("x", -1)
-            elseif key == "RIGHT" then fn("x",  1)
-            end
-        end)
+    IconSettingsRenderer.keyboardFrame = CreateFrame("Frame", "SpellStylerArrowKeyCapture", UIParent)
+    IconSettingsRenderer.keyboardFrame:SetSize(1, 1)
+    IconSettingsRenderer.keyboardFrame:SetPoint("CENTER")
+    IconSettingsRenderer.keyboardFrame:EnableKeyboard(false)
+    IconSettingsRenderer.keyboardFrame:SetScript("OnKeyDown", function(self, key)
+        if key ~= "UP" and key ~= "DOWN" and key ~= "LEFT" and key ~= "RIGHT" then
+            self:SetPropagateKeyboardInput(true)
+            return
+        end
+        self:SetPropagateKeyboardInput(false)
+        local fn = IsShiftKeyDown() and _shiftBarPosition or _shiftIconPosition
+        if not fn then return end
+        if key == "UP"    then fn("y",  1)
+        elseif key == "DOWN"  then fn("y", -1)
+        elseif key == "LEFT"  then fn("x", -1)
+        elseif key == "RIGHT" then fn("x",  1)
+        end
     end)
 end
 
@@ -698,14 +696,34 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
             width = 120,
             offsetY = -15,
             onClick = function(btn, btnFrame)
-                SpellStyler.IconSettingsRenderer:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
-                local isNowActive = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType][btn.uniqueID].meta.mockCooldownActive
-                btnFrame:SetText(isNowActive and "Stop Cooldown" or "Mock Cooldown")
+                if btn.trackerType == "buffs" then
+                    -- For buffs, call BuffManager's mock cooldown method
+                    if SpellStyler.BuffManager and SpellStyler.BuffManager.ToggleMockCooldown then
+                        local isNowActive = SpellStyler.BuffManager:ToggleMockCooldown(btn.uniqueID)
+                        btnFrame:SetText(isNowActive and "Stop Cooldown" or "Mock Cooldown")
+                    end
+                else
+                    -- For spells/items, call IconSettingsRenderer's mock cooldown method
+                    SpellStyler.IconSettingsRenderer:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
+                    local isNowActive = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType][btn.uniqueID].meta.mockCooldownActive
+                    btnFrame:SetText(isNowActive and "Stop Cooldown" or "Mock Cooldown")
+                end
             end,
             onStateGet = function(self)
-                local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(self.uniqueID, self.trackerType)
-                local isMockActive = trackerFrame and trackerFrame._spellStyler_mockCooldownActive or false
-                return isMockActive and "Stop Cooldown" or "Mock Cooldown"
+                if self.trackerType == "buffs" then
+                    -- For buffs, check BuffManager placeholder meta
+                    if SpellStyler.BuffManager and SpellStyler.BuffManager.buffContainers then
+                        local container = SpellStyler.BuffManager.buffContainers[self.uniqueID]
+                        local isMockActive = container and container.placeHolder and container.placeHolder.meta and container.placeHolder.meta.mockCooldownActive or false
+                        return isMockActive and "Stop Cooldown" or "Mock Cooldown"
+                    end
+                    return "Mock Cooldown"
+                else
+                    -- For spells/items, check FrameTrackerManager meta
+                    local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(self.uniqueID, self.trackerType)
+                    local isMockActive = trackerFrame and trackerFrame._spellStyler_mockCooldownActive or false
+                    return isMockActive and "Stop Cooldown" or "Mock Cooldown"
+                end
             end,
         })
     end
@@ -729,12 +747,15 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".customBarTexture", value) end,
     })
     
-    table.insert(inputs, {
-        type = "checkbox",
-        label = "Only Render Bar (no border/background):",
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar") or false end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".onlyRenderBar", value) end,
-    })
+    -- Skip "only render bar" for buffs
+    if config.trackerType ~= 'buffs' then
+        table.insert(inputs, {
+            type = "checkbox",
+            label = "Only Render Bar (no border/background):",
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar") or false end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".onlyRenderBar", value) end,
+        })
+    end
     
     table.insert(inputs, {
         type = "dropdown",
@@ -800,26 +821,29 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".color", value) end,
     })
     
-    table.insert(inputs, {
-        type = "colorpicker",
-        label = "Background Color:",
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".backgroundColor") or {r=0.2, g=0.2, b=0.2, a=0.6} end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".backgroundColor", value) end,
-    })
-    
-    table.insert(inputs, {
-        type = "colorpicker",
-        label = "Glow Color:",
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".glowColor") or {r=0.5, g=0.8, b=1, a=0.4} end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".glowColor", value) end,
-    })
-    
-    table.insert(inputs, {
-        type = "colorpicker",
-        label = "Border Color:",
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderColor") or {r=1, g=1, b=1, a=1} end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderColor", value) end,
-    })
+    -- Skip background, glow, border colors and border scale for buffs
+    if config.trackerType ~= 'buffs' then
+        table.insert(inputs, {
+            type = "colorpicker",
+            label = "Background Color:",
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".backgroundColor") or {r=0.2, g=0.2, b=0.2, a=0.6} end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".backgroundColor", value) end,
+        })
+        
+        table.insert(inputs, {
+            type = "colorpicker",
+            label = "Glow Color:",
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".glowColor") or {r=0.5, g=0.8, b=1, a=0.4} end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".glowColor", value) end,
+        })
+        
+        table.insert(inputs, {
+            type = "colorpicker",
+            label = "Border Color:",
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderColor") or {r=1, g=1, b=1, a=1} end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderColor", value) end,
+        })
+    end
     
     table.insert(inputs, {
         type = "textinput",
@@ -827,14 +851,16 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".scale") or 1.0 end,
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".scale", value) end,
     })
-    
-    table.insert(inputs, {
-        type = "textinput",
-        label = "Border Scale:",
-        numeric = true,
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderScale") or 1.0 end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderScale", value) end,
-    })
+
+    if config.trackerType ~= 'buffs' then
+        table.insert(inputs, {
+            type = "textinput",
+            label = "Border Scale:",
+            numeric = true,
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderScale") or 1.0 end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderScale", value) end,
+        })
+    end
     
     table.insert(inputs, {
         type = "positionbuttons",
@@ -1007,9 +1033,9 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
         RADIAL_DISPLAY_OPTIONS = {
-            { label = "Show Always", value = "always" },
+            -- { label = "Show Always", value = "always" },
             { label = "Show when active", value = "active" },
-            { label = "Show when inactive", value = "inactive" },
+            -- { label = "Show when inactive", value = "inactive" },
             { label = "Show Never", value = "never" },
         }
     else
@@ -1035,121 +1061,122 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
         { label = "less than",             value = "<"  },
         { label = "greater than",          value = ">"  },
     }
-    return {
-        -- Icon settings
-        {
-            type = "header",
-            text = "Icon Settings",
-            state = 'expanded',
-            sectionContent = {
-                {
-                    type = "dropdown",
-                    label = "Icon Display State:",
-                    options = RADIAL_DISPLAY_OPTIONS,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconDisplayState") or "always" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconDisplayState", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Custom Texture Path:",
-                    width = 160,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconTexturePath") or "" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconTexturePath", value) end,
-                },
-                {
-                    type = "colorpicker",
-                    label = "Icon Color:",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconColor") or {r=1, g=1, b=1, a=1} end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconColor", value) end,
-                },
-                {
-                    type = "positionbuttons",
-                    label = "Position:",
-                    hintText = "You can also use arrow keys or mouse drag",
-                    isBarPosition = false,
-                },
-                {
-                    type = "textinput",
-                    label = "Width:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.width") or 48 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.width", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Height:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.height") or 48 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.height", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Texture Zoom:",
-                    tooltip = "Use values between 0 and 100",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.zoom") or 0 end,
-                    setValue = function(self, value) 
-                        -- Validate and transform the zoom value
-                        local numValue = tonumber(value)
-                        if not numValue then
-                            numValue = 0
-                        else
-                            -- Clamp to 0-100 range
-                            numValue = math.max(0, math.min(100, numValue))
-                        end
-                        -- Transform: divide by 2, then divide by 100 (equivalent to dividing by 200)
-                        local transformedValue = numValue / 200
-                        config.setValue(self.uniqueID, "iconSettings.zoom", transformedValue)
-                    end,
-                },
-                {
-                    type = "textinput",
-                    label = "Opacity:",
-                    numeric = true,
-                    max = 1,
-                    min = 0,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.opacity") or 1.0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.opacity", value) end,
-                },
-                {
-                    type = "textinput",
-                    label = "Scale:",
-                    numeric = true,
-                    max = 10000,
-                    min = -10000,
-                    getValue = function(self) return config.getValue(self.uniqueID, "scale") or 1.0 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "scale", value) end,
-                },
-                {
-                    type = "dropdown",
-                    label = "Frame Strata:",
-                    options = {
-                        { label = "BACKGROUND",       value = "BACKGROUND" },
-                        { label = "LOW",              value = "LOW" },
-                        { label = "MEDIUM",           value = "MEDIUM" },
-                        { label = "HIGH",             value = "HIGH" },
-                        { label = "DIALOG",           value = "DIALOG" },
-                        { label = "FULLSCREEN",       value = "FULLSCREEN" },
-                        { label = "FULLSCREEN_DIALOG",value = "FULLSCREEN_DIALOG" },
-                        { label = "TOOLTIP",          value = "TOOLTIP" },
-                    },
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataLevel") or "MEDIUM" end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataLevel", value) end,
-                },
-                {
-                    type = "customRender",
-                    render = function(container, lastControl, uid, tType, rerender)
-                        return IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl, uid, tType, config)
+    local configSections = {}
+    table.insert(configSections, {
+        type = "header",
+        text = "Icon Settings",
+        state = 'expanded',
+        sectionContent = (function()
+            local sections = {}
+            table.insert(sections, {
+                type = "dropdown",
+                label = "Icon Display State:",
+                options = RADIAL_DISPLAY_OPTIONS,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconDisplayState") or "always" end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconDisplayState", value) end,
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Custom Texture Path:",
+                width = 160,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconTexturePath") or "" end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconTexturePath", value) end,
+            })
+            table.insert(sections, {
+                type = "colorpicker",
+                label = "Icon Color:",
+                getValue = function(self) return config.getValue(self.uniqueID, "iconColor") or {r=1, g=1, b=1, a=1} end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconColor", value) end,
+            })
+            table.insert(sections, {
+                type = "positionbuttons",
+                label = "Position:",
+                hintText = "You can also use arrow keys or mouse drag",
+                isBarPosition = false,
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Width:",
+                numeric = true,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.width") or 48 end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.width", value) end,
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Height:",
+                numeric = true,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.height") or 48 end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.height", value) end,
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Texture Zoom:",
+                tooltip = "Use values between 0 and 100",
+                numeric = true,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.zoom") or 0 end,
+                setValue = function(self, value) 
+                    -- Validate and transform the zoom value
+                    local numValue = tonumber(value)
+                    if not numValue then
+                        numValue = 0
+                    else
+                        -- Clamp to 0-100 range
+                        numValue = math.max(0, math.min(100, numValue))
                     end
+                    -- Transform: divide by 2, then divide by 100 (equivalent to dividing by 200)
+                    local transformedValue = numValue / 200
+                    config.setValue(self.uniqueID, "iconSettings.zoom", transformedValue)
+                end,
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Opacity:",
+                numeric = true,
+                max = 1,
+                min = 0,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.opacity") or 1.0 end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.opacity", value) end,
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Scale:",
+                numeric = true,
+                max = 10000,
+                min = -10000,
+                getValue = function(self) return config.getValue(self.uniqueID, "scale") or 1.0 end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "scale", value) end,
+            })
+            table.insert(sections, {
+                type = "dropdown",
+                label = "Frame Strata:",
+                options = {
+                    { label = "BACKGROUND",       value = "BACKGROUND" },
+                    { label = "LOW",              value = "LOW" },
+                    { label = "MEDIUM",           value = "MEDIUM" },
+                    { label = "HIGH",             value = "HIGH" },
+                    { label = "DIALOG",           value = "DIALOG" },
+                    { label = "FULLSCREEN",       value = "FULLSCREEN" },
+                    { label = "FULLSCREEN_DIALOG",value = "FULLSCREEN_DIALOG" },
+                    { label = "TOOLTIP",          value = "TOOLTIP" },
                 },
-                {
-                    type = "textinput",
-                    label = "Frame Level:",
-                    numeric = true,
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataValue") or 100 end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataValue", value) end,
-                },
-                {
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataLevel") or "MEDIUM" end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataLevel", value) end,
+            })
+            table.insert(sections, {
+                type = "customRender",
+                render = function(container, lastControl, uid, tType, rerender)
+                    return IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl, uid, tType, config)
+                end
+            })
+            table.insert(sections, {
+                type = "textinput",
+                label = "Frame Level:",
+                numeric = true,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.frameStrataValue") or 100 end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.frameStrataValue", value) end,
+            })
+            if config.trackerType ~= 'buffs' then
+                table.insert(sections, {
                     type = "textinput",
                     label = "Border Size:",
                     tooltip = "Negative values render the border inside the icon. Positive Values render the border outside the icon",
@@ -1157,118 +1184,148 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     min = -5000,
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.borderSize") or 0 end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.borderSize", value) end,
-                },
-                {
+                })
+            end
+            if config.trackerType ~= 'buffs' then
+                table.insert(sections, {
                     type = "colorpicker",
                     label = "Border Color:",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.borderColor") or {r=1, g=1, b=1, a=0} end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.borderColor", value) end,
-                },
-                {
+                })
+            end
+            if config.trackerType ~= 'buffs' then
+                table.insert(sections, {
                     type = "checkbox",
                     label = "Desaturate when on cooldown",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.desaturated") or false end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.desaturated", value) end,
-                },
-                {
-                    type = "checkbox",
-                    label = "Hide default swipe animation",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
-                },
-                {
-                    type = "checkbox",
-                    label = "Hide cooldown bling",
-                    tooltip = "Enabling this will hide the leading gold slice on the cooldown animation swipe",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideCooldownBling") == true end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideCooldownBling", value) end,
-                },
-                {
-                    type = "checkbox",
-                    label = "Disable Dragging",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.disableDragging") == true end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.disableDragging", value) end,
-                }
-                
-            }
-        },
-        -- Status bar
-        {
-            type = "header",
-            text = config.trackerType == 'buffs' and "Buff/Totem Duration" or "Spell/Item Cooldown Duration",
-            state = 'collapsed',
-            section = (function()
-                local section = {
-                    {
-                        type = "checkbox",
-                        label = "Display Cooldown Text",
-                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.display") or false end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.display", value) end,
-                    },
-                    {
-                        type = "dropdown",
-                        label = "Font:",
-                        options = GetFontOptions(),
-                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.font") or "default" end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.font", value) end,
-                    },
-                    {
-                        type = "customRender",
-                        render = function(container, lastControl, uid, tType)
-                            return CreateFontFlagsCheckboxes(container, config, lastControl, "cooldownText.fontFlags", uid, tType)
-                        end
-                    },
-                    {
-                        type = "textinput",
-                        label = "Size:",
-                        numeric = true,
-                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.size") or 14 end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.size", value) end,
-                    },
-                    {
-                        type = "colorpicker",
-                        label = "Color:",
-                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.color") or {r=1, g=1, b=1, a=1} end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.color", value) end,
-                    },
-                    {
-                        type = "textinput",
-                        label = "Offset X:",
-                        numeric = true,
-                        min = -5000,
-                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.x") or 0 end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.x", value) end,
-                    },
-                    {
-                        type = "textinput",
-                        label = "Offset Y:",
-                        numeric = true,
-                        min = -5000,
-                        getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.y") or 0 end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.y", value) end,
-                    },
-                    {
-                        type = "checkbox",
-                        label = "Attempt to track totem duration",
-                        getValue = function(self) return config.getValue(self.uniqueID, "statusBar.includeTotemDuration") or false end,
-                        setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.includeTotemDuration", value) end,
-                    },
-                }
-                
-                -- Spread the status bar inputs into the section (JavaScript: [...array])
-                local statusBarInputs = CreateStatusBarInputs("statusBar", config, { 
-                    includeMockCooldown = true, 
-                    includeDisplayState = true, 
-                    isBarPosition = true 
                 })
-                for _, input in ipairs(statusBarInputs) do
-                    table.insert(section, input)
-                end
-                
-                return section
-            end)()
-        },
-        {
+            end
+            table.insert(sections, {
+                type = "checkbox",
+                label = "Hide default swipe animation",
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideDefaultSweep") == true end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideDefaultSweep", value) end,
+            })
+            table.insert(sections, {
+                type = "checkbox",
+                label = "Hide cooldown bling",
+                tooltip = "Enabling this will hide the leading gold slice on the cooldown animation swipe",
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.hideCooldownBling") == true end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.hideCooldownBling", value) end,
+            })
+            table.insert(sections, {
+                type = "checkbox",
+                label = "Disable Dragging",
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.disableDragging") == true end,
+                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.disableDragging", value) end,
+            })
+            -- Is NPC Debuff checkbox (buffs only)
+            if config.trackerType == 'buffs' then
+                table.insert(sections, {
+                    type = "checkbox",
+                    label = "Is NPC debuff for target",
+                    tooltip = "Track as a debuff on your target instead of a buff on yourself",
+                    getValue = function(self) return config.getValue(self.uniqueID, "isNPCDebuff") == true end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "isNPCDebuff", value) end,
+                })
+            end
+            -- Additional Spell IDs input (buffs only)
+            if config.trackerType == 'buffs' then
+                table.insert(sections, {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderAdditionalSpellIDsInput(container, lastControl, uid, tType, rerender, config)
+                    end
+                })
+            end
+            return sections
+            
+        end)()
+    })
+    
+    table.insert(configSections, {
+        type = "header",
+        text = config.trackerType == 'buffs' and "Buff/Totem Duration" or "Spell/Item Cooldown Duration",
+        state = 'collapsed',
+        section = (function()
+            local section = {
+                {
+                    type = "checkbox",
+                    label = "Display Cooldown Text",
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.display") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.display", value) end,
+                },
+                {
+                    type = "dropdown",
+                    label = "Font:",
+                    options = GetFontOptions(),
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.font") or "default" end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.font", value) end,
+                },
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType)
+                        return CreateFontFlagsCheckboxes(container, config, lastControl, "cooldownText.fontFlags", uid, tType)
+                    end
+                },
+                {
+                    type = "textinput",
+                    label = "Size:",
+                    numeric = true,
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.size") or 14 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.size", value) end,
+                },
+                {
+                    type = "colorpicker",
+                    label = "Color:",
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.color") or {r=1, g=1, b=1, a=1} end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.color", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Offset X:",
+                    numeric = true,
+                    min = -5000,
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.x") or 0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.x", value) end,
+                },
+                {
+                    type = "textinput",
+                    label = "Offset Y:",
+                    numeric = true,
+                    min = -5000,
+                    getValue = function(self) return config.getValue(self.uniqueID, "cooldownText.y") or 0 end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "cooldownText.y", value) end,
+                },
+            }
+            
+            -- Only add "Attempt to track totem duration" checkbox for non-buffs
+            if config.trackerType ~= 'buffs' then
+                table.insert(section, {
+                    type = "checkbox",
+                    label = "Attempt to track totem duration",
+                    getValue = function(self) return config.getValue(self.uniqueID, "statusBar.includeTotemDuration") or false end,
+                    setValue = function(self, value) config.setValue(self.uniqueID, "statusBar.includeTotemDuration", value) end,
+                })
+            end
+            
+            -- Spread the status bar inputs into the section (JavaScript: [...array])
+            local statusBarInputs = CreateStatusBarInputs("statusBar", config, { 
+                includeMockCooldown = true, 
+                includeDisplayState = true, 
+                isBarPosition = true 
+            })
+            for _, input in ipairs(statusBarInputs) do
+                table.insert(section, input)
+            end
+            
+            return section
+        end)()
+    })
+    if config.trackerType ~= 'buffs' then
+        table.insert(configSections, {
             type = "header",
             text = "Conditional Property Overrides",
             state = 'collapsed',
@@ -1280,8 +1337,10 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     end
                 }
             }
-        },
-        {
+        })
+    end
+    if config.trackerType ~= 'buffs' then
+        table.insert(configSections, {
             type = "header",
             text = "Charge/Count based display",
             state = 'collapsed',
@@ -1317,8 +1376,10 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "chargeBasedDisplay.chargeValue", value) end,
                 },
             }
-        },
-        {
+        })
+    end
+    if config.trackerType ~= 'buffs' then
+        table.insert(configSections, {
             type = "header",
             text = "Glow notification",
             state = 'collapsed',
@@ -1352,30 +1413,29 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "glowNotification.glowColor", value) end,
                 },
             }
-        },
-        
-        -- Count Text
-        {
-            type = "header",
-            text = "Spell Charges / Buff Stacks",
-            state = 'collapsed',
-            section = {
-                {
-                    type = "customRender",
-                    render = function(container, lastControl, uid, tType, rerender)
-                        return IconSettingsRenderer:RenderCountTextSection(container, lastControl, uid, tType, rerender, config)
-                    end
-                },
-                {
-                    type = "customRender",
-                    render = function(container, lastControl, uid, tType, rerender)
-                        return IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uid, tType, rerender, config)
-                    end
-                }
+        })
+    end
+    table.insert(configSections, {
+        type = "header",
+        text = "Spell Charges / Buff Stacks",
+        state = 'collapsed',
+        section = {
+            {
+                type = "customRender",
+                render = function(container, lastControl, uid, tType, rerender)
+                    return IconSettingsRenderer:RenderCountTextSection(container, lastControl, uid, tType, rerender, config)
+                end
+            },
+            {
+                type = "customRender",
+                render = function(container, lastControl, uid, tType, rerender)
+                    return IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uid, tType, rerender, config)
+                end
             }
-        },
-        -- Custom Label
-        {
+        }
+    })
+    if config.trackerType ~= 'buffs' then
+        table.insert(configSections, {
             type = "header",
             text = "Custom Label (Accessibility)",
             state = 'collapsed',
@@ -1435,8 +1495,10 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     setValue = function(self, value) config.setValue(self.uniqueID, "customLabel.y", value) end,
                 },
             }
-        },
-    }
+        })
+    end
+    
+    return configSections
 end
 
 -- ============================================================================
@@ -1493,6 +1555,118 @@ local _PROP_DEF_BY_PATH = {}
 for _, def in ipairs(PROPERTY_DEFS) do _PROP_DEF_BY_PATH[def.path] = def end
 
 local PLUS_ICON_PATH_SVC = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\PlusIcon.tga"
+
+-- ============================================================================
+-- ADDITIONAL SPELL IDS INPUT RENDERER (Buffs only)
+-- Renders an input field for adding spell IDs to track alongside the main buff
+-- ============================================================================
+function IconSettingsRenderer:RenderAdditionalSpellIDsInput(container, lastControl, uniqueID, trackerType, rerender, config)
+    -- Get existing additional spell IDs
+    local additionalIDs = config.getValue(uniqueID, "additionalBuffIDs") or {}
+    
+    -- Create input row
+    local inputRow = CreateFrame("Frame", nil, container)
+    inputRow:SetSize(290, 30)
+    inputRow:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -5)
+    
+    local label = inputRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetText("Additional Spell IDs:")
+    label:SetTextColor(0.8, 0.8, 0.8)
+    label:SetPoint("LEFT", inputRow, "LEFT", 0, 0)
+    
+    local input = CreateFrame("EditBox", nil, inputRow, "InputBoxTemplate")
+    input:SetSize(120, 20)
+    input:SetPoint("RIGHT", inputRow, "RIGHT", -10, 0)
+    input:SetAutoFocus(false)
+    input:SetMaxLetters(10)
+    input:SetNumeric(true)
+    
+    input:SetScript("OnEnterPressed", function(self)
+        local spellID = tonumber(self:GetText())
+        if spellID then
+            -- Get current list
+            local ids = config.getValue(uniqueID, "additionalBuffIDs") or {}
+            
+            -- Check if ID already exists
+            local exists = false
+            for _, id in ipairs(ids) do
+                if id == spellID then
+                    exists = true
+                    break
+                end
+            end
+            
+            if not exists then
+                table.insert(ids, spellID)
+                config.setValue(uniqueID, "additionalBuffIDs", ids)
+                self:SetText("")
+                
+                -- Force re-render to show the new ID in the list
+                if rerender then
+                    rerender()
+                end
+            else
+                self:SetText("")
+            end
+        end
+    end)
+    
+    input:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+    
+    local currentAnchor = inputRow
+    
+    -- Render list of added IDs with remove buttons
+    for i, spellID in ipairs(additionalIDs) do
+        local idRow = CreateFrame("Frame", nil, container)
+        idRow:SetSize(290, 24)
+        idRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -2)
+        
+        local idText = idRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        idText:SetText("Spell ID: " .. tostring(spellID))
+        idText:SetTextColor(0.7, 0.7, 0.7)
+        idText:SetPoint("LEFT", idRow, "LEFT", 0, 0)
+        
+        local removeBtn = CreateFrame("Button", nil, idRow)
+        removeBtn:SetSize(16, 16)
+        removeBtn:SetPoint("RIGHT", idRow, "RIGHT", 0, 0)
+        
+        local removeText = removeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        removeText:SetText("X")
+        removeText:SetTextColor(1, 0.3, 0.3)
+        removeText:SetAllPoints(removeBtn)
+        
+        removeBtn:SetScript("OnEnter", function(self)
+            removeText:SetTextColor(1, 0, 0)
+        end)
+        
+        removeBtn:SetScript("OnLeave", function(self)
+            removeText:SetTextColor(1, 0.3, 0.3)
+        end)
+        
+        removeBtn:SetScript("OnClick", function(self)
+            -- Remove this spell ID from the list
+            local ids = config.getValue(uniqueID, "additionalBuffIDs") or {}
+            local newIds = {}
+            for _, id in ipairs(ids) do
+                if id ~= spellID then
+                    table.insert(newIds, id)
+                end
+            end
+            config.setValue(uniqueID, "additionalBuffIDs", newIds)
+            
+            -- Force re-render to update the list
+            if rerender then
+                rerender()
+            end
+        end)
+        
+        currentAnchor = idRow
+    end
+    
+    return currentAnchor
+end
 
 -- ============================================================================
 -- COUNT/CHARGE TEXT SECTION RENDERER
@@ -1606,15 +1780,19 @@ end
 -- Helper function to build charge bar input definitions
 -- Used by both single-icon and multi-icon renderers
 local function GetChargeBarInputDefinitions(config)
+    local options = config.trackerType ~= buffs and {
+        { label = "Always", value = "always" },
+        { label = "Only when >= 1", value = "available" },
+        { label = "Never", value = "never" },
+    } or {
+        { label = "Always", value = "always" },
+        { label = "Never", value = "never" },
+    }
     local sectionInputs = {
         {
             type = "dropdown",
             label = "Charge Bar Display:",
-            options = {
-                { label = "Always", value = "always" },
-                { label = "Only when >= 1", value = "available" },
-                { label = "Never", value = "never" },
-            },
+            options = options,
             getValue = function(self) 
                 local val = config.getValue(self.uniqueID, "visualChargeBar.displayState")
                 return val or "never"
@@ -1636,14 +1814,17 @@ local function GetChargeBarInputDefinitions(config)
     end
     
     -- Add min/max value inputs for bar range configuration
-    table.insert(sectionInputs, {
-        type = "textinput",
-        label = "Min Value:",
-        numeric = true,
-        min = 0,
-        getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.minValue") or 0 end,
-        setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.minValue", value) end,
-    })
+    -- auras dont currently support settings a min value
+    if config.trackerType ~= buffs then
+        table.insert(sectionInputs, {
+            type = "textinput",
+            label = "Min Value:",
+            numeric = true,
+            min = 0,
+            getValue = function(self) return config.getValue(self.uniqueID, "visualChargeBar.minValue") or 0 end,
+            setValue = function(self, value) config.setValue(self.uniqueID, "visualChargeBar.minValue", value) end,
+        })
+    end
     table.insert(sectionInputs, {
         type = "textinput",
         label = "Max Value:",
@@ -2148,7 +2329,19 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             _iconPositionInputs[axis]:SetText(tostring(newValue))
         end
 
-        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+        if trackerType == 'buffs' and SpellStyler.BuffManager then
+            if SpellStyler.BuffManager.buffContainers[uniqueID] then
+                local containerData = SpellStyler.BuffManager.buffContainers[uniqueID]
+                
+                -- Hide and clean up aura container
+                if containerData then
+                    SpellStyler.BuffManager:UpdateAura(containerData, SpellStyler.State:GetSpecificTrackerValue(uniqueID, 'buffs'))
+                    containerData.auraContainer:UpdateAllAuras()
+                end
+            end
+        else
+            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+        end
     end
     _shiftBarPosition = function(axis, delta)
         local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.x") or 0
@@ -2257,78 +2450,75 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 			IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 		end)
 
-		-- Disable button (non-buffs only)
-		if trackerType ~= "buffs" then
-			local disableBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-			disableBtn:SetSize(80, 22)
-			disableBtn:SetPoint("LEFT", resetBtn, "RIGHT", 8, 0)
-			disableBtn:SetText("Disable")
-			disableBtn:SetScript("OnEnter", function(self)
-				GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-				GameTooltip:SetText(
-					"This will remove the spell from being tracked. The settings will be saved in the database if you want to re-add the spell",
-					nil, nil, nil, nil, true
-				)
-				GameTooltip:Show()
-			end)
-			disableBtn:SetScript("OnLeave", function()
-				GameTooltip:Hide()
-			end)
-			disableBtn:SetScript("OnClick", function()
-				-- Mark as disabled in the DB
-				SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "isEnabled", false)
-				-- Completely destroy the live frame (clears cooldown, detaches from
-				-- UIParent, nils the SpellStyler_frames entry so no event handler
-				-- can ever reach it again). DB entry is preserved.
-				if SpellStyler.FrameTrackerManager then
-					SpellStyler.FrameTrackerManager:DestroyTrackerFrame(uniqueID, trackerType)
-                    for _, trackerType in ipairs({ "spells", "items", "buffs" }) do
-                        local trackerValues = State:GetAllTrackerValues(trackerType)
-                        if trackerValues then
-                            for baseSpellID, trackerConfig in pairs(trackerValues) do
-                                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-                                if trackerConfig.isEnabled and frame then
-                                    -- reposition all frames so that they can be properly anchored now that all frames are created
-                                    SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
-                                end
+        local disableBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        disableBtn:SetSize(80, 22)
+        disableBtn:SetPoint("LEFT", resetBtn, "RIGHT", 8, 0)
+        disableBtn:SetText("Disable")
+        disableBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(
+                "This will remove the spell from being tracked. The settings will be saved in the database if you want to re-add the spell",
+                nil, nil, nil, nil, true
+            )
+            GameTooltip:Show()
+        end)
+        disableBtn:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+        end)
+        disableBtn:SetScript("OnClick", function()
+            -- Mark as disabled in the DB
+            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "isEnabled", false)
+            -- Completely destroy the live frame (clears cooldown, detaches from
+            -- UIParent, nils the SpellStyler_frames entry so no event handler
+            -- can ever reach it again). DB entry is preserved.
+            if SpellStyler.FrameTrackerManager then
+                SpellStyler.FrameTrackerManager:DestroyTrackerFrame(uniqueID, trackerType)
+                for _, trackerType in ipairs({ "spells", "items" }) do
+                    local trackerValues = State:GetAllTrackerValues(trackerType)
+                    if trackerValues then
+                        for baseSpellID, trackerConfig in pairs(trackerValues) do
+                            local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                            if trackerConfig.isEnabled and frame then
+                                -- reposition all frames so that they can be properly anchored now that all frames are created
+                                SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
                             end
                         end
                     end
-				end
-				
-				-- Clear the selected icon state
-				_lastSelectedIcon = nil
-				
-				-- Clear the settings panel and show default message
-				if settingsScrollChild then
-					-- Clear all controls
-					for _, child in ipairs({settingsScrollChild:GetChildren()}) do
-						child:Hide()
-						child:SetParent(nil)
-					end
-					for _, region in ipairs({settingsScrollChild:GetRegions()}) do
-						if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
-							region:Hide()
-							if region:IsObjectType("FontString") then
-								region:SetText("")
-							end
-						end
-					end
-					
-					-- Show the default "Select an icon to configure" message
-					local noSelectionLabel = settingsScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-					noSelectionLabel:SetPoint("CENTER", settingsScrollChild, "CENTER", 0, 0)
-					noSelectionLabel:SetText("Select an icon to configure")
-					noSelectionLabel:SetTextColor(0.5, 0.5, 0.5)
-					settingsScrollChild.currentControlsContainer = noSelectionLabel
-				end
-				
-				-- Re-render the icon list so the entry disappears
-				if SpellStyler.settingsContentFrame then
-					IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-				end
-			end)
-		end
+                end
+            end
+            
+            -- Clear the selected icon state
+            _lastSelectedIcon = nil
+            
+            -- Clear the settings panel and show default message
+            if settingsScrollChild then
+                -- Clear all controls
+                for _, child in ipairs({settingsScrollChild:GetChildren()}) do
+                    child:Hide()
+                    child:SetParent(nil)
+                end
+                for _, region in ipairs({settingsScrollChild:GetRegions()}) do
+                    if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
+                        region:Hide()
+                        if region:IsObjectType("FontString") then
+                            region:SetText("")
+                        end
+                    end
+                end
+                
+                -- Show the default "Select an icon to configure" message
+                local noSelectionLabel = settingsScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+                noSelectionLabel:SetPoint("CENTER", settingsScrollChild, "CENTER", 0, 0)
+                noSelectionLabel:SetText("Select an icon to configure")
+                noSelectionLabel:SetTextColor(0.5, 0.5, 0.5)
+                settingsScrollChild.currentControlsContainer = noSelectionLabel
+            end
+            
+            -- Re-render the icon list so the entry disappears
+            if SpellStyler.settingsContentFrame then
+                IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+            end
+        end)
 
         lastControl = resetBtn
     end
@@ -3171,7 +3361,15 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                     -- When clicking an icon in the settings list, briefly show the
                     -- glow on the actual tracker frame for 2 seconds so the user
                     -- can visually locate it in the UI.
-                    SpellStyler.IconSettingsRenderer:BrieflyHighlightFrame(entry.uniqueID, entry.trackerType)
+                    if entry.trackerType == "buffs" then
+                        -- For buffs, call BuffManager's highlight method
+                        if SpellStyler.BuffManager and SpellStyler.BuffManager.BrieflyHighlightBuff then
+                            SpellStyler.BuffManager:BrieflyHighlightBuff(entry.uniqueID)
+                        end
+                    else
+                        -- For spells/items, call IconSettingsRenderer's highlight method
+                        SpellStyler.IconSettingsRenderer:BrieflyHighlightFrame(entry.uniqueID, entry.trackerType)
+                    end
                 end)
                 btn:EnableMouse(true)
                 btn:RegisterForClicks("LeftButtonUp")
@@ -3336,8 +3534,20 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
         end
 
         local selectInMenu = function(self, button)
-            if button == "LeftButton" and onFrameClickCallback then
-                onFrameClickCallback(baseSpellID, trackerType)
+            if button == "LeftButton" then
+                -- Trigger glow effect on the frame
+                if trackerType == "buffs" then
+                    if SpellStyler.BuffManager and SpellStyler.BuffManager.BrieflyHighlightBuff then
+                        SpellStyler.BuffManager:BrieflyHighlightBuff(baseSpellID)
+                    end
+                else
+                    IconSettingsRenderer:BrieflyHighlightFrame(baseSpellID, trackerType)
+                end
+                
+                -- Call selection callback to update settings menu
+                if onFrameClickCallback then
+                    onFrameClickCallback(baseSpellID, trackerType)
+                end
             end
         end
 
@@ -3406,7 +3616,7 @@ end
 
 function IconSettingsRenderer:DisableDraggingForSpecificFrame(frame)
     if not frame then return end
-    frame:EnableMouse(false)
+    -- frame:EnableMouse(false)
     frame:EnableMouseWheel(false)
     frame:RegisterForDrag()
     frame:SetScript("OnDragStart", nil)
@@ -3524,63 +3734,62 @@ function IconSettingsRenderer:BrieflyHighlightFrame(baseSpellID, trackerType)
         local duration = 2
         local fadeIn = 0.5
         local fadeOut = 0.5
-        pcall(function()
-            -- Ensure glowFrame covers the frame
-            if f.glowFrame and f.glowFrame.SetAllPoints then
-                f.glowFrame:SetAllPoints(f)
-            end
+        
+        -- Ensure glowFrame covers the frame
+        if f.glowFrame and f.glowFrame.SetAllPoints then
+            f.glowFrame:SetAllPoints(f)
+        end
 
-            -- Size the glow elements to be proportional to the icon size (use icon width when available)
-            local width = 48
-            if f.icon and f.icon.GetWidth then
-                width = f.icon:GetWidth() or width
-            elseif f.GetWidth then
-                width = f:GetWidth() or width
-            end
-            local offset = math.max(8, math.floor(width * 0.22))
+        -- Size the glow elements to be proportional to the icon size (use icon width when available)
+        local width = 48
+        if f.icon and f.icon.GetWidth then
+            width = f.icon:GetWidth() or width
+        elseif f.GetWidth then
+            width = f:GetWidth() or width
+        end
+        local offset = 0
+        pcall(function() offset = math.max(8, math.floor(width * 0.22)) end)
 
-            -- Anchor glow textures to the glowFrame so they can extend outward
-            if f.glowTexture then
-                f.glowTexture:ClearAllPoints()
-                f.glowTexture:SetPoint("TOPLEFT", f.glowFrame, "TOPLEFT", -offset, offset)
-                f.glowTexture:SetPoint("BOTTOMRIGHT", f.glowFrame, "BOTTOMRIGHT", offset, -offset)
-            end
-            if f.glowAnts then
-                local antsOffset = math.max(4, math.floor(offset * 0.5))
-                f.glowAnts:ClearAllPoints()
-                f.glowAnts:SetPoint("TOPLEFT", f.glowFrame, "TOPLEFT", -antsOffset, antsOffset)
-                f.glowAnts:SetPoint("BOTTOMRIGHT", f.glowFrame, "BOTTOMRIGHT", antsOffset, -antsOffset)
-            end
+        -- Anchor glow textures to the glowFrame so they can extend outward
+        if f.glowTexture then
+            f.glowTexture:ClearAllPoints()
+            f.glowTexture:SetPoint("TOPLEFT", f.glowFrame, "TOPLEFT", -offset, offset)
+            f.glowTexture:SetPoint("BOTTOMRIGHT", f.glowFrame, "BOTTOMRIGHT", offset, -offset)
+        end
+        if f.glowAnts then
+            local antsOffset = math.max(4, math.floor(offset * 0.5))
+            f.glowAnts:ClearAllPoints()
+            f.glowAnts:SetPoint("TOPLEFT", f.glowFrame, "TOPLEFT", -antsOffset, antsOffset)
+            f.glowAnts:SetPoint("BOTTOMRIGHT", f.glowFrame, "BOTTOMRIGHT", antsOffset, -antsOffset)
+        end
 
-            if f.glowFrame then
-                f.glowFrame:SetAlpha(0)
-                f.glowFrame:Show()
-                if UIFrameFadeIn then
-                    UIFrameFadeIn(f.glowFrame, fadeIn, 0, 1)
-                else
-                    f.glowFrame:SetAlpha(1)
-                end
+        if f.glowFrame then
+            f.glowFrame:SetAlpha(0)
+            f.glowFrame:Show()
+            if UIFrameFadeIn then
+                UIFrameFadeIn(f.glowFrame, fadeIn, 0, 1)
+            else
+                f.glowFrame:SetAlpha(1)
             end
+        end
 
-            if f.glowAnim and f.glowAnim.Play then
-                pcall(function() f.glowAnim:Play() end)
-            end
-        end)
+        if f.glowAnim and f.glowAnim.Play then
+            f.glowAnim:Play()
+        end
 
         C_Timer.After(duration - fadeOut, function()
-            pcall(function()
-                if f.glowAnim and f.glowAnim.Stop then pcall(function() f.glowAnim:Stop() end) end
-                if f.glowFrame then
-                    if UIFrameFadeOut then
-                        UIFrameFadeOut(f.glowFrame, fadeOut, f.glowFrame:GetAlpha() or 1, 0)
-                        C_Timer.After(fadeOut, function()
-                            pcall(function() if f.glowFrame then f.glowFrame:Hide() end end)
-                        end)
-                    else
-                        f.glowFrame:Hide()
-                    end
+            
+            if f.glowAnim and f.glowAnim.Stop then f.glowAnim:Stop() end
+            if f.glowFrame then
+                if UIFrameFadeOut then
+                    UIFrameFadeOut(f.glowFrame, fadeOut, f.glowFrame:GetAlpha() or 1, 0)
+                    C_Timer.After(fadeOut, function()
+                        if f.glowFrame then f.glowFrame:Hide() end
+                    end)
+                else
+                    f.glowFrame:Hide()
                 end
-            end)
+            end
         end)
     end
 end

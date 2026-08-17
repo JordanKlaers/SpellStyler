@@ -21,7 +21,6 @@ local function UpdateCornerDisplay(corner)
     if corner.inputs.heightBox then
         corner.inputs.heightBox:SetText(string.format("%.0f", corner.height or 100))
     end
-    
 end
 
 local function SelectCorner(corner)
@@ -44,11 +43,11 @@ local function CreateCornerFrame(parent, name, point, xOff, yOff, l, r, t, b, ro
     frame:EnableMouse(true)
     frame:SetMovable(true)
     frame:RegisterForDrag("LeftButton")
-    
+
     local tex = frame:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(frame)
     tex:SetTexture(4554359)
-    tex:SetTexCoord(l,r,t,b)
+    tex:SetTexCoord(l, r, t, b)
     local corner = {
         frame = frame,
         texture = tex,
@@ -66,17 +65,17 @@ local function CreateCornerFrame(parent, name, point, xOff, yOff, l, r, t, b, ro
         height = height,
         inputs = {}
     }
-    
+
     frame:SetScript("OnMouseDown", function(self, button)
         if button == "LeftButton" then
             SelectCorner(corner)
         end
     end)
-    
+
     frame:SetScript("OnDragStart", function(self)
         self:StartMoving()
     end)
-    
+
     frame:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
         -- Get the original anchor points
@@ -98,27 +97,29 @@ local function CreateCornerFrame(parent, name, point, xOff, yOff, l, r, t, b, ro
         corner.anchorX = offsetX
         corner.anchorY = offsetY
     end)
-    
+
     return corner
 end
 
 
 
 local function CreateTexCoordTester()
-    if coordFrame then 
+    if coordFrame then
         coordFrame:Show()
-        return 
+        return
     end
-    
+
     wipe(cornerFrames)
-    
+
     coordFrame = CreateFrame("Frame", "ss_TexCoordTester", UIParent, "BackdropTemplate")
     coordFrame:SetSize(100, 400)
     coordFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    coordFrame:SetBackdrop({ 
+    coordFrame:SetBackdrop({
         bgFile = "Interface/Tooltips/UI-Tooltip-Background",
         -- edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 16,
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
         -- insets = { left = 4, right = 4, top = 4, bottom = 4 }
     })
     coordFrame:SetBackdropColor(0, 0, 0, 1)
@@ -127,42 +128,43 @@ local function CreateTexCoordTester()
     coordFrame:RegisterForDrag("LeftButton")
     coordFrame:SetScript("OnDragStart", coordFrame.StartMoving)
     coordFrame:SetScript("OnDragStop", coordFrame.StopMovingOrSizing)
-    
+
     -- Create 8 frames with preset values
     --parent, name, point, xOff, yOff, l, r, t, b, rot, width, height
     -- cornerFrames[1] = CreateCornerFrame(coordFrame, "TopLeftCorner", "TOPLEFT",     -22,    22,     0,      1,      0.185,  0.288,  0,  100,    100)
     -- cornerFrames[2] = CreateCornerFrame(coordFrame, "TopRightCorner", "TOPRIGHT",   68,     28.99,  0,      1,      0.680,  0.780,  0,  100,    100)
     -- cornerFrames[6] = CreateCornerFrame(coordFrame, "Corner1", "BOTTOMRIGHT",       10,     -6,     1,      0,      0.680,  0.780,  0,  100,    100)
     -- cornerFrames[7] = CreateCornerFrame(coordFrame, "Corner2", "BOTTOMLEFT",        -6,     -8,     0.34,   0.483,  0.27,   0.42,   0,  68,     68)
-    cornerFrames[1] = CreateCornerFrame(coordFrame, "LineBottom", "BOTTOM",         0, 0,   0.200, 0.550, 0.300, 0.350,    0,     200, 200)
-    cornerFrames[2] = CreateCornerFrame(coordFrame, "Corner1", "BOTTOMRIGHT",       0, 0,   0.000, 1.000, 0.000, 0.050,    0,     200, 200)
+    cornerFrames[1] = CreateCornerFrame(coordFrame, "LineBottom", "BOTTOM", 0, 0, 0.200, 0.550, 0.300, 0.350, 0, 200, 200)
+    cornerFrames[2] = CreateCornerFrame(coordFrame, "Corner1", "BOTTOMRIGHT", 0, 0, 0.000, 1.000, 0.000, 0.050, 0, 200,
+        200)
     -- cornerFrames[3] = CreateCornerFrame(coordFrame, "Corner2", "BOTTOMLEFT",        -6, -8,     0,  1,   0.2,    0.3,   90,     100,     20)
-    
+
     -- Create input panel on the right side
     local inputPanel = CreateFrame("Frame", nil, coordFrame, "BackdropTemplate")
     inputPanel:SetSize(380, 750)
     inputPanel:SetPoint("BOTTOM", coordFrame, "BOTTOM", 0, 10)
-    -- inputPanel:SetBackdrop({ 
+    -- inputPanel:SetBackdrop({
     --     bgFile = "Interface/Tooltips/UI-Tooltip-Background",
     --     edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
     --     tile = true, tileSize = 8, edgeSize = 8,
     --     insets = { left = 2, right = 2, top = 2, bottom = 2 }
     -- })
     inputPanel:SetBackdropColor(0.1, 0.1, 0.1, 0.5)
-    
+
     local yOffset = -10
     for i, corner in ipairs(cornerFrames) do
         local label = inputPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         label:SetPoint("TOPLEFT", inputPanel, "TOPLEFT", 10, yOffset)
         label:SetText(string.format("%s (Rot:%.0f°)", corner.name, corner.rotation))
         yOffset = yOffset - 20
-        
+
         -- Create 4 input boxes for each corner
         local function CreateInput(labelText, key, xPos, maxVal)
             local lbl = inputPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             lbl:SetPoint("TOPLEFT", inputPanel, "TOPLEFT", xPos, yOffset)
             lbl:SetText(labelText)
-            
+
             local editbox = CreateFrame("EditBox", nil, inputPanel, "InputBoxTemplate")
             editbox:SetSize(50, 20)
             editbox:SetPoint("LEFT", lbl, "RIGHT", 10, 0)
@@ -177,7 +179,8 @@ local function CreateTexCoordTester()
                 end
                 corner[key] = val
                 if key == "anchorX" or key == "anchorY" then
-                    corner.frame:SetPoint(corner.anchorPoint, corner.parent, corner.anchorPoint, corner.anchorX or 0, corner.anchorY or 0)
+                    corner.frame:SetPoint(corner.anchorPoint, corner.parent, corner.anchorPoint, corner.anchorX or 0,
+                        corner.anchorY or 0)
                 end
                 UpdateCornerDisplay(corner)
                 self:ClearFocus()
@@ -185,10 +188,10 @@ local function CreateTexCoordTester()
             editbox:SetScript("OnEscapePressed", function(self)
                 self:ClearFocus()
             end)
-            
+
             corner.inputs[key .. "Box"] = editbox
         end
-        
+
         CreateInput("L:", "left", 10)
         CreateInput("R:", "right", 100)
         CreateInput("T:", "top", 190)
@@ -197,13 +200,13 @@ local function CreateTexCoordTester()
         -- Add Width and Height inputs
         CreateInput("W:", "width", 10, 1000)
         CreateInput("H:", "height", 100, 1000)
-        
+
         CreateInput("Y:", "anchorX", 200, 10000)
         CreateInput("X:", "anchorY", 300, 10000)
 
         yOffset = yOffset - 40
     end
-    
+
     -- Print button
     local printBtn = CreateFrame("Button", nil, inputPanel, "UIPanelButtonTemplate")
     printBtn:SetSize(120, 25)
@@ -216,17 +219,19 @@ local function CreateTexCoordTester()
             local px, py = coordFrame:GetCenter()
             local offsetX = x - px
             local offsetY = y - py
-            print(string.format("%s: Offset(%.1f, %.1f) Size(%.0fx%.0f) TexCoord(L:%.3f R:%.3f T:%.3f B:%.3f) Rotation:%.0f", 
-                corner.name, offsetX, offsetY, corner.width or 100, corner.height or 100, corner.left, corner.right, corner.top, corner.bottom, corner.rotation))
+            print(string.format(
+                "%s: Offset(%.1f, %.1f) Size(%.0fx%.0f) TexCoord(L:%.3f R:%.3f T:%.3f B:%.3f) Rotation:%.0f",
+                corner.name, offsetX, offsetY, corner.width or 100, corner.height or 100, corner.left, corner.right,
+                corner.top, corner.bottom, corner.rotation))
         end
         print("===============================")
     end)
-    
+
     -- Instruction text
     local instructions = coordFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     instructions:SetPoint("TOP", coordFrame, "TOP", 0, -5)
     instructions:SetText("Click a corner to select, then use arrow keys to move")
-    
+
     -- Arrow key handling
     coordFrame:EnableKeyboard(true)
     coordFrame:SetScript("OnKeyDown", function(self, key)
@@ -251,12 +256,12 @@ local function CreateTexCoordTester()
         selectedCorner.anchorX = newX
         selectedCorner.anchorY = newY
     end)
-    
+
     -- Initialize displays
     for _, corner in ipairs(cornerFrames) do
         UpdateCornerDisplay(corner)
     end
-    
+
     SelectCorner(cornerFrames[1])
 end
 
@@ -280,7 +285,7 @@ local function extractData(frame, parentFrameName)
     local frameName = ""
     local name = ""
     if frame.GetName then
-        pcall(function() name = frame:GetName() or tostring(frame) end)
+        name = frame:GetName() or tostring(frame)
         if parentFrameName and parentFrameName ~= "" then
             frameName = parentFrameName .. "." .. name
         else
@@ -305,7 +310,6 @@ local function extractData(frame, parentFrameName)
 
                 if not savedTextures[value] then
                     savedTextures[value] = frameName
-
                 end
                 return frameName
             end
@@ -320,7 +324,7 @@ end
 local function ListTexturesUnderMouse(frame, parentFrameName)
     local frameName, name = extractData(frame, parentFrameName)
     name = name or ""
-    if visitiedFrames[name] then return end 
+    if visitiedFrames[name] then return end
     visitiedFrames[name] = true
     if string.find(name, "UIParent") then
         return
@@ -354,35 +358,34 @@ local function ListTexturesUnderMouse(frame, parentFrameName)
     end
 end
 
+local donk
+local doop
 -- Keybind handler: Shift+Ctrl+L
+
 pcall(function()
-	local texScanFrame = CreateFrame("Frame")
-	texScanFrame:SetPropagateKeyboardInput(true)
-	texScanFrame:RegisterEvent("PLAYER_LOGIN")
-	-- Persistent test frame (created once, reused on each Shift+Ctrl+X press)
-	local donkFrame
-	texScanFrame:SetScript("OnEvent", function()
-		texScanFrame:SetScript("OnKeyDown", function(self, key)
-			-- Shift+Ctrl+S: dump class/spec spells (no General tab, no off-spec) to DevTool
-			if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                SpellStyler.FrameTrackerManager:TeardownSpecFrames()
-                -- Convert tables to sorted arrays for display
-                -- for k in ipairs({1,2,3,4,5}) do
-                --     local durationObj = SpellStyler.FrameTrackerManager._totemSlotHistory[k]
-                --     if durationObj then
-                --         DevTool:AddData({
-                --             hasExpired = durationObj:HasExpired()
-                --         }, "checking expiered for slot " .. k)
-                --     end
-                -- end
-                
-			end
-		end)
-		texScanFrame:SetScript("OnKeyUp", function(self, key) end)
-		texScanFrame:SetScript("OnMouseDown", function() end)
-		texScanFrame:SetScript("OnMouseUp", function() end)
-		texScanFrame:EnableKeyboard(true)
-	end)
+    local texScanFrame = CreateFrame("Frame")
+    texScanFrame:SetPropagateKeyboardInput(true)
+    texScanFrame:RegisterEvent("PLAYER_LOGIN")
+    -- Persistent test frame (created once, reused on each Shift+Ctrl+X press)
+    local donkFrame
+    texScanFrame:SetScript("OnEvent", function()
+        texScanFrame:SetScript("OnKeyDown", function(self, key)
+            -- Shift+Ctrl+X: Test AuraContainer with spell ID filtering
+            if key == "Z" and IsShiftKeyDown() and IsControlKeyDown() then
+                local a,b,c,d,e,f = C_Spell.GetSpellCooldown(107428)
+                DevTool:AddData({
+                    a,b,c,d,e,f
+                }, "something")
+            end
+            if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+                SpellStyler.BuffManager:RefreshAllBuffAuras()
+            end
+        end)
+        texScanFrame:SetScript("OnKeyUp", function(self, key) end)
+        texScanFrame:SetScript("OnMouseDown", function() end)
+        texScanFrame:SetScript("OnMouseUp", function() end)
+        texScanFrame:EnableKeyboard(true)
+    end)
 end)
 
 
@@ -418,7 +421,7 @@ local function CreateTexturePreviewer()
     previewFrame:SetSize(400, 400)
     previewFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     --previewFrame:SetBackdrop({ bgFile = "Interface/Tooltips/UI-Tooltip-Background", edgeFile = "Interface/Tooltips/UI-Tooltip-Border", tile = true, tileSize = 16, edgeSize = 16, insets = { left = 4, right = 4, top = 4, bottom = 4 } })
-    previewFrame:SetBackdropColor(0,0,0,0)
+    previewFrame:SetBackdropColor(0, 0, 0, 0)
     previewFrame:EnableMouse(true)
     previewFrame:SetMovable(true)
     previewFrame:RegisterForDrag("LeftButton")
@@ -427,7 +430,7 @@ local function CreateTexturePreviewer()
 
     previewFrame.texture = previewFrame:CreateTexture(nil, "ARTWORK")
     previewFrame.texture:SetAllPoints(previewFrame)
-    previewFrame.texture:SetColorTexture(1,1,1,1)
+    previewFrame.texture:SetColorTexture(1, 1, 1, 1)
 
     upButton = CreateFrame("Button", nil, previewFrame, "UIPanelButtonTemplate")
     upButton:SetSize(24, 24)
@@ -477,4 +480,3 @@ end
 
 --4554359 corner and edges
 --4554383 - background
-

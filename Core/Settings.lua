@@ -79,6 +79,22 @@ local function ShowBorderDemo()
             if SpellStyler.IconSettingsRenderer and SpellStyler.IconSettingsRenderer.DisableDraggingForAllFrames then
                 SpellStyler.IconSettingsRenderer:DisableDraggingForAllFrames()
             end
+            -- Disable buff placeholder dragging and hide placeholders
+            if SpellStyler.BuffManager and SpellStyler.BuffManager.EnablePlaceholderDragging then
+                SpellStyler.BuffManager:EnablePlaceholderDragging(false)
+            end
+            -- Refresh all buff auras when settings menu closes
+            if SpellStyler.BuffManager and SpellStyler.BuffManager.RefreshAllBuffAuras then
+                SpellStyler.BuffManager:RefreshAllBuffAuras()
+            end
+        end)
+        
+        -- Enable dragging when menu is shown
+        SpellStyler.settingsMenu:SetScript("OnShow", function()
+            -- Enable buff placeholder dragging and show placeholders
+            if SpellStyler.BuffManager and SpellStyler.BuffManager.EnablePlaceholderDragging then
+                SpellStyler.BuffManager:EnablePlaceholderDragging(true)
+            end
         end)
         
         -- Portrait frame: above the background backdrop, below the border frames.
@@ -143,9 +159,8 @@ local function ShowBorderDemo()
         -- Allow the frame to receive keyboard events but let most keys propagate
         -- to the game (so WASD and other movement keys still work).
         SpellStyler.settingsMenu:EnableKeyboard(true)
-        pcall(function() 
-            SpellStyler.settingsMenu:SetPropagateKeyboardInput(true)
-        end)
+        
+        SpellStyler.settingsMenu:SetPropagateKeyboardInput(true)
 
         -- Create an inset frame the settings
         insetSettingsContainer = CreateFrame("Frame", nil, SpellStyler.settingsMenu, "BackdropTemplate")
@@ -167,13 +182,12 @@ local function ShowBorderDemo()
         cdmToggleBtn:SetText("Toggle CDM")
         cdmToggleBtn:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
         cdmToggleBtn:SetScript("OnClick", function()
-            pcall(function()
-                if CooldownViewerSettings:IsShown() then
-                    HideUIPanel(CooldownViewerSettings)
-                else
-                    ShowUIPanel(CooldownViewerSettings) 
-                end
-            end)
+            
+            if _G["CooldownViewerSettings"]:IsShown() then
+                HideUIPanel(_G["CooldownViewerSettings"])
+            else
+                ShowUIPanel(_G["CooldownViewerSettings"]) 
+            end
         end)
 
 

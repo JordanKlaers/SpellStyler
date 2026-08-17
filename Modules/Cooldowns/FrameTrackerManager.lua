@@ -10,7 +10,7 @@ local FRAME_PREFIX = "TweaksUI_CustomFrameTracker_"
 ---@field isSpellWithCharges boolean    true if the spell has more than one max charge
 ---@field isDurationActive boolean      true while a real cooldown is running
 ---@field mockCooldownActive boolean    true while a mock cooldown preview is running (settings UI)
----@field currentAuraInstanceID number  Instance ID of the currently tracked aura (buffs tracker type)
+
 ---@field customTexture string|nil         Custom texture of the icon
 ---@field isVariantFrame boolean|nil    Whether this is a variant frame
 
@@ -23,14 +23,10 @@ local FRAME_PREFIX = "TweaksUI_CustomFrameTracker_"
 --- @field forceUpdate? boolean     Clear cooldown/bar before applying
 
 
-FrameTrackerManager.cooldownManagerFrames = {
-    buffs = {}
-}
 
 FrameTrackerManager.cooldownIDToBaseSpellID = {}
 
 FrameTrackerManager.SpellStyler_frames = {
-    buffs = {},
     spells = {},
     items = {}
 }
@@ -97,6 +93,49 @@ local function GetPlayerState()
     return state
 end
 
+local baseToOverride = {}
+local overrideToBase = {}
+
+
+function FrameTrackerManager:SetActiveSpellID(spellID, frame, source)
+    --[[
+        Only when a spell is able to match its baseSpellID to a spellStyler frame, will it then attempt to update the active spellID
+    ]]
+    local baseSpellID = C_Spell.GetBaseSpell(spellID)
+    local overrideSpellID = C_Spell.GetOverrideSpell(baseSpellID)
+    if not frame then
+        for trackerType, baseSpell in pairs(FrameTrackerManager.SpellStyler_frames) do
+            if baseSpell == baseSpellID then
+                frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpell]
+            end
+        end
+        
+    end
+    if frame then
+        if overrideSpellID ~= frame.meta.activeSpellID then
+            local previousActiveSpellInfo = C_Spell.GetSpellInfo(frame.meta.activeSpellID)
+            --The spell that was cast, is not equal to the active spell (likely due to changing via its cast)
+            --Save the override spell onto the frame to be able to check future casts
+            FrameTrackerManager:SetMetaOnBaseAndVariant(frame, "activeSpellID", overrideSpellID)
+            
+            --[[
+                cache the spellID associations because some spells can breka their link between their override and base (like void shield on disc priest). This association later helps make the connection when needed.
+
+                baseToOverride is a 1 to many association
+                overrideToBase is a 1 to 1 association
+            ]]
+            baseToOverride[baseSpellID] = baseToOverride[baseSpellID] or {}
+            baseToOverride[baseSpellID][overrideSpellID] = true
+            if overrideSpellID ~= baseSpellID then
+                overrideToBase[overrideSpellID] = baseSpellID
+            end
+
+            local spellOverrideInfo = C_Spell.GetSpellInfo(overrideSpellID)
+            -- return
+        end
+    end
+end
+
 function FrameTrackerManager:SetMetaOnBaseAndVariant(frame, key, value)
     frame.meta[key] = value
     local otherFrame = (frame.variantFrame or frame.baseFrame)
@@ -127,80 +166,6 @@ function FrameTrackerManager:UpdateCollapsibleContainers(frame)
     Containers:UpdateContainerFrameVisibility(frame)
 end
 
-function FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames(trackerType)
-    local viewer = SpellStyler.Containers:GetCooldownManagerViewer(trackerType)
-    if not viewer or not viewer.itemFramePool then return end
-
-
-    
-    FrameTrackerManager.cooldownManagerFrames[trackerType] = {}
-    wipe(FrameTrackerManager.cooldownIDToBaseSpellID)
-
-    local count = viewer.itemFramePool:GetNumActive()
-    FrameTrackerManager.totalFrames = count
-    -- ── Step 2: Enumerate only the currently active pool frames ──
-    for cdmFrame in viewer.itemFramePool:EnumerateActive() do
-        local spellID = nil
-        pcall(function() spellID = cdmFrame:GetSpellID() end)
-        cdmFrame.SpellStyler_spellID = spellID
-        -- Grab the stable slot identifier while GetSpellID() still returns the
-        -- base value (before any buff activates and mutates it).
-        local cooldownID = nil
-        pcall(function() cooldownID = cdmFrame:GetCooldownID() end)
-        if spellID and not issecretvalue(spellID) then
-            -- Bake the stable slot ID onto the frame and into the lookup table so runtime
-            -- hook callbacks can resolve the correct baseSpellID without calling GetSpellID().
-            if cooldownID then
-                FrameTrackerManager.cooldownIDToBaseSpellID[cooldownID] = spellID
-            end
-            -- Keep our own lookup table populated for HookAllBuffCooldownFrames.
-            FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] = cdmFrame
-
-
-            -- Resolve texture from the override spell to get the correct initial icon
-            -- For spells that change based on stance/form, we need the override spell's icon
-            local icon = cdmFrame.Icon or cdmFrame.icon
-            local overrideSpellID = C_Spell.GetOverrideSpell(spellID)
-            local spellDataForIcon = C_Spell.GetSpellInfo(overrideSpellID) or C_Spell.GetSpellInfo(spellID) or {}
-            local texture = (icon and icon.GetTexture and icon:GetTexture()) or spellDataForIcon.iconID
-
-            
-
-            -- ── Step 3: State entry ──
-            if State:CheckIsAlreadyTracker(spellID, trackerType) then
-                -- Re-enable the existing entry and refresh the default texture.
-                -- SetTrackerValueConfigProperty guards on frame existence, so these
-                -- calls are safe even though no custom frame exists yet.
-                State:SetTrackerValueConfigProperty(spellID, trackerType, 'isEnabled', true)
-                State:SetTrackerValueConfigProperty(spellID, trackerType, 'defaultIconTexturePath', texture)
-            else
-                local spellData = C_Spell.GetSpellInfo(spellID) or {}
-                State:AddTrackerValue({
-                    baseSpellID = spellID,
-                    overrideSpellID = overrideSpellID,
-                    defaultIconTexturePath = texture,
-                    name = spellData.name,
-                    trackerType = trackerType
-                })
-            end
-
-            -- ── Step 4: Queue the custom SpellStyler frame for creation ──
-            local trackerConfig = State:GetSpecificTrackerValue(spellID, trackerType)
-            if trackerConfig then
-                -- Wipe devNotes before creating frame (fresh start for error tracking)
-                State:SetTrackerValueConfigProperty(spellID, trackerType, "devNotes", {})
-                FrameTrackerManager:CreateCompleteFrame(spellID, trackerConfig, trackerType)
-            end
-        end
-    end
-
-    -- delete any of the frames that are no longer in the cooldown manager
-    for spellID, spellStylerBuffFrame in pairs(FrameTrackerManager.SpellStyler_frames[trackerType]) do
-        if not FrameTrackerManager.cooldownManagerFrames[trackerType][spellID] then
-            FrameTrackerManager:DestroyTrackerFrame(spellID, trackerType)
-        end
-    end
-end
 
 
 function FrameTrackerManager:CreateNonBuffTrackerFrames()
@@ -1027,7 +992,7 @@ end
     {
         frameName = string,          -- Frame name for CreateFrame
         baseSpellID = number,         -- Base spell ID for registry and status bars
-        trackerType = string,         -- Type: "spells", "buffs"
+        trackerType = string,         -- Type: "spells", "items"
         isVariantFrame = boolean,     -- Whether this is a variant frame
         trackerConfig = table,        -- Complete configuration (contains all settings)
         frame = table|nil            -- Frame reference (nil until Base creates it)
@@ -1124,7 +1089,7 @@ function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
         if pos.relativeToFrame then
             if type(pos.relativeToFrame) == "number" then
                 -- It's a baseSpellID, look it up
-                for _, tType in ipairs({"buffs", "spells", "items"}) do
+                for _, tType in ipairs({ "spells", "items"}) do
                     local targetFrame = FrameTrackerManager.SpellStyler_frames[tType] 
                                       and FrameTrackerManager.SpellStyler_frames[tType][pos.relativeToFrame]
                     if targetFrame then
@@ -1241,7 +1206,6 @@ FrameTrackerManager.FrameBuilder = {
             spellName = spellInfo.name,
             baseSpellID = data.baseSpellID,
             trackerType = data.trackerType,
-            buffStatus = 'absent',
             activeSpellID = data.trackerConfig.overrideSpellID or data.baseSpellID,
             isSpellWithCharges = spellChargesInfo and spellChargesInfo.maxCharges > 1,
             isDurationActive = false,
@@ -1286,6 +1250,7 @@ FrameTrackerManager.FrameBuilder = {
 
         data.frame.icon:SetAllPoints(data.frame.iconContainer)
         local zoom = data.trackerConfig.iconSettings.zoom and (data.trackerConfig.iconSettings.zoom / 100) or 0
+        
         data.frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
         
         -- Get icon texture
@@ -1375,9 +1340,7 @@ FrameTrackerManager.FrameBuilder = {
                 FrameTrackerManager:SetMetaOnBaseAndVariant(data.frame, 'mockCooldownActive', false)
                 -- Update the mock cooldown button text if it exists and is still valid
                 if data.frame._spellStyler_mockCooldownBtn then
-                    pcall(function()
-                        data.frame._spellStyler_mockCooldownBtn:SetText("Mock Cooldown")
-                    end)
+                    data.frame._spellStyler_mockCooldownBtn:SetText("Mock Cooldown")
                 end
             end
             C_Timer.After(0, function()
@@ -1387,7 +1350,7 @@ FrameTrackerManager.FrameBuilder = {
             FrameTrackerManager:DriveFrameUpdate(
                 data.frame,
                 {
-                    resolveDuration = false,
+                    resolveDuration = true,
                     syncChargeText = true
                 },
                 nil,
@@ -1524,35 +1487,34 @@ FrameTrackerManager.FrameBuilder = {
 FrameTrackerManager.FrameUpdater = {
     Base = function(data)
         -- Apply frame-level properties (opacity, strata, position)
-        local success, error = pcall(function()
-            local shouldOverrideVisibility = State:GetShouldOverrideVisibility()
-            if shouldOverrideVisibility then 
-                data.frame:Show()
-            end
-            data.frame:SetScale(data.scale or 1)
-            data.frame:SetAlpha(data.opacity)
-            data.frame:SetFrameStrata(data.frameStrata.level)
-            data.frame:SetFrameLevel(data.frameStrata.value)
+        
+        local shouldOverrideVisibility = State:GetShouldOverrideVisibility()
+        if shouldOverrideVisibility then 
+            data.frame:Show()
+        end
+        data.frame:SetScale(data.scale or 1)
+        data.frame:SetAlpha(data.opacity)
+        data.frame:SetFrameStrata(data.frameStrata.level)
+        data.frame:SetFrameLevel(data.frameStrata.value)
 
-            data.frame.meta.includeTotemDuration = data.trackerConfig.statusBar.includeTotemDuration
+        data.frame.meta.includeTotemDuration = data.trackerConfig.statusBar.includeTotemDuration
 
-            local positionData = {
-                position = {
-                    anchorPoint = data.trackerConfig.position.anchorPoint,
-                    relativeToFrame = data.trackerConfig.position.relativeToFrame,
-                    relativeAnchorPoint = data.trackerConfig.position.relativeAnchorPoint,
-                    x = data.position.x,
-                    y = data.position.y
-                }
+        local positionData = {
+            position = {
+                anchorPoint = data.trackerConfig.position.anchorPoint,
+                relativeToFrame = data.trackerConfig.position.relativeToFrame,
+                relativeAnchorPoint = data.trackerConfig.position.relativeAnchorPoint,
+                x = data.position.x,
+                y = data.position.y
             }
-            FrameTrackerManager:SetFramePosition(data.frame, positionData)
-            local isDraggingDisabled = State:GetTrackerValueConfigProperty(data.frame.meta.baseSpellID, data.frame.meta.trackerType, "iconSettings.disableDragging")
-            if isDraggingDisabled then
-                SpellStyler.IconSettingsRenderer:DisableDraggingForSpecificFrame(data.frame)
-            elseif not isDraggingDisabled and SpellStyler.settingsMenu:IsShown() then
-                SpellStyler.IconSettingsRenderer:EnableDraggingForSpecificFrame(data.frame)
-            end
-        end)
+        }
+        FrameTrackerManager:SetFramePosition(data.frame, positionData)
+        local isDraggingDisabled = State:GetTrackerValueConfigProperty(data.frame.meta.baseSpellID, data.frame.meta.trackerType, "iconSettings.disableDragging")
+        if isDraggingDisabled then
+            SpellStyler.IconSettingsRenderer:DisableDraggingForSpecificFrame(data.frame)
+        elseif not isDraggingDisabled and SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
+            SpellStyler.IconSettingsRenderer:EnableDraggingForSpecificFrame(data.frame)
+        end
     end,
     Icon = function(data)
         local shouldOverrideVisibility = State:GetShouldOverrideVisibility()
@@ -1565,7 +1527,6 @@ FrameTrackerManager.FrameUpdater = {
         -- Apply icon texture and zoom from pre-computed values
         data.frame.icon:SetTexture(data.icon.texture)
         data.frame.icon:SetTexCoord(0 + data.icon.zoom, 1 - data.icon.zoom, 0 + data.icon.zoom, 1 - data.icon.zoom)
-
         -- Apply icon color (RGB on icon, alpha on container)
         local color = data.icon.color
         data.frame.icon:SetVertexColor(color.r or 1, color.g or 1, color.b or 1)
@@ -1581,47 +1542,45 @@ FrameTrackerManager.FrameUpdater = {
     Border = function(data)
         -- Update border frame if it exists
         if data.frame.borderFrame then
-            local suc, err = pcall(function()
-                -- Set frame level to be 1 above the iconContainer
-                data.frame.borderFrame:SetFrameLevel(data.frame:GetFrameLevel() + 2)
-                
-                -- Apply border size and color from data (pre-computed or from config)
-                local borderSize = (data.border and data.border.size) or data.trackerConfig.iconSettings.borderSize
-                local borderColor = (data.border and data.border.color) or data.trackerConfig.iconSettings.borderColor
-                
-                local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
-                local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
-                -- Size border frame: if borderSize > 0, extend outside icon; otherwise match icon size
-                
-                if data.frame.previousProperties.borderSize ~= borderSize
-                    or data.frame.previousProperties.borderColor.r ~= borderColor.r
-                    or data.frame.previousProperties.borderColor.g ~= borderColor.g
-                    or data.frame.previousProperties.borderColor.b ~= borderColor.b
-                    or data.frame.previousProperties.borderColor.a ~= borderColor.a
-                then
-                    if borderSize > 0 then
-                        data.frame.borderFrame:SetSize(iconW + borderSize * 2, iconH + borderSize * 2)
-                    else
-                        data.frame.borderFrame:SetSize(iconW, iconH)
-                        borderSize = borderSize * -1
-                    end
-                    data.frame.borderFrame.backdropInfo.edgeSize = borderSize
-                    
-                    data.frame.borderFrame:SetBackdrop({
-                        edgeFile = "Interface\\Buttons\\WHITE8x8",
-                        edgeSize = borderSize
-                    })
-                    data.frame.borderFrame:SetBackdropColor(0,0,0,0)
-                    data.frame.borderFrame:SetBackdropBorderColor(
-                        borderColor.r,
-                        borderColor.g,
-                        borderColor.b,
-                        borderSize ~= 0 and borderColor.a or 0
-                    )
-                    FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(data.frame, 'borderColor', borderColor)
-                    FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(data.frame, 'borderSize', borderSize)
+            -- Set frame level to be 1 above the iconContainer
+            data.frame.borderFrame:SetFrameLevel(data.frame:GetFrameLevel() + 2)
+            
+            -- Apply border size and color from data (pre-computed or from config)
+            local borderSize = (data.border and data.border.size) or data.trackerConfig.iconSettings.borderSize
+            local borderColor = (data.border and data.border.color) or data.trackerConfig.iconSettings.borderColor
+            
+            local iconW = data.trackerConfig.iconSettings.width or data.trackerConfig.iconSettings.size or 48
+            local iconH = data.trackerConfig.iconSettings.height or data.trackerConfig.iconSettings.size or 48
+            -- Size border frame: if borderSize > 0, extend outside icon; otherwise match icon size
+            
+            if data.frame.previousProperties.borderSize ~= borderSize
+                or data.frame.previousProperties.borderColor.r ~= borderColor.r
+                or data.frame.previousProperties.borderColor.g ~= borderColor.g
+                or data.frame.previousProperties.borderColor.b ~= borderColor.b
+                or data.frame.previousProperties.borderColor.a ~= borderColor.a
+            then
+                if borderSize > 0 then
+                    data.frame.borderFrame:SetSize(iconW + borderSize * 2, iconH + borderSize * 2)
+                else
+                    data.frame.borderFrame:SetSize(iconW, iconH)
+                    borderSize = borderSize * -1
                 end
-            end)
+                data.frame.borderFrame.backdropInfo.edgeSize = borderSize
+                
+                data.frame.borderFrame:SetBackdrop({
+                    edgeFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeSize = borderSize
+                })
+                data.frame.borderFrame:SetBackdropColor(0,0,0,0)
+                data.frame.borderFrame:SetBackdropBorderColor(
+                    borderColor.r,
+                    borderColor.g,
+                    borderColor.b,
+                    borderSize ~= 0 and borderColor.a or 0
+                )
+                FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(data.frame, 'borderColor', borderColor)
+                FrameTrackerManager:SetPreviousPropertiesOnBaseAndVariant(data.frame, 'borderSize', borderSize)
+            end
         end
     end,
     Alerts = function(data)
@@ -1646,23 +1605,17 @@ FrameTrackerManager.FrameUpdater = {
     Cooldown = function(data)
         -- Apply icon desaturation setting
         if data.frame.icon and data.cooldownText.desaturated ~= nil then
-            pcall(function()
-                data.frame.icon:SetDesaturated(data.cooldownText.desaturated)
-            end)
+            data.frame.icon:SetDesaturated(data.cooldownText.desaturated)
         end
         
         -- Apply cooldown swipe and bling settings
         if data.cooldownText.hideDefaultSweep ~= nil then
-            pcall(function()
-                data.frame.cooldown:SetDrawSwipe(not data.cooldownText.hideDefaultSweep)
-            end)
+            data.frame.cooldown:SetDrawSwipe(not data.cooldownText.hideDefaultSweep)
         end
         
         
         if data.cooldownText.hideCooldownBling == true then
-            pcall(function()
-                data.frame.cooldown:SetEdgeScale(0)
-            end)
+            data.frame.cooldown:SetEdgeScale(0)
         end
         
         -- Apply cooldown text positioning and font
@@ -1682,19 +1635,17 @@ FrameTrackerManager.FrameUpdater = {
             end
             
             if cdText then
-                local success, error  = pcall(function()
-                    -- Apply font size from pre-computed value
-                    local fontPath, _, fontFlags = cdText:GetFont()
-                    if data.cooldownText.fontSize then
-                        local resolvedFontPath = State:ResolveFontPath(data.cooldownText.font, fontPath)
-                        local resolvedFontFlags = State:ResolveFontFlags(data.cooldownText.fontFlags, fontFlags)
-                        cdText:SetFont(resolvedFontPath, data.cooldownText.fontSize, resolvedFontFlags or "OUTLINE")
-                    end
-                    
-                    -- Apply position from pre-computed values
-                    cdText:ClearAllPoints()
-                    cdText:SetPoint("CENTER", data.frame.cooldown, "CENTER", data.cooldownText.x, data.cooldownText.y)
-                end)
+                -- Apply font size from pre-computed value
+                local fontPath, _, fontFlags = cdText:GetFont()
+                if data.cooldownText.fontSize then
+                    local resolvedFontPath = State:ResolveFontPath(data.cooldownText.font, fontPath)
+                    local resolvedFontFlags = State:ResolveFontFlags(data.cooldownText.fontFlags, fontFlags)
+                    cdText:SetFont(resolvedFontPath, data.cooldownText.fontSize, resolvedFontFlags or "OUTLINE")
+                end
+                
+                -- Apply position from pre-computed values
+                cdText:ClearAllPoints()
+                cdText:SetPoint("CENTER", data.frame.cooldown, "CENTER", data.cooldownText.x, data.cooldownText.y)
             end
         end
         
@@ -1727,40 +1678,38 @@ FrameTrackerManager.FrameUpdater = {
     CustomLabel = function(data)
         if (not (data.frame.customLabel and data.customLabel)) or data.customLabel.display == false then return end
         
-        pcall(function()
-            -- Set visibility and text from pre-computed values
-            if data.customLabel.textOverride and data.customLabel.textOverride ~= "" then
-                -- Override forces show regardless of display setting
-                data.frame.customLabel:SetText(data.customLabel.text)
-                data.frame.customLabel:Show()
-            elseif data.customLabel.display and data.customLabel.text and data.customLabel.text ~= "" then
-                data.frame.customLabel:SetText(data.customLabel.text)
-                data.frame.customLabel:Show()
-            else
-                data.frame.customLabel:Hide()
-            end
-            
-            -- Apply font size from pre-computed value
-            if data.customLabel.fontSize then
-                local fontPath = State:ResolveFontPath(data.customLabel.font, nil)
-                local fontFlags = State:ResolveFontFlags(data.customLabel.fontFlags, nil)
-                data.frame.customLabel:SetFont(fontPath, data.customLabel.fontSize, fontFlags or "OUTLINE")
-            end
-            
-            -- Apply color from pre-computed value
-            if data.customLabel.color then
-                data.frame.customLabel:SetTextColor(
-                    data.customLabel.color.r or 1,
-                    data.customLabel.color.g or 1,
-                    data.customLabel.color.b or 1,
-                    data.customLabel.color.a or 1
-                )
-            end
-            
-            -- Apply position from pre-computed values
-            data.frame.customLabel:ClearAllPoints()
-            data.frame.customLabel:SetPoint("CENTER", data.frame, "CENTER", data.customLabel.x, data.customLabel.y)
-        end)
+        -- Set visibility and text from pre-computed values
+        if data.customLabel.textOverride and data.customLabel.textOverride ~= "" then
+            -- Override forces show regardless of display setting
+            data.frame.customLabel:SetText(data.customLabel.text)
+            data.frame.customLabel:Show()
+        elseif data.customLabel.display and data.customLabel.text and data.customLabel.text ~= "" then
+            data.frame.customLabel:SetText(data.customLabel.text)
+            data.frame.customLabel:Show()
+        else
+            data.frame.customLabel:Hide()
+        end
+        
+        -- Apply font size from pre-computed value
+        if data.customLabel.fontSize then
+            local fontPath = State:ResolveFontPath(data.customLabel.font, nil)
+            local fontFlags = State:ResolveFontFlags(data.customLabel.fontFlags, nil)
+            data.frame.customLabel:SetFont(fontPath, data.customLabel.fontSize, fontFlags or "OUTLINE")
+        end
+        
+        -- Apply color from pre-computed value
+        if data.customLabel.color then
+            data.frame.customLabel:SetTextColor(
+                data.customLabel.color.r or 1,
+                data.customLabel.color.g or 1,
+                data.customLabel.color.b or 1,
+                data.customLabel.color.a or 1
+            )
+        end
+        
+        -- Apply position from pre-computed values
+        data.frame.customLabel:ClearAllPoints()
+        data.frame.customLabel:SetPoint("CENTER", data.frame, "CENTER", data.customLabel.x, data.customLabel.y)
     end,
     
     StatusBar = function(data)
@@ -1780,52 +1729,48 @@ FrameTrackerManager.FrameUpdater = {
             data.frame.statusBar.borderEdgeBottom,
             data.frame.statusBar.borderEdgeLeft
         }) do
-            pcall(function()
-                if data.statusBar == nil or data.statusBar.displayState == 'never' then component:Hide()
-                else component:Show()
-                end
-            end)
+            if data.statusBar == nil or data.statusBar.displayState == 'never' then component:Hide()
+            else component:Show()
+            end
         end
 
         if not (data.frame.statusBar and data.statusBar and data.statusBar.displayState ~= 'never') then return end
         
-        pcall(function()
-            -- Apply all properties from pre-computed values
-            data.frame.statusBar:SetSize(data.statusBar.width, data.statusBar.height)
-            data.frame.statusBar:SetScale(data.statusBar.scale)
-            data.frame.statusBar.bgTexture:SetScale(data.statusBar.scale)
-            
-            data.frame.statusBar:ClearAllPoints()
-            data.frame.statusBar:SetPoint(
-                data.statusBar.anchorSelf,
-                data.frame,
-                data.statusBar.anchorParent,
-                data.statusBar.x,
-                data.statusBar.y
-            )
-            
-            if data.statusBar.texture then
-                data.frame.statusBar:SetStatusBarTexture(data.statusBar.texture)
-                local statusBarTexture = data.frame.statusBar:GetStatusBarTexture()
-                if statusBarTexture then
-                    statusBarTexture:SetDrawLayer("ARTWORK", 0)
-                end
-                if data.frame.statusBar.fullCoverTexture then
-                    data.frame.statusBar.fullCoverTexture:SetTexture(data.statusBar.texture)
-                end
-                if data.frame.statusBar.bgTexture then
-                    data.frame.statusBar.bgTexture:SetTexture(data.statusBar.texture)
-                end
+        -- Apply all properties from pre-computed values
+        data.frame.statusBar:SetSize(data.statusBar.width, data.statusBar.height)
+        data.frame.statusBar:SetScale(data.statusBar.scale)
+        data.frame.statusBar.bgTexture:SetScale(data.statusBar.scale)
+        
+        data.frame.statusBar:ClearAllPoints()
+        data.frame.statusBar:SetPoint(
+            data.statusBar.anchorSelf,
+            data.frame,
+            data.statusBar.anchorParent,
+            data.statusBar.x,
+            data.statusBar.y
+        )
+        
+        if data.statusBar.texture then
+            data.frame.statusBar:SetStatusBarTexture(data.statusBar.texture)
+            local statusBarTexture = data.frame.statusBar:GetStatusBarTexture()
+            if statusBarTexture then
+                statusBarTexture:SetDrawLayer("ARTWORK", 0)
             end
-            
-            data.frame.statusBar:SetOrientation(data.statusBar.orientation)
-            data.frame.statusBar:SetReverseFill(data.statusBar.reverseFill)
-            data.frame.statusBar:SetFillStyle(data.statusBar.fillStyle)
-            
-            if data.statusBar.rotation then
-                data.frame.statusBar:SetRotation(math.rad(data.statusBar.rotation))
+            if data.frame.statusBar.fullCoverTexture then
+                data.frame.statusBar.fullCoverTexture:SetTexture(data.statusBar.texture)
             end
-        end)
+            if data.frame.statusBar.bgTexture then
+                data.frame.statusBar.bgTexture:SetTexture(data.statusBar.texture)
+            end
+        end
+        
+        data.frame.statusBar:SetOrientation(data.statusBar.orientation)
+        data.frame.statusBar:SetReverseFill(data.statusBar.reverseFill)
+        data.frame.statusBar:SetFillStyle(data.statusBar.fillStyle)
+        
+        if data.statusBar.rotation then
+            data.frame.statusBar:GetStatusBarTexture():SetRotation(math.rad(data.statusBar.rotation))
+        end
         
         -- Apply border/background visibility from pre-computed values
         if data.statusBar.onlyBar or data.statusBar.displayState == 'never' then
@@ -1893,104 +1838,101 @@ FrameTrackerManager.FrameUpdater = {
             data.frame.visualChargeBar.borderEdgeBottom,
             data.frame.visualChargeBar.borderEdgeLeft
         }) do
-            local s,e = pcall(function()
-                if data.visualChargeBar.displayState == 'never' then
-                    component:Hide()
-                else component:Show()
-                end
-            end)
+            if data.visualChargeBar.displayState == 'never' then
+                component:Hide()
+            else
+                component:Show()
+            end
         end
         
         if data.visualChargeBar.displayState == 'never' then
             return
         end
         
-        pcall(function()
-                -- Apply all properties from pre-computed values
-                data.frame.visualChargeBar:SetStatusBarColor(
-                    data.visualChargeBar.color.r or 0.2,
-                    data.visualChargeBar.color.g or 0.8,
-                    data.visualChargeBar.color.b or 1,
-                    1
-                )
-                
-                data.frame.visualChargeBar:SetSize(data.visualChargeBar.width, data.visualChargeBar.height)
-                data.frame.visualChargeBar:SetScale(data.visualChargeBar.scale)
-                data.frame.visualChargeBar.bgTexture:SetScale(data.visualChargeBar.scale)
-                
-                data.frame.visualChargeBar:ClearAllPoints()
-                data.frame.visualChargeBar:SetPoint(
-                    data.visualChargeBar.anchorSelf,
-                    data.frame,
-                    data.visualChargeBar.anchorParent,
-                    data.visualChargeBar.x,
-                    data.visualChargeBar.y
-                )
-                
-                if data.visualChargeBar.texture then
-                    data.frame.visualChargeBar:SetStatusBarTexture(data.visualChargeBar.texture)
-                    local statusBarTexture = data.frame.visualChargeBar:GetStatusBarTexture()
-                    if statusBarTexture then
-                        statusBarTexture:SetDrawLayer("ARTWORK", 0)
-                    end
-                    if data.frame.visualChargeBar.fullCoverTexture then
-                        data.frame.visualChargeBar.fullCoverTexture:SetTexture(data.visualChargeBar.texture)
-                    end
-                    if data.frame.visualChargeBar.bgTexture then
-                        data.frame.visualChargeBar.bgTexture:SetTexture(data.visualChargeBar.texture)
-                    end
-                end
-                
-                data.frame.visualChargeBar:SetOrientation(data.visualChargeBar.orientation)
-                data.frame.visualChargeBar:SetReverseFill(data.visualChargeBar.reverseFill)
-                data.frame.visualChargeBar:SetFillStyle(data.visualChargeBar.fillStyle)
-                
-                if data.visualChargeBar.rotation then
-                    data.frame.visualChargeBar:SetRotation(data.visualChargeBar.rotation)
-                end
-                
-                data.frame.visualChargeBar:SetMinMaxValues(data.visualChargeBar.minValue, data.visualChargeBar.maxValue)
-            end)
-            
-            -- Apply border/background visibility from pre-computed values
-            if data.visualChargeBar.onlyBar or data.visualChargeBar.displayState == 'never' then
-                data.frame.visualChargeBar.borderCornerTL:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderCornerTR:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderCornerBR:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderCornerBL:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderEdgeTop:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderEdgeRight:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderEdgeBottom:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.borderEdgeLeft:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.bgTexture:SetVertexColor(0,0,0,0)
-                data.frame.visualChargeBar.glowTexture:SetVertexColor(0,0,0,0)
-            elseif data.visualChargeBar.displayState == 'always' then
-                local bc = data.visualChargeBar.borderColor
-                local bgc = data.visualChargeBar.backgroundColor
-                local gc = data.visualChargeBar.glowColor
-                
-                data.frame.visualChargeBar.borderCornerTL:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderCornerTR:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderCornerBR:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderCornerBL:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderEdgeTop:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderEdgeRight:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderEdgeBottom:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.borderEdgeLeft:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
-                data.frame.visualChargeBar.bgTexture:SetVertexColor(bgc.r, bgc.g, bgc.b, bgc.a)
-                data.frame.visualChargeBar.glowTexture:SetVertexColor(gc.r, gc.g, gc.b, gc.a)
+        -- Apply all properties from pre-computed values
+        data.frame.visualChargeBar:SetStatusBarColor(
+            data.visualChargeBar.color.r or 0.2,
+            data.visualChargeBar.color.g or 0.8,
+            data.visualChargeBar.color.b or 1,
+            1
+        )
+        
+        data.frame.visualChargeBar:SetSize(data.visualChargeBar.width, data.visualChargeBar.height)
+        data.frame.visualChargeBar:SetScale(data.visualChargeBar.scale)
+        data.frame.visualChargeBar.bgTexture:SetScale(data.visualChargeBar.scale)
+        
+        data.frame.visualChargeBar:ClearAllPoints()
+        data.frame.visualChargeBar:SetPoint(
+            data.visualChargeBar.anchorSelf,
+            data.frame,
+            data.visualChargeBar.anchorParent,
+            data.visualChargeBar.x,
+            data.visualChargeBar.y
+        )
+        
+        if data.visualChargeBar.texture then
+            data.frame.visualChargeBar:SetStatusBarTexture(data.visualChargeBar.texture)
+            local statusBarTexture = data.frame.visualChargeBar:GetStatusBarTexture()
+            if statusBarTexture then
+                statusBarTexture:SetDrawLayer("ARTWORK", 0)
             end
+            if data.frame.visualChargeBar.fullCoverTexture then
+                data.frame.visualChargeBar.fullCoverTexture:SetTexture(data.visualChargeBar.texture)
+            end
+            if data.frame.visualChargeBar.bgTexture then
+                data.frame.visualChargeBar.bgTexture:SetTexture(data.visualChargeBar.texture)
+            end
+        end
+        
+        data.frame.visualChargeBar:SetOrientation(data.visualChargeBar.orientation)
+        data.frame.visualChargeBar:SetReverseFill(data.visualChargeBar.reverseFill)
+        data.frame.visualChargeBar:SetFillStyle(data.visualChargeBar.fillStyle)
+        
+        if data.visualChargeBar.rotation then
+            data.frame.visualChargeBar:GetStatusBarTexture():SetRotation(data.visualChargeBar.rotation)
+        end
+        
+        data.frame.visualChargeBar:SetMinMaxValues(data.visualChargeBar.minValue, data.visualChargeBar.maxValue)
+        
+        -- Apply border/background visibility from pre-computed values
+        if data.visualChargeBar.onlyBar or data.visualChargeBar.displayState == 'never' then
+            data.frame.visualChargeBar.borderCornerTL:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderCornerTR:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderCornerBR:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderCornerBL:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderEdgeTop:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderEdgeRight:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderEdgeBottom:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.borderEdgeLeft:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.bgTexture:SetVertexColor(0,0,0,0)
+            data.frame.visualChargeBar.glowTexture:SetVertexColor(0,0,0,0)
+        elseif data.visualChargeBar.displayState == 'always' then
+            local bc = data.visualChargeBar.borderColor
+            local bgc = data.visualChargeBar.backgroundColor
+            local gc = data.visualChargeBar.glowColor
             
-            -- Apply border scale from pre-computed value
-            local bs = data.visualChargeBar.borderScale
-            if data.frame.visualChargeBar.borderCornerTL then data.frame.visualChargeBar.borderCornerTL:SetScale(bs) end
-            if data.frame.visualChargeBar.borderCornerTR then data.frame.visualChargeBar.borderCornerTR:SetScale(bs) end
-            if data.frame.visualChargeBar.borderCornerBR then data.frame.visualChargeBar.borderCornerBR:SetScale(bs) end
-            if data.frame.visualChargeBar.borderCornerBL then data.frame.visualChargeBar.borderCornerBL:SetScale(bs) end
-            if data.frame.visualChargeBar.borderEdgeTop then data.frame.visualChargeBar.borderEdgeTop:SetScale(bs) end
-            if data.frame.visualChargeBar.borderEdgeRight then data.frame.visualChargeBar.borderEdgeRight:SetScale(bs) end
-            if data.frame.visualChargeBar.borderEdgeBottom then data.frame.visualChargeBar.borderEdgeBottom:SetScale(bs) end
-            if data.frame.visualChargeBar.borderEdgeLeft then data.frame.visualChargeBar.borderEdgeLeft:SetScale(bs) end
+            data.frame.visualChargeBar.borderCornerTL:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderCornerTR:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderCornerBR:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderCornerBL:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderEdgeTop:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderEdgeRight:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderEdgeBottom:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.borderEdgeLeft:SetVertexColor(bc.r, bc.g, bc.b, bc.a)
+            data.frame.visualChargeBar.bgTexture:SetVertexColor(bgc.r, bgc.g, bgc.b, bgc.a)
+            data.frame.visualChargeBar.glowTexture:SetVertexColor(gc.r, gc.g, gc.b, gc.a)
+        end
+        
+        -- Apply border scale from pre-computed value
+        local bs = data.visualChargeBar.borderScale
+        if data.frame.visualChargeBar.borderCornerTL then data.frame.visualChargeBar.borderCornerTL:SetScale(bs) end
+        if data.frame.visualChargeBar.borderCornerTR then data.frame.visualChargeBar.borderCornerTR:SetScale(bs) end
+        if data.frame.visualChargeBar.borderCornerBR then data.frame.visualChargeBar.borderCornerBR:SetScale(bs) end
+        if data.frame.visualChargeBar.borderCornerBL then data.frame.visualChargeBar.borderCornerBL:SetScale(bs) end
+        if data.frame.visualChargeBar.borderEdgeTop then data.frame.visualChargeBar.borderEdgeTop:SetScale(bs) end
+        if data.frame.visualChargeBar.borderEdgeRight then data.frame.visualChargeBar.borderEdgeRight:SetScale(bs) end
+        if data.frame.visualChargeBar.borderEdgeBottom then data.frame.visualChargeBar.borderEdgeBottom:SetScale(bs) end
+        if data.frame.visualChargeBar.borderEdgeLeft then data.frame.visualChargeBar.borderEdgeLeft:SetScale(bs) end
     end
 }
 
@@ -2161,6 +2103,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             y = getOverride("position.y") or (trackerConfig.position and trackerConfig.position.y) or 0
         }
     }
+
     -- Call each FrameUpdater method to apply pre-computed properties
     FrameTrackerManager.FrameUpdater.Base(data)
     FrameTrackerManager.FrameUpdater.Icon(data)
@@ -2223,9 +2166,18 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
         end
         return Frame
     end
-    local spellInfo = C_Spell.GetSpellInfo(baseSpellID)
+    local entryInfo
+    if trackerConfig.isItem then
+        entryInfo = {
+            name = C_Item.GetItemInfo(trackerConfig.itemID)
+        }
+    end
+    if not entryInfo or not entryInfo.name or entryInfo.name == nil or entryInfo.name == '' then
+        entryInfo = C_Spell.GetSpellInfo(baseSpellID)
+    end
+    
     local dataBaseFrame = {
-        frameName = "SpellStyler_" .. spellInfo.name .. "_" .. baseSpellID .. "_" .. trackerType,
+        frameName = "SpellStyler_" .. entryInfo.name .. "_" .. baseSpellID .. "_" .. trackerType,
         baseSpellID = baseSpellID,
         trackerType = trackerType,
         isVariantFrame = false,
@@ -2236,7 +2188,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
     
     -- Create variant frame
     local dataVariantFrame = {
-        frameName = "SpellStyler_" .. spellInfo.name .. "_VariantFrame",
+        frameName = "SpellStyler_" .. entryInfo.name .. "_VariantFrame",
         baseSpellID = baseSpellID,
         trackerType = trackerType,
         isVariantFrame = true,
@@ -2283,13 +2235,13 @@ function FrameTrackerManager:DestroyTrackerFrame(baseSpellID, trackerType)
         if not f then return end
         -- 1. Stop any running cooldown sweep so OnCooldownDone closure never fires.
         if f.cooldown then
-            pcall(function() f.cooldown:Clear() end)
+            f.cooldown:Clear()
         end
         -- 2. Make invisible.
-        pcall(function() f:Hide() end)
-        pcall(function() f:ClearAllPoints() end)
+        f:Hide()
+        f:ClearAllPoints()
         -- 3. Detach from UIParent hierarchy (becomes completely unreachable).
-        pcall(function() f:SetParent(nil) end)
+        f:SetParent(nil)
     end
     
     -- Destroy base frame
@@ -2319,182 +2271,6 @@ function FrameTrackerManager:GetSpellCharges(SpellIdentifier)
 end
 
 
---- Internal: executes the actual CDM frame processing after the debounce window closes.
---- Called by ProcessCDMFrameCallback after coalescing multiple rapid-fire hook invocations.
---- @param cdm_frame table The Blizzard cooldown manager frame
---- @param trackerType string The tracker type ("buffs")
---- @param callers table Array of caller labels collected during the debounce window
-local function _ExecuteProcessCDM(cdm_frame, trackerType, callers)
-    local baseSpellID = FrameTrackerManager:ResolveCDMBaseSpellID(cdm_frame)
-    local classSpecialization = State:GetCurrentSpecID()
-    --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
-    
-    -- Guard: Frame must exist before we can access it
-    -- This can be nil during FreshCreateFrames() when frames are cleared but CDM hooks still fire
-    -- OR when ResolveCDMBaseSpellID returns nil/wrong ID
-    -- OR when the spell isn't tracked in the current spec
-    local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-    if not frame then
-        return
-    end
-    
-    -- Skip if mock cooldown is active
-    if frame.meta.mockCooldownActive then
-        return
-    end
-    SpellStyler.donk = cdm_frame 
-    FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'currentAuraInstanceID', cdm_frame:GetAuraSpellInstanceID() or 0)
-
-    local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
-    if hasSpecialization and baseSpellID and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
-        -- Track active buffs for conditional engine
-        if trackerType == "buffs" then
-            local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-            if customFrame and customFrame.meta and ((customFrame.meta.currentAuraInstanceID and customFrame.meta.currentAuraInstanceID ~= 0)) then
-                -- Buff is active
-                if SpellStyler.ConditionalEngine then
-                    local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
-                    activeBuffs[baseSpellID] = true
-                    SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
-                end
-            end
-        end
-        
-        if trackerType == "buffs" then
-            pcall(function()
-                --if the icon does NOT have a custom texture, then update it dynamically
-                if not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID].meta.customTexture then
-                    local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-                    local icon = cdm_frame.Icon or cdm_frame.icon
-                    local texture = (icon.GetTexture and icon:GetTexture()) or icon.texture or cdm_frame.spellStyler_texture
-                    if frame.meta.dualFrameStatus ~= 'hideBase' then frame.icon:SetTexture(texture) end
-                    if frame.variantFrame and frame.meta.dualFrameStatus ~= 'hideVariant' then frame.variantFrame.icon:SetTexture(texture) end
-                end
-            end)
-            
-            local config = State:GetSpecificTrackerValue(baseSpellID, trackerType)
-            local frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-            -- Only trust GetAuraSpellInstanceID() when the Blizzard frame is actually
-            -- shown (buff active). When hidden, the frame may still hold a stale
-            -- non-zero ID from its previous application, which would incorrectly
-            -- make Set Icon Visibility think the buff is still active.
-            
-            if frame.meta.currentAuraInstanceID ~= 0 then
-                FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'buffStatus', 'present')
-            else
-                FrameTrackerManager:SetMetaOnBaseAndVariant(frame, 'buffStatus', 'absent')
-            end
-
-            if SpellStyler.ConditionalEngine then
-                local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
-                activeBuffs[baseSpellID] = frame.meta.currentAuraInstanceID ~= 0
-                SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
-            end
-
-            -- Guard: config can be nil during spec transitions when a stale CDM frame
-            -- fires while the new spec's database hasn't been built yet, or when the
-            -- scan picked up an old-spec spell that the new spec doesn't track.
-            if not config or not config.statusBar then return end
-            
-            -- Build combined caller string for debugging
-            local callerStr = table.concat(callers, ", ")
-            
-            FrameTrackerManager:DriveFrameUpdate(
-                frame,
-                {
-                    resolveDuration = true,
-                    syncChargeText = true
-                },
-                nil,
-                "hookCallback_" .. callerStr
-            )
-        end
-    end
-end
-
---- Handles CDM frame callbacks for buff tracking with debouncing.
---- Multiple rapid calls for the same CDM frame are coalesced into a single execution.
---- @param cdm_frame table The Blizzard cooldown manager frame
---- @param trackerType string The tracker type ("buffs")
---- @param caller string Debug label for the source of the call
-local function ProcessCDMFrameCallback(cdm_frame, trackerType, caller)
-    local q = FrameTrackerManager._processCDMQueue
-    if not q[cdm_frame] then
-        -- First call in this window: open the timer.
-        q[cdm_frame] = {
-            trackerType = trackerType,
-            callers = { caller or "unknown" }
-        }
-        C_Timer.After(0.005, function()
-            local entry = q[cdm_frame]
-            if entry then
-                _ExecuteProcessCDM(cdm_frame, entry.trackerType, entry.callers)
-                q[cdm_frame] = nil
-            end
-        end)
-    else
-        -- Subsequent call within the same window: merge.
-        local entry = q[cdm_frame]
-        -- Append caller label for debugging
-        table.insert(entry.callers, caller or "unknown")
-    end
-end
-
-local functionsTracked = {}
-
--- Hook all buffs icon cooldowns to mirror to per-icon frames
-function FrameTrackerManager:HookAllBuffCooldownFrames(trackerType)
-    
-    local viewer = SpellStyler.Containers:GetCooldownManagerViewer(trackerType)
-    if not viewer then return end
-
-    for slotIndex, cdm_frame in pairs(FrameTrackerManager.cooldownManagerFrames[trackerType]) do
-        -- Only hook frames that haven't been hooked yet
-        if not cdm_frame._spellStyler_hasHookedFrame then
-            cdm_frame._spellStyler_hasHookedFrame = true
-        
-            -- Hide the Blizzard buffs frames by keeping alpha at 0
-            cdm_frame._spellStyler_alphaLocked = true
-            -- cdm_frame:SetAlpha(0)
-            
-            -- Hook SetAlpha with recursion guard
-            hooksecurefunc(cdm_frame, 'SetAlpha', function(self, alpha)
-                if not self._spellStyler_settingAlpha and alpha ~= 0 then
-                    self._spellStyler_settingAlpha = true
-                    -- self:SetAlpha(0)
-                    self._spellStyler_settingAlpha = false
-                end
-            end)
-            
-            local function hookCallback(self, caller)
-                --TODO revert to ProcessCDMFrameCallback
-                _ExecuteProcessCDM(self, trackerType, { caller })
-            end
-            local function hookGuard(method, frame)
-                if frame[method] and not frame["hasHooked_" .. method] then
-                    hooksecurefunc(frame, method, function(self) hookCallback(self, method) end)
-                end
-            end
-            for _, methodName in ipairs({ "RefreshApplications", "OnAuraInstanceInfoSet", "SetAuraInstanceInfo", "OnUnitAuraAddedEvent", "OnUnitAuraUpdatedEvent", "SetTotemData", "SetCooldown", "SetCooldownFromDurationObject" }) do
-                hookGuard(methodName, cdm_frame)
-            end
-            local sourceCooldown = cdm_frame.Cooldown or cdm_frame.cooldown
-            for _, methodName in ipairs({ "SetCooldown", "SetCooldownFromDurationObject" }) do
-                hookGuard(methodName, sourceCooldown)
-            end
-
-            hooksecurefunc(cdm_frame.Cooldown, "SetCooldown",  function(...)
-                --[[
-                    This works by leveraging the UNIT_SPELLCAST_SUCCEEDED event.
-                    There are no unique and consistent events for the cooldown manager frames for totem buffs.
-                    This method IS consistent (but not unique) so the "MatchTotemEvent" actually uses the "UNIT_SPELLCAST_SUCCEEDED" to get the unique aspect required. It then also assumes the spell ID of the cast is the same ID of the buff frame.
-                ]]
-                FrameTrackerManager:MatchTotemEvent('new buff added from SetTotemData hook')
-            end)
-        end
-    end
-end
-
 -- ============================================================================
 -- TOTEM SPELL QUEUE MANAGEMENT
 -- ============================================================================
@@ -2502,7 +2278,7 @@ end
 --- Adds a spell to the totem tracking queue with a 200ms expiration window.
 --- Uses composite key (spellID_trackerType) to support multiple trackers for the same spell.
 --- @param spellID number The spell ID to track
---- @param trackerType string The tracker type ("buffs", "spells", etc.)
+--- @param trackerType string The tracker type ( "spells", etc.)
 function FrameTrackerManager:AddSpellToTotemQueue(spellID, trackerType)
     local expirationTime = GetTime() + 0.2  -- 200ms window
     local key = spellID .. "_" .. trackerType
@@ -2532,7 +2308,7 @@ end
 
 --- Removes a specific spell from the totem queue and cleans up any expired entries.
 --- @param spellID number The spell ID to remove
---- @param trackerType string The tracker type ("buffs", "spells", etc.)
+--- @param trackerType string The tracker type ( "spells", etc.)
 function FrameTrackerManager:RemoveSpellFromTotemQueue(spellID, trackerType)
     local key = spellID .. "_" .. trackerType
     FrameTrackerManager._totemSpellQueue[key] = nil
@@ -2571,7 +2347,7 @@ local hasPlayerEnetedWorld = false
 --- tables. Called synchronously on talent change so that no events fired
 --- during the rescan delay can reach stale frames or query the wrong spec DB.
 function FrameTrackerManager:TeardownSpecFrames()
-    for _, tType in ipairs({"buffs", "essential", "utility", "spells", "items"}) do
+    for _, tType in ipairs({"spells", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
             for donk, frame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 if frame and frame.Hide then
@@ -2592,23 +2368,9 @@ function FrameTrackerManager:TeardownSpecFrames()
             end
         end
     end
-    -- Reset the hook-guard flag on every live CDM frame so that HookAllBuffCooldownFrames
-    -- creates fresh hooks with a new closure after the next spec scan.
-    -- Old hooksecurefunc hooks cannot be removed, but the nil-config guard inside
-    -- hookCallback makes stale firings harmless.
     
-    if FrameTrackerManager.cooldownManagerFrames["buffs"] then
-        for _, cdmFrame in pairs(FrameTrackerManager.cooldownManagerFrames["buffs"]) do
-            if cdmFrame then
-                cdmFrame._spellStyler_hasHookedFrame = nil
-                cdmFrame.hasHookedCooldown = nil
-                cdmFrame.hasHookedCooldownDuration = nil
-            end
-        end
-    end
-    FrameTrackerManager.cooldownManagerFrames    = { buffs = {} }
-    FrameTrackerManager.cooldownIDToBaseSpellID = {}
-    FrameTrackerManager.SpellStyler_frames      = { buffs = {}, essential = {}, utility = {}, spells = {}, items = {} }
+    
+    FrameTrackerManager.SpellStyler_frames      = { essential = {}, utility = {}, spells = {}, items = {} }
     FrameTrackerManager._activeTotemSlots       = {}  -- Clear active totem slot tracking on spec change
 end
 
@@ -2628,23 +2390,21 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         local errorMsg = spellName .. " was not found in state. The key used to pull from state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(frame.meta.activeSpellID) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
         
         -- Try to save error to devNotes if config exists
-        pcall(function()
-            if config and config.devNotes then
-                local devNotes = config.devNotes or {}
-                -- Check if error message already exists
-                local alreadyExists = false
-                for _, note in ipairs(devNotes) do
-                    if note == errorMsg then
-                        alreadyExists = true
-                        break
-                    end
+        if config and config.devNotes then
+            local devNotes = config.devNotes or {}
+            -- Check if error message already exists
+            local alreadyExists = false
+            for _, note in ipairs(devNotes) do
+                if note == errorMsg then
+                    alreadyExists = true
+                    break
                 end
-                if not alreadyExists then
-                    table.insert(devNotes, errorMsg)
-                end
-                State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
             end
-        end)
+            if not alreadyExists then
+                table.insert(devNotes, errorMsg)
+            end
+            State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
+        end
         return
     end
     
@@ -2691,21 +2451,19 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         local errorMsg = spellName .. " has a malformed configuration entry in state. The key in state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(frame.meta.activeSpellID) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
         
         -- Save error to devNotes using State method
-        pcall(function()
-            local devNotes = config.devNotes or {}
-            -- Check if error message already exists
-            local alreadyExists = false
-            for _, note in ipairs(devNotes) do
-                if note == errorMsg then
-                    alreadyExists = true
-                    break
-                end
+        local devNotes = config.devNotes or {}
+        -- Check if error message already exists
+        local alreadyExists = false
+        for _, note in ipairs(devNotes) do
+            if note == errorMsg then
+                alreadyExists = true
+                break
             end
-            if not alreadyExists then
-                table.insert(devNotes, errorMsg)
-            end
-            State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
-        end)
+        end
+        if not alreadyExists then
+            table.insert(devNotes, errorMsg)
+        end
+        State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
         return
     end
     
@@ -2819,8 +2577,8 @@ end
 --- Returns raw alpha values representing different states; caller decides which to use.
 --- All values are 0-1 and safe to pass directly to SetAlpha() (may be secret values).
 --- @param frame table The tracker frame
---- @return number whenAvailable Alpha = 1 when spell/buff is available/inactive, 0 when active/on cooldown
---- @return number whenActive Alpha = 1 when spell/buff is active/on cooldown, 0 when available/inactive  
+--- @return number whenAvailable Alpha = 1 when spell is available/inactive, 0 when active/on cooldown
+--- @return number whenActive Alpha = 1 when spell is active/on cooldown, 0 when available/inactive  
 --- @return number progressBar Alpha = 1 during real cooldown (not GCD), 0 otherwise
 --- @return number fullBar Alpha = 1 during GCD/available, 0 during real cooldown
 function FrameTrackerManager:GetFrameStateAlphas(frame)
@@ -2835,15 +2593,7 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     
     local statusBarAlpha = (config and config.statusBar and config.statusBar.color and config.statusBar.color.a) or 1
     
-    -- Buffs: simple aura presence check
-    if trackerType == 'buffs' then
-        local hasAura = (frame.meta.totemDuration) or (frame.meta.currentAuraInstanceID and frame.meta.currentAuraInstanceID ~= 0)
-        -- and not frame.meta.totemDuration:HasExpired()
-        return hasAura and 0 or 1, 
-               hasAura and 1 or 0, 
-               hasAura and statusBarAlpha or 0, 
-               hasAura and 0 or statusBarAlpha
-    end
+    
     
     -- Items: build duration object on the fly and check cooldown state
     if config and config.isItem and frame.meta.itemID then
@@ -2876,10 +2626,9 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     local durationObj = frame.meta.totemDuration
         or (chargeInfo and chargeInfo.maxCharges > 1) and C_Spell.GetSpellChargeDuration(activeSpellID, true)
         or C_Spell.GetSpellCooldownDuration(activeSpellID, true)
-        local spellInfo = C_Spell.GetSpellInfo(frame.meta.activeSpellID)
+    local spellInfo = C_Spell.GetSpellInfo(frame.meta.activeSpellID)
     local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
     
-
     if chargeInfo and chargeInfo.maxCharges > 1 then
         -- Charge-based spell: currentCharges secret-normalizes (>=1 becomes 1, 0 stays 0)
         whenAvailableToCast = chargeInfo.currentCharges
@@ -2904,166 +2653,163 @@ end
 
 
 --- @param data ApplyCooldownDurationData
---- @return number? currentCharges The current charge count (secret value for spells, aura applications for buffs)
+--- @return number? currentCharges The current charge count (secret value for spells)
 function FrameTrackerManager:renderUpdateChargesText(data)
     if not data.customFrame or not data.config then return nil end
     
     local chargesReturnValue = nil
-    local success, error = pcall(function()
-        local countCfg = data.config.countText
-        if countCfg then
-            -- Apply font size: check override first, then state
-            local sizeOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.size")
-            local fontSize = sizeOverride or countCfg.size
-            local fontPath, _, fontFlags = data.customFrame.count:GetFont()
-            if fontSize then
-                local resolvedFontPath = State:ResolveFontPath(countCfg.font, fontPath)
-                local resolvedFontFlags = State:ResolveFontFlags(countCfg.fontFlags, fontFlags)
-                data.customFrame.count:SetFont(resolvedFontPath, fontSize, resolvedFontFlags or "OUTLINE")
-            end
+    local countCfg = data.config.countText
+    if countCfg then
+        -- Apply font size: check override first, then state
+        local sizeOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.size")
+        local fontSize = sizeOverride or countCfg.size
+        local fontPath, _, fontFlags = data.customFrame.count:GetFont()
+        if fontSize then
+            local resolvedFontPath = State:ResolveFontPath(countCfg.font, fontPath)
+            local resolvedFontFlags = State:ResolveFontFlags(countCfg.fontFlags, fontFlags)
+            data.customFrame.count:SetFont(resolvedFontPath, fontSize, resolvedFontFlags or "OUTLINE")
+        end
+        
+        -- Apply color: check override first, then state
+        local colorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.color")
+        local color = colorOverride or countCfg.color
+        if color then
+            data.customFrame.count:SetTextColor(
+                color.r or 1,
+                color.g or 1,
+                color.b or 1,
+                data.textAlpha or color.a or 1
+            )
+        end
+        
+        -- Apply position: check override first, then state
+        local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.x")
+        local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.y")
+        data.customFrame.count:ClearAllPoints()
+        data.customFrame.count:SetPoint("BOTTOMRIGHT", data.customFrame, "BOTTOMRIGHT",
+            (xOverride or countCfg.x or 0) - 2,
+            (yOverride or countCfg.y or 0) + 2)
+        
+        -- Apply visibility alpha based on display setting and charge count
+        
             
-            -- Apply color: check override first, then state
-            local colorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.color")
-            local color = colorOverride or countCfg.color
-            if color then
-                data.customFrame.count:SetTextColor(
-                    color.r or 1,
-                    color.g or 1,
-                    color.b or 1,
-                    data.textAlpha or color.a or 1
-                )
-            end
-            
-            -- Apply position: check override first, then state
-            local xOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.x")
-            local yOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(data.customFrame, "countText.y")
-            data.customFrame.count:ClearAllPoints()
-            data.customFrame.count:SetPoint("BOTTOMRIGHT", data.customFrame, "BOTTOMRIGHT",
-                (xOverride or countCfg.x or 0) - 2,
-                (yOverride or countCfg.y or 0) + 2)
-            
-            -- Apply visibility alpha based on display setting and charge count
-            if data.customFrame.meta.trackerType == "buffs" then
-                
-                if data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
-                    local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
-                    local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("target", data.customFrame.meta.currentAuraInstanceID, 1)
-                    local playerAuraData =        C_UnitAuras.GetAuraDataByAuraInstanceID("player", data.customFrame.meta.currentAuraInstanceID)
-                    local targetAuraData =        C_UnitAuras.GetAuraDataByAuraInstanceID("target", data.customFrame.meta.currentAuraInstanceID)
-                    local auraCountAsNumber =   (playerAuraData and playerAuraData.applications) or (targetAuraData and targetAuraData.applications) or 0
-                    chargesReturnValue = auraCountAsNumber
-                    if data.config.countText.display then
-                        data.customFrame.count:SetText(playerCount or targetCount)
-                    else
-                        data.customFrame.count:SetText("")
-                    end
-
-                    local s,e = pcall(function() data.customFrame.visualChargeBar:SetValue(auraCountAsNumber) end)
-
-                    -- Apply alpha based on displayState setting (cannot check currentCharges as it may be secret)
-                    local displayState = data.config.visualChargeBar.displayState
-                    local barAlpha
-                    if displayState == "always" then
-                        barAlpha = 1
-                    elseif displayState == "available" then
-                        barAlpha = auraCountAsNumber
-                    else
-                        barAlpha = 0 --this would be when displayState == never
-                    end
-                    data.customFrame.visualChargeBar:SetAlpha(barAlpha)
-                    -- Also update status bar color alpha (SetAlpha doesn't override vertex color alpha)
-                    local color = data.config.visualChargeBar.color
-                    data.customFrame.visualChargeBar:SetStatusBarColor(color.r, color.g, color.b, barAlpha)
-                    if data.customFrame.visualChargeBar.fullCoverTexture then
-                        data.customFrame.visualChargeBar.fullCoverTexture:SetVertexColor(color.r, color.g, color.b, barAlpha)
-                    end
-
-                    if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
-                        local chargeValue = auraCountAsNumber or 0
-                        if data.customFrame.chargeAnchorBarA then
-                            data.customFrame.chargeAnchorBarA:SetValue(chargeValue)
-                            if data.customFrame.chargeAnchorBarB then
-                                data.customFrame.chargeAnchorBarB:SetValue(chargeValue)
-                            end
-                        end
-                    end
+            if data.customFrame.meta.currentAuraInstanceID ~= 0 and data.customFrame.meta.currentAuraInstanceID ~= nil then
+                local playerCount = C_UnitAuras.GetAuraApplicationDisplayCount("player", data.customFrame.meta.currentAuraInstanceID, 1)
+                local targetCount = C_UnitAuras.GetAuraApplicationDisplayCount("target", data.customFrame.meta.currentAuraInstanceID, 1)
+                local playerAuraData =        C_UnitAuras.GetAuraDataByAuraInstanceID("player", data.customFrame.meta.currentAuraInstanceID)
+                local targetAuraData =        C_UnitAuras.GetAuraDataByAuraInstanceID("target", data.customFrame.meta.currentAuraInstanceID)
+                local auraCountAsNumber =   (playerAuraData and playerAuraData.applications) or (targetAuraData and targetAuraData.applications) or 0
+                chargesReturnValue = auraCountAsNumber
+                if data.config.countText.display then
+                    data.customFrame.count:SetText(playerCount or targetCount)
                 else
-                    
-                    local s,e = pcall(function() data.customFrame.visualChargeBar:SetValue(0) end)
-                    local statusBarAlpha = data.config.visualChargeBar.displayState == 'always' and 1 or 0
-                    data.customFrame.visualChargeBar:SetAlpha(statusBarAlpha)
-                    local color = data.config.visualChargeBar.color
-                    data.customFrame.visualChargeBar:SetStatusBarColor(color.r, color.g, color.b, statusBarAlpha)
-                    if data.customFrame.visualChargeBar.fullCoverTexture then
-                        data.customFrame.visualChargeBar.fullCoverTexture:SetVertexColor(color.r, color.g, color.b, statusBarAlpha)
-                    end
                     data.customFrame.count:SetText("")
-                    if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
-                        if data.customFrame.chargeAnchorBarA then
-                            data.customFrame.chargeAnchorBarA:SetValue(0)
-                            if data.customFrame.chargeAnchorBarB then
-                                data.customFrame.chargeAnchorBarB:SetValue(0)
-                            end
+                end
+
+                data.customFrame.visualChargeBar:SetValue(auraCountAsNumber)
+
+                -- Apply alpha based on displayState setting (cannot check currentCharges as it may be secret)
+                local displayState = data.config.visualChargeBar.displayState
+                local barAlpha
+                if displayState == "always" then
+                    barAlpha = 1
+                elseif displayState == "available" then
+                    barAlpha = auraCountAsNumber
+                else
+                    barAlpha = 0 --this would be when displayState == never
+                end
+                data.customFrame.visualChargeBar:SetAlpha(barAlpha)
+                -- Also update status bar color alpha (SetAlpha doesn't override vertex color alpha)
+                local color = data.config.visualChargeBar.color
+                data.customFrame.visualChargeBar:SetStatusBarColor(color.r, color.g, color.b, barAlpha)
+                if data.customFrame.visualChargeBar.fullCoverTexture then
+                    data.customFrame.visualChargeBar.fullCoverTexture:SetVertexColor(color.r, color.g, color.b, barAlpha)
+                end
+
+                if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
+                    local chargeValue = auraCountAsNumber or 0
+                    if data.customFrame.chargeAnchorBarA then
+                        data.customFrame.chargeAnchorBarA:SetValue(chargeValue)
+                        if data.customFrame.chargeAnchorBarB then
+                            data.customFrame.chargeAnchorBarB:SetValue(chargeValue)
                         end
                     end
                 end
-                if countCfg.display then
-                    data.customFrame.count:SetAlpha(1)
-                else
-                    data.customFrame.count:SetAlpha(0)
+            else
+                
+                data.customFrame.visualChargeBar:SetValue(0)
+                local statusBarAlpha = data.config.visualChargeBar.displayState == 'always' and 1 or 0
+                data.customFrame.visualChargeBar:SetAlpha(statusBarAlpha)
+                local color = data.config.visualChargeBar.color
+                data.customFrame.visualChargeBar:SetStatusBarColor(color.r, color.g, color.b, statusBarAlpha)
+                if data.customFrame.visualChargeBar.fullCoverTexture then
+                    data.customFrame.visualChargeBar.fullCoverTexture:SetVertexColor(color.r, color.g, color.b, statusBarAlpha)
                 end
-            elseif data.customFrame.meta.trackerType == "spells" or data.customFrame.meta.trackerType == "items" then
-                if not countCfg.display then
-                    data.customFrame.count:SetAlpha(0)
-                elseif data.customFrame.meta.trackerType == "items" then
-                    -- Items don't have charges, hide count text
-                    data.customFrame.count:SetAlpha(0)
-                else
-                    -- Spells: show charge count for multi-charge spells
-                    local chargesData = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID)
-                    local currentCharges
-                    if not chargesData or chargesData.maxCharges == 1 then
-                        -- set zero so that spells with only 1 charge dont render the text
-                        currentCharges = 0
-                    else
-                        currentCharges = chargesData.currentCharges
-                    end
-                    chargesReturnValue = currentCharges
-                    data.customFrame.count:SetText(currentCharges)
-                    data.customFrame.count:SetAlpha(currentCharges)
-                    if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
-                        if data.customFrame.chargeAnchorBarA then
-                            data.customFrame.chargeAnchorBarA:SetValue(currentCharges)
-                            if data.customFrame.chargeAnchorBarB then
-                                data.customFrame.chargeAnchorBarB:SetValue(currentCharges)
-                            end
+                data.customFrame.count:SetText("")
+                if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
+                    if data.customFrame.chargeAnchorBarA then
+                        data.customFrame.chargeAnchorBarA:SetValue(0)
+                        if data.customFrame.chargeAnchorBarB then
+                            data.customFrame.chargeAnchorBarB:SetValue(0)
                         end
                     end
-                    
-                    -- Update visualChargeBar if visualChargeBar config exists
-                    data.customFrame.visualChargeBar:SetValue(currentCharges)
-                    local s,e = pcall(function() data.customFrame.visualChargeBar:SetValue(currentCharges) end)
-                    -- Apply alpha based on displayState setting (cannot check currentCharges as it may be secret)
-                    local displayState = data.config.visualChargeBar.displayState
-                    local barAlpha
-                    if displayState == "always" then
-                        barAlpha = 1
-                    elseif displayState == "available" then
-                        barAlpha = currentCharges
-                    else
-                        barAlpha = 0
+                end
+            end
+            if countCfg.display then
+                data.customFrame.count:SetAlpha(1)
+            else
+                data.customFrame.count:SetAlpha(0)
+            end
+        if data.customFrame.meta.trackerType == "spells" or data.customFrame.meta.trackerType == "items" then
+            if not countCfg.display then
+                data.customFrame.count:SetAlpha(0)
+            elseif data.customFrame.meta.trackerType == "items" then
+                -- Items don't have charges, hide count text
+                data.customFrame.count:SetAlpha(0)
+            else
+                -- Spells: show charge count for multi-charge spells
+                local chargesData = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID)
+                local currentCharges
+                if not chargesData or chargesData.maxCharges == 1 then
+                    -- set zero so that spells with only 1 charge dont render the text
+                    currentCharges = 0
+                else
+                    currentCharges = chargesData.currentCharges
+                end
+                chargesReturnValue = currentCharges
+                data.customFrame.count:SetText(currentCharges)
+                data.customFrame.count:SetAlpha(currentCharges)
+                if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
+                    if data.customFrame.chargeAnchorBarA then
+                        data.customFrame.chargeAnchorBarA:SetValue(currentCharges)
+                        if data.customFrame.chargeAnchorBarB then
+                            data.customFrame.chargeAnchorBarB:SetValue(currentCharges)
+                        end
                     end
-                    data.customFrame.visualChargeBar:SetAlpha(barAlpha)
-                    -- Also update status bar color alpha (SetAlpha doesn't override vertex color alpha)
-                    local color = data.config.visualChargeBar.color
-                    data.customFrame.visualChargeBar:SetStatusBarColor(color.r, color.g, color.b, barAlpha)
-                    if data.customFrame.visualChargeBar.fullCoverTexture then
-                        data.customFrame.visualChargeBar.fullCoverTexture:SetVertexColor(color.r, color.g, color.b, barAlpha)
-                    end
+                end
+                
+                -- Update visualChargeBar if visualChargeBar config exists
+                data.customFrame.visualChargeBar:SetValue(currentCharges)
+                -- Apply alpha based on displayState setting (cannot check currentCharges as it may be secret)
+                local displayState = data.config.visualChargeBar.displayState
+                local barAlpha
+                if displayState == "always" then
+                    barAlpha = 1
+                elseif displayState == "available" then
+                    barAlpha = currentCharges
+                else
+                    barAlpha = 0
+                end
+                data.customFrame.visualChargeBar:SetAlpha(barAlpha)
+                -- Also update status bar color alpha (SetAlpha doesn't override vertex color alpha)
+                local color = data.config.visualChargeBar.color
+                data.customFrame.visualChargeBar:SetStatusBarColor(color.r, color.g, color.b, barAlpha)
+                if data.customFrame.visualChargeBar.fullCoverTexture then
+                    data.customFrame.visualChargeBar.fullCoverTexture:SetVertexColor(color.r, color.g, color.b, barAlpha)
                 end
             end
         end
-    end)
+    end
     return chargesReturnValue
 end
 
@@ -3087,9 +2833,9 @@ FrameTrackerManager.ApplyVisibility = {
             alpha = 1
         elseif context.displayState == "cooldown" or context.displayState == "active" then
             alpha = context.whenOnCooldownAlpha
-            elseif context.displayState == "available" or context.displayState == "inactive" then
+        elseif context.displayState == "available" or context.displayState == "inactive" then
             alpha = context.whenAvailableToCastAlpha
-            else
+        else
             alpha = 0
         end
 
@@ -3174,33 +2920,28 @@ FrameTrackerManager.ApplyVisibility = {
             fullBarAlpha = 0
         end
         
-        local a, b = pcall(function()
-            -- Check for cached conditional overrides first, fall back to state values
-            local barColor = context.statusBarConfig.color
-            if SpellStyler.ConditionalEngine then
-                local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.color")
-                if overrideColor then
-                    barColor = overrideColor
-                end
+        -- Check for cached conditional overrides first, fall back to state values
+        local barColor = context.statusBarConfig.color
+        if SpellStyler.ConditionalEngine then
+            local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.color")
+            if overrideColor then
+                barColor = overrideColor
             end
-            context.customFrame.statusBar:SetAlpha(statusBarFrameAlpha)
-            
-            context.customFrame.statusBar:SetStatusBarColor(
-                barColor.r or 0.2,
-                barColor.g or 0.8,
-                barColor.b or 1,
-                statusBarFillAlpha
-            )
-            context.customFrame.statusBar.fullCoverTexture:SetVertexColor(
-                barColor.r or 0.2,
-                barColor.g or 0.8,
-                barColor.b or 1,
-                fullBarAlpha
-            )
-        end)
-        local s, e = pcall(function()
-            local don = context.config.statusBar.onlyRenderBar
-        end)
+        end
+        context.customFrame.statusBar:SetAlpha(statusBarFrameAlpha)
+        
+        context.customFrame.statusBar:SetStatusBarColor(
+            barColor.r or 0.2,
+            barColor.g or 0.8,
+            barColor.b or 1,
+            statusBarFillAlpha
+        )
+        context.customFrame.statusBar.fullCoverTexture:SetVertexColor(
+            barColor.r or 0.2,
+            barColor.g or 0.8,
+            barColor.b or 1,
+            fullBarAlpha
+        )
         local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.onlyRenderBar")
         local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (context.config.statusBar.onlyRenderBar or false)
         if not onlyBar and context.config.statusBar.displayState ~= 'never' and context.config.statusBar.displayState ~= 'always' then
@@ -3237,25 +2978,23 @@ FrameTrackerManager.ApplyVisibility = {
             progressBarFillAlpha = context.charges
         end
         
-        local a, b = pcall(function()
-            -- Check for cached conditional overrides first, fall back to state values
-            local barColor = context.visualChargeBar.color
-            if SpellStyler.ConditionalEngine then
-                local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.color")
-                if overrideColor then
-                    barColor = overrideColor
-                end
+        -- Check for cached conditional overrides first, fall back to state values
+        local barColor = context.visualChargeBar.color
+        if SpellStyler.ConditionalEngine then
+            local overrideColor = SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "statusBar.color")
+            if overrideColor then
+                barColor = overrideColor
             end
-            context.customFrame.visualChargeBar:SetAlpha(progressBarFrameAlpha)
-            
-            context.customFrame.visualChargeBar:SetStatusBarColor(
-                barColor.r or 0.2,
-                barColor.g or 0.8,
-                barColor.b or 1,
-                progressBarFillAlpha
-            )
-            context.customFrame.visualChargeBar.fullCoverTexture:Hide()
-        end)
+        end
+        context.customFrame.visualChargeBar:SetAlpha(progressBarFrameAlpha)
+        
+        context.customFrame.visualChargeBar:SetStatusBarColor(
+            barColor.r or 0.2,
+            barColor.g or 0.8,
+            barColor.b or 1,
+            progressBarFillAlpha
+        )
+        context.customFrame.visualChargeBar.fullCoverTexture:Hide()
         local onlyBarOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "visualChargeBar.onlyRenderBar")
         local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (context.config.visualChargeBar.onlyRenderBar or false)
         if not onlyBar and context.config.visualChargeBar.displayState ~= 'never' and context.config.visualChargeBar.displayState ~= 'always' then
@@ -3278,9 +3017,8 @@ FrameTrackerManager.ApplyVisibility = {
         customFrame
     ]]
     CooldownSwipe = function(context)
-        -- Hide swipe for buffs without an aura OR for totems that aren't active
-        if not context.shouldDisplay or (context.trackerType == "buffs" and (context.customFrame.meta.currentAuraInstanceID == 0 or context.customFrame.meta.currentAuraInstanceID == nil) and (not context.customFrame.meta.totemDuration)) then
-            -- or (context.customFrame.meta.totemDuration:HasExpired())
+        
+        if not context.shouldDisplay then
             context.customFrame.cooldown:SetDrawEdge(false)
             context.customFrame.cooldown:SetDrawBling(false)
             context.customFrame.cooldown:SetDrawSwipe(false)
@@ -3288,38 +3026,34 @@ FrameTrackerManager.ApplyVisibility = {
             context.customFrame.cooldown:SetDrawEdge(true)
             context.customFrame.cooldown:SetDrawBling(true)
             context.customFrame.cooldown:SetDrawSwipe(true)
-            --default to showing the cooldown swipe for buffs. No need to check durationObject stuff. If it shouldnt show, that would be controlled by the "shouldDisplay" property
-            if context.trackerType == "buffs" then
-                context.customFrame.cooldown:SetAlpha(1)    
+            
+            -- Check if this is an item tracker
+            local config = State:GetSpecificTrackerValue(context.customFrame.meta.baseSpellID, context.customFrame.meta.trackerType)
+            if config and config.isItem then
+                -- Items: always show at full alpha during cooldown (no GCD for items)
+                context.customFrame.cooldown:SetAlpha(1)
             else
-                -- Check if this is an item tracker
-                local config = State:GetSpecificTrackerValue(context.customFrame.meta.baseSpellID, context.customFrame.meta.trackerType)
-                if config and config.isItem then
-                    -- Items: always show at full alpha during cooldown (no GCD for items)
-                    context.customFrame.cooldown:SetAlpha(1)
-                else
-                    -- Spell tracker: hide during GCD using duration curves
-                    local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
-                    local durationObject
-                    local maxSpellCharges = 1
-                    local spellChargeInfo = C_Spell.GetSpellCharges(context.customFrame.meta.activeSpellID)
-                    if spellChargeInfo and spellChargeInfo.maxCharges then
-                        maxSpellCharges = spellChargeInfo.maxCharges
-                    end
-                    if context.customFrame.meta.totemDuration then
-                        -- and not context.customFrame.meta.totemDuration:HasExpired()
-                        durationObject = context.customFrame.meta.totemDuration
-                    else
-                        if maxSpellCharges > 1 then
-                            durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID, true)
-                        else
-                            durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
-                        end
-                    end
-                    
-                    local alpha = durationObject and durationObject:EvaluateRemainingDuration(durationEqualToGCD) or 0
-                    context.customFrame.cooldown:SetAlpha(alpha)
+                -- Spell tracker: hide during GCD using duration curves
+                local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
+                local durationObject
+                local maxSpellCharges = 1
+                local spellChargeInfo = C_Spell.GetSpellCharges(context.customFrame.meta.activeSpellID)
+                if spellChargeInfo and spellChargeInfo.maxCharges then
+                    maxSpellCharges = spellChargeInfo.maxCharges
                 end
+                if context.customFrame.meta.totemDuration then
+                    -- and not context.customFrame.meta.totemDuration:HasExpired()
+                    durationObject = context.customFrame.meta.totemDuration
+                else
+                    if maxSpellCharges > 1 then
+                        durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID, true)
+                    else
+                        durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
+                    end
+                end
+                
+                local alpha = durationObject and durationObject:EvaluateRemainingDuration(durationEqualToGCD) or 0
+                context.customFrame.cooldown:SetAlpha(alpha)
             end
         end
     end,
@@ -3349,19 +3083,17 @@ FrameTrackerManager.ApplyVisibility = {
             end
             
             if cdText and context.config then
-                pcall(function()
-                    -- Apply color: check override first, then state
-                    local colorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "cooldownText.color")
-                    local color = colorOverride or context.config.color
-                    if color then
-                        cdText:SetTextColor(
-                            color.r or 1,
-                            color.g or 1,
-                            color.b or 1,
-                            context.textAlpha or color.a or 1
-                        )
-                    end
-                end)
+                -- Apply color: check override first, then state
+                local colorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "cooldownText.color")
+                local color = colorOverride or context.config.color
+                if color then
+                    cdText:SetTextColor(
+                        color.r or 1,
+                        color.g or 1,
+                        color.b or 1,
+                        context.textAlpha or color.a or 1
+                    )
+                end
             end
         end
     end
@@ -3374,15 +3106,13 @@ function FrameTrackerManager:GetItemDurationObject(itemID)
     if not itemID then return nil end
     
     local durationObject = nil
-    local success, error = pcall(function()
-        local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(itemID)
-        if startTimeSeconds and durationSeconds and durationSeconds > 0 then
-            durationObject = C_DurationUtil.CreateDuration()
-            durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
-        end
-    end)
+    local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(itemID)
+    if startTimeSeconds and durationSeconds and durationSeconds > 0 then
+        durationObject = C_DurationUtil.CreateDuration()
+        durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
+    end
     
-    if error or not durationObject then
+    if not durationObject then
         return nil
     end
     
@@ -3414,47 +3144,31 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
     
     local durationObject = data.durationObject or (data.customFrame.meta.totemDuration) or nil-- optional pre-resolved duration object
     -- and not data.customFrame.meta.totemDuration:HasExpired() and data.customFrame.meta.totemDuration
-    local s, e
     if not durationObject then
         
-        if data.trackerType == 'buffs' then
-            -- Buffs frames must NEVER fall back to C_Spell cooldown data.
-            -- Buffs that are actually totems (Invoke chi-ji) have a preresolved duration object passed. They also have totemSlot, NOT currentAuraInstanceID. So when no duration object for those types of buffs, nothing is applied (which is correct)
-            local auraID = data.customFrame.meta.currentAuraInstanceID
-            if auraID and auraID ~= 0 then
-                s, e = pcall(function()
-                    durationObject = C_UnitAuras.GetAuraDuration("player", auraID)
-                    if not durationObject then
-                        durationObject = C_UnitAuras.GetAuraDuration("target", auraID)
-                    end
-                end)
-            end
-        elseif data.config and data.config.isItem then
+        if data.config and data.config.isItem then
             -- Items: create duration object using GetItemDurationObject
-            s, e = pcall(function()
-                durationObject = FrameTrackerManager:GetItemDurationObject(data.itemID)
-            end)
+            durationObject = FrameTrackerManager:GetItemDurationObject(data.itemID)
         else
-            s, e = pcall(function()
-                -- try to get spell charge duration first
-                local maxSpellCharges = 1
-                local spellChargeInfo = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID or data.activeSpellID)
-                if spellChargeInfo and spellChargeInfo.maxCharges then
-                    maxSpellCharges = spellChargeInfo.maxCharges
-                end
-                if maxSpellCharges > 1 then
-                    durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
-                else
-                    durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
-                end
-            end)
+            -- try to get spell charge duration first
+            local maxSpellCharges = 1
+            local spellChargeInfo = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID or data.activeSpellID)
+            if spellChargeInfo and spellChargeInfo.maxCharges then
+                maxSpellCharges = spellChargeInfo.maxCharges
+            end
+            if maxSpellCharges > 1 then
+                durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
+            else
+                durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
+                local id = data.customFrame.meta.activeSpellID or data.activeSpellID
+            end
         end
     end
     if data.forceUpdate then
         data.customFrame.cooldown:Clear()
         data.customFrame.statusBar:SetValue(0)
     end
-    if e or not durationObject then
+    if not durationObject then
         return
     end
 
@@ -3478,14 +3192,6 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
         )
     end
     
-    if data.trackerType == 'buffs' then
-        FrameTrackerManager:SetMetaOnBaseAndVariant(data.customFrame, "buffStatus", 'active')
-        local isZero = durationObject and durationObject.IsZero and durationObject:IsZero()
-        local isSecret = issecretvalue(isZero)
-        if not isSecret and isZero then
-            FrameTrackerManager:SetMetaOnBaseAndVariant(data.customFrame, "buffStatus", 'present')
-        end
-    end
     data.customFrame.cooldown:SetCooldownFromDurationObject(durationObject)
 end
 
@@ -3540,34 +3246,6 @@ function FrameTrackerManager:SetStatusBarContainerVisibility(data, key)
 end
 
 
---- Resolves the baseSpellID (DB key) for a Blizzard CDM frame using a stable priority chain
----
---- Priority order:
----   1. cooldownIDToBaseSpellID[GetCooldownID()] – slot-based,
----      recorded at scan time and never mutated at runtime.
----   2. live GetSpellID()  – last resort; unreliable once the buff
----      is active (Blizzard returns a different ID at that point).
----
---- @param sourceFrame table  The Blizzard CDM frame to resolve for
---- @return number|nil        The resolved baseSpellID, or nil if unresolvable
-function FrameTrackerManager:ResolveCDMBaseSpellID(sourceFrame)
-    -- Priority 1: stable slot-based lookup via the cooldownID recorded at scan time
-    local cid
-    pcall(function()
-        cid = sourceFrame.GetCooldownID and sourceFrame:GetCooldownID()
-    end)
-    if cid and FrameTrackerManager.cooldownIDToBaseSpellID[cid] then
-        return FrameTrackerManager.cooldownIDToBaseSpellID[cid]
-    end
-
-    -- Priority 2: live GetSpellID (may differ from the DB key when a buff is active)
-    local raw = nil
-    pcall(function()
-        local v = sourceFrame.GetSpellID and sourceFrame:GetSpellID()
-        if v and not issecretvalue(v) then raw = v end
-    end)
-    return raw
-end
 
 --- @param spellID number
 --- @return ApplyCooldownDurationData|nil
@@ -3583,14 +3261,24 @@ function FrameTrackerManager:MatchTrackerFrame(spellID, trackerType)
             config
         }
     ]]
-    local currentSpellToBaseSpellID = C_Spell.GetBaseSpell(spellID)
+    local apiBase = C_Spell.GetBaseSpell(spellID)
+    local cacheBase = overrideToBase[spellID]
+    local currentSpellToBaseSpellID
+    if apiBase == cacheBase then
+        currentSpellToBaseSpellID = apiBase
+    elseif apiBase == spellID and apiBase ~= cacheBase and cacheBase then
+        -- The cached association remembered there was a previous connection to its base spellID so use that instead of the api. (Example: when void shield turns back into power word shield, the API's break the association to the baseSpellID from the void shield spell)
+        currentSpellToBaseSpellID = cacheBase
+    end
+
+    local activeSpellID = C_Spell.GetOverrideSpell(spellID)
     local lookThrough
     local type = 'all tracker types'
     if trackerType ~= nil then
         lookThrough = { trackerType }
         type = trackerType
     else
-        lookThrough = {"essential", "utility", "spells", "items", "buffs"}
+        lookThrough = {"essential", "utility", "spells", "items"}
     end
 
     for _, tType in ipairs(lookThrough) do
@@ -3601,7 +3289,7 @@ function FrameTrackerManager:MatchTrackerFrame(spellID, trackerType)
                     match = {
                         config = State:GetSpecificTrackerValue(baseSpellID, tType),
                         baseSpellID = baseSpellID,
-                        activeSpellID = spellID,
+                        activeSpellID = activeSpellID,
                         customFrame = trackedFrame,
                         trackerType = tType
                     }
@@ -3616,6 +3304,9 @@ end
 FrameTrackerManager._pendingFreshCreate = false
 
 
+local containerButtons
+
+
 --- Internal: executes the actual frame recreation after the debounce window closes.
 --- Called by FreshCreateFrames after coalescing multiple rapid-fire calls.
 --- @param callers table Array of caller labels collected during the debounce window
@@ -3626,21 +3317,10 @@ local function _ExecuteFreshCreateFrames(callers)
         return
     end
     FrameTrackerManager._pendingFreshCreate = false
-    --[[
-        - Clear any existing frames
-        - scan cooldown manager frames to queue frame creation copies (for buffs)
-        - queue frame creation for custom frames (for spells and items)
-        - Build dependency anchor tree (helps figure out the oreder things need to render to ensure thier anchor target exists ahead of their own rendering)
-        - Generate all frames (including duplicates depending on the conditionals applied that have charges)
-    ]]
-    
-    FrameTrackerManager:ScanAndSaveCurrentCooldownManagerFrames("buffs")
-    FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
-
     FrameTrackerManager:CreateNonBuffTrackerFrames()  -- Queues spell/item frames
     
     
-    for _, trackerType in ipairs({ "spells", "items", "buffs" }) do
+    for _, trackerType in ipairs({ "spells", "items" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
         if trackerValues then
             for baseSpellID, trackerConfig in pairs(trackerValues) do
@@ -3757,25 +3437,9 @@ local function eventHandlers(event, frame, meta)
     end
     if event == "UNIT_POWER_UPDATE" then
     end
-    if event == "UNIT_AURA" then
-        FrameTrackerManager:SetMetaOnBaseAndVariant(frame, "currentAuraInstanceID", 0)
-        FrameTrackerManager:SetMetaOnBaseAndVariant(frame, "buffStatus", 'absent')
-        frame.cooldown:Clear()
-        frame.statusBar:SetValue(0)
-        FrameTrackerManager:DriveFrameUpdate(
-            frame,
-            {
-                resolveDuration = false,
-                syncChargeText = true
-            },
-            nil,
-            "unitAura_explicitRemoval"
-        )
-    end
     if event == "SPELL_UPDATE_ICON" then
-        FrameTrackerManager:SetMetaOnBaseAndVariant(frame, "activeSpellID", meta.activeSpellID)
         frame.cooldown:Clear()
-        frame.cooldown:Hide()
+        -- frame.cooldown:Hide()
         FrameTrackerManager:DriveFrameUpdate(
             frame,
             {
@@ -3793,7 +3457,7 @@ local function eventHandlers(event, frame, meta)
 end
 
 local function forceUpdateAllFrames()
-    for _, tType in ipairs({"essential", "utility", "spells", "buffs", "items"}) do
+    for _, tType in ipairs({"essential", "utility", "spells", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
             for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 -- Update configuration changes first
@@ -3820,28 +3484,6 @@ FrameTrackerManager.CooldownManagerSettings = {}
 
 FrameTrackerManager.totalFrames = 0
 
--- Tables to track unique function keys called on BuffIconCooldownViewer
-FrameTrackerManager.keysInCombat = {}
-FrameTrackerManager.keysOutOfCombat = {}
-
-local attempts = 0
-local function hookCDMUpdater()
-    C_Timer.After(2, function()
-        local f = _G["BuffIconCooldownViewer"]
-        if not f and attempts < 5 then
-            attempts = attempts + 1
-            hookCDMUpdater()
-            return
-        end
-        
-        hooksecurefunc(f, "RefreshLayout", function(...)
-            local frameAcquired = { ... }
-            if _G["CooldownViewerSettings"]:IsShown() then
-                FrameTrackerManager:FreshCreateFrames("RefreshLayout")
-            end
-        end)
-    end)
-end
 
 FrameTrackerManager.lastSpellCast = nil --[[{
     timestamp = nil,
@@ -3883,38 +3525,43 @@ function FrameTrackerManager:MatchTotemEvent(caller)
                     "playerTotemUpdate"
                 )
             end
-            -- Buff totem tracking happens automatically. It doesnt override aura duraiton because a totem buff doesnt have an aura, it ONLY has a totem duration
-            local matchingBuff = FrameTrackerManager:MatchTrackerFrame(lastEvent.frame.meta.activeSpellID, "buffs")
-            if matchingBuff then
-                if totemFrames[1] ~= matchingBuff.customFrame and totemFrames[2] ~= matchingBuff.customFrame then
-                    table.insert(FrameTrackerManager._activeTotemSlots[lastTotemSlot].frames, matchingBuff.customFrame)    
-                end
-                FrameTrackerManager:SetMetaOnBaseAndVariant(matchingBuff.customFrame, "totemDuration", lastTotemDuration)
-                FrameTrackerManager:DriveFrameUpdate(
-                    matchingBuff.customFrame,
-                    {
-                        resolveDuration = true,
-                        syncChargeText = true
-                    },
-                    nil,
-                    "playerTotemUpdate"
-                )    
-            end
             lastEvent = nil
         end
     end
 end
+
+function FrameTrackerManager:UpdateActiveSpells()
+    for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
+        local isActive
+        if customFrame.meta.isSpellWithCharges then
+            isActive = C_Spell.GetSpellCharges(customFrame.meta.activeSpellID).isActive
+        else
+            isActive = C_Spell.GetSpellCooldown(customFrame.meta.activeSpellID).isActive
+        end
+        if isActive then
+            FrameTrackerManager:DriveFrameUpdate(
+                customFrame,
+                {
+                    resolveDuration = true,
+                    syncChargeText = true
+                },
+                nil,
+                "spellUpdateCooldown_updateOtherSpellsOnCooldown"
+            )
+        end
+    end
+end
+
 
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnetedWorld = true
         FrameTrackerManager:Initalize()
-        pcall(forceUpdateAllFrames)
-        hookCDMUpdater()
+        forceUpdateAllFrames()
     end
     if event == "PLAYER_ALIVE" then
-        pcall(forceUpdateAllFrames)
+        forceUpdateAllFrames()
     end
     if event == "PLAYER_LEAVING_WORLD" then
         hasPlayerEnetedWorld = false
@@ -3975,6 +3622,52 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
     end
 
+    if event == "UNIT_AURA" then
+        -- local unit, donk = ...
+        -- if unit == 'player' or unit == 'target' then
+        --     local s, e = pcall(function()
+        --         local data = {
+
+        --         }
+        --         for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
+        --             local auraa = C_UnitAuras.GetAuraDataByIndex('target', number)
+        --             if auraa then
+        --                 data[auraa.name] = auraa.spellId    
+        --             end
+        --         end
+        --         if donk.removedAuraInstanceIDs then
+        --            for number in ipairs(donk.removedAuraInstanceIDs) do
+        --                 local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
+        --                 if aura then
+        --                     data[aura.name] = aura.spellId    
+        --                 end
+                        
+        --             end 
+        --         end
+        --         if donk.updatedAuraInstanceIDs then 
+        --             for number in ipairs(donk.updatedAuraInstanceIDs) do
+        --                 local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
+        --                 if aura then
+        --                     data[aura.name] = aura.spellId    
+        --                 end
+        --             end
+        --             end
+        --             DevTool:AddData(data, "donk")
+        --     end)
+        --     if e then
+        --         -- DevTool:AddData({
+        --         --     e = e,
+        --         --     donk = donk
+        --         -- }, "e")
+        --     end
+        --     FrameTrackerManager:UpdateActiveSpells()
+        -- end
+    end
+
+    if event == "SPELL_UPDATE_USABLE" then
+        FrameTrackerManager:UpdateActiveSpells()
+    end
+
     if event == "PLAYER_TOTEM_UPDATE" then
         local slot = ...
         local totemDuration = GetTotemDuration(slot)
@@ -3987,7 +3680,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if totemDuration then
             --[[
                 totem added for slot
-                Saving this update into the lastTotemUpdate so that, if the buff added, or spell cast successful events happen after instead of before, they can also determin the association.
+                Saving this update into the lastTotemUpdate so that, if the spell cast successful events happen after instead of before, they can also determin the association.
 
                 Track last totem update
                 Track active totemSlots
@@ -4049,177 +3742,96 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
     end
 
-    if event == "UNIT_AURA" then
-        local unitTarget, updateInfo = ...
-        if unitTarget ~= "player" then return end
-        -- Build a set of every aura instance ID that was explicitly removed.
-        local removedAuraSet = {}
-        if updateInfo and updateInfo.removedAuraInstanceIDs then
-            for _, auraID in ipairs(updateInfo.removedAuraInstanceIDs) do
-                removedAuraSet[auraID] = true
+    if event == "SPELL_UPDATE_ICON" then
+        local spellID = ...
+        local spellInfo = C_Spell.GetSpellInfo(spellID)
+        local overrideSpell = C_Spell.GetOverrideSpell(spellID)
+        local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpell)
+        if not spellID then return end
+        local match = FrameTrackerManager:MatchTrackerFrame(spellID)
+        if match then
+            -- Skip if mock cooldown is active
+            if match.customFrame.meta.mockCooldownActive then
+                return
+            end
+            
+            -- Use override spell for correct icon (handles stance/form changes)
+            local overrideSpellID = C_Spell.GetOverrideSpell(match.baseSpellID)
+            local spellInfo = C_Spell.GetSpellInfo(overrideSpellID) or C_Spell.GetSpellInfo(spellID)
+            if match.config.iconSettings.iconTexturePath == nil or match.config.iconSettings.iconTexturePath == '' then
+                match.customFrame.icon:SetTexture(spellInfo.iconID)
+                if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(spellInfo.iconID) end
+            end
+            if (match.trackerType ~= 'buffs') then
+                FrameTrackerManager:SetActiveSpellID(spellID, match.customFrame, "spell update icon")
+                if match.customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("SPELL_UPDATE_ICON", match.customFrame)  end
+                if match.customFrame.variantFrame and match.customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("SPELL_UPDATE_ICON", match.customFrame.variantFrame) end
             end
         end
+    end
+    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+        local unitTarget, castGUID, spellID, castBarID = ...
+        local isSecretSpellID = issecretvalue(spellID)
+        if isSecretSpellID then
+        else
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local match = FrameTrackerManager:MatchTrackerFrame(spellID)
+            if match then
+                FrameTrackerManager.lastSpellCast = {
+                    spellID = spellID,
+                    timestamp = GetTime(),
+                    frame = match.customFrame
+                }
+                FrameTrackerManager:MatchTotemEvent('UNIT_SPELLCAST_SUCCEEDED for totem tracker')
+            end
+            -- Detect talent changes (spell 384255 is the talent change spell)
+            if spellID == 384255 or spellID == 200749 then
+                -- Immediately hide and wipe old frames so that events fired
+                -- during the rescan delay don't reach stale frames or look up
+                -- old spells against the already-switched spec DB.
+                FrameTrackerManager:TeardownSpecFrames()
+                C_Timer.After(0.1, function()
+                    State:HandleTalentChange()
+                end)
+                return
+            end
 
-        --If an aura has been removed, its possible it was something that could modify a spells cooldown rate. The only way to respond (correctl update the duration and its ModRate, is to reapply, for any active cooldown)
-        for _, tType in ipairs({"spells", "items"}) do
-            if FrameTrackerManager.SpellStyler_frames[tType] then
-                for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+            local classSpecialization = State:GetCurrentSpecID()
+            --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
+            local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
+            if not hasSpecialization then
+                return
+            end
+            
+            --make sure "SPELL_UPDATE_ICON" is processed first
+            C_Timer.After(0, function()
+                
+
+                if match then
+                    -- Skip if mock cooldown is active
+                    if match.customFrame.meta.mockCooldownActive then
+                        return
+                    end
+                    if not match.customFrame.meta.isItem then
+                        FrameTrackerManager:SetActiveSpellID(spellID, match.customFrame, "unit spellcast succeeded")
+                    end
                     FrameTrackerManager:DriveFrameUpdate(
-                        customFrame,
+                        match.customFrame,
                         {
                             resolveDuration = true,
                             syncChargeText = true
                         },
                         nil,
-                        "respondingToPotentialModRateChange"
+                        "unitSpellcastSucceeded"
                     )
-                end
-            end
-        end
-
-
-        -- Also treat an aura as removed when Blizzard reports a full update
-        -- (isFullUpdate = true) — in that case refresh all CDM frames to let
-        -- them update their currentAuraInstanceID from the Blizzard frames.
-        local isFullUpdate = updateInfo and updateInfo.isFullUpdate
-        
-        if isFullUpdate then
-            -- On full update, call ProcessCDMFrameCallback for each CDM frame to refresh state
-            for slotIndex, cdm_frame in pairs(FrameTrackerManager.cooldownManagerFrames["buffs"]) do
-                ProcessCDMFrameCallback(cdm_frame, "buffs", "UNIT_AURA_fullUpdate")
-            end
-        end
-        
-        -- Handle explicit removals
-        for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["buffs"]) do
-            -- Skip if mock cooldown is active
-            if not (customFrame.meta.mockCooldownActive) then
-                local currentAuraInstanceID = customFrame.meta.currentAuraInstanceID or 0
-                local shouldClear = removedAuraSet[currentAuraInstanceID]
-                if shouldClear then
-                    -- Track buff removal for conditional engine
-                    if SpellStyler.ConditionalEngine then
-                        local activeBuffs = SpellStyler.ConditionalEngine.liveValues.activeBuffs or {}
-                        activeBuffs[baseSpellID] = false
-                        SpellStyler.ConditionalEngine:NotifySourceChanged("activeBuffs", activeBuffs)
+                    -- Check if this spell should track totem duration
+                    if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
+                        FrameTrackerManager:AddSpellToTotemQueue(match.customFrame.meta.activeSpellID, match.customFrame.meta.trackerType)
                     end
-                    
-                    if customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("UNIT_AURA", customFrame, nil) end
-                    if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("UNIT_AURA", customFrame.variantFrame, nil) end
-                end
-            end
-        end
-    end
-    if event == "SPELL_UPDATE_ICON" then
-        local spellID = ...
-        if not spellID then return end
-        pcall(function()
-            local match = FrameTrackerManager:MatchTrackerFrame(spellID)
-            if match then
-                -- Skip if mock cooldown is active
-                if match.customFrame.meta.mockCooldownActive then
-                    return
                 end
                 
-                -- Use override spell for correct icon (handles stance/form changes)
-                local overrideSpellID = C_Spell.GetOverrideSpell(match.baseSpellID)
-                local spellInfo = C_Spell.GetSpellInfo(overrideSpellID) or C_Spell.GetSpellInfo(spellID)
-                if match.config.iconSettings.iconTexturePath == nil or match.config.iconSettings.iconTexturePath == '' then
-                    match.customFrame.icon:SetTexture(spellInfo.iconID)
-                    if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(spellInfo.iconID) end
-                end
-                if (match.trackerType ~= 'buffs') then
-                    --only reapply data for non-buffs. The buffs should be using the hooks to update their data
-                    if match.customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("SPELL_UPDATE_ICON", match.customFrame, { activeSpellID = overrideSpellID })  end
-                    if match.customFrame.variantFrame and match.customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("SPELL_UPDATE_ICON", match.customFrame.variantFrame, { activeSpellID = overrideSpellID }) end
-                end
-            end
-        end)
-    end
-    if event == "UNIT_SPELLCAST_SUCCEEDED" then
-        local unitTarget, castGUID, spellID, castBarID = ...
-        local isSecretSpellID = issecretvalue(spellID)
-        local s, e = pcall(function()
-            if isSecretSpellID then
-            else
-                local match = FrameTrackerManager:MatchTrackerFrame(spellID)
-                if match then
-                    FrameTrackerManager.lastSpellCast = {
-                        spellID = spellID,
-                        timestamp = GetTime(),
-                        frame = match.customFrame
-                    }
-                    FrameTrackerManager:MatchTotemEvent('UNIT_SPELLCAST_SUCCEEDED for totem tracker')
-                end
-                -- Detect talent changes (spell 384255 is the talent change spell)
-                if spellID == 384255 or spellID == 200749 then
-                    -- Immediately hide and wipe old frames so that events fired
-                    -- during the rescan delay don't reach stale frames or look up
-                    -- old spells against the already-switched spec DB.
-                    FrameTrackerManager:TeardownSpecFrames()
-                    C_Timer.After(0.1, function()
-                        State:HandleTalentChange()
-                    end)
-                    return
-                end
-                local classSpecialization = State:GetCurrentSpecID()
-                --its necessary to have a valid class specialization. Sometimes (like taking a portal) can cause it to return 0 resulting in a bad call to the database.
-                local hasSpecialization = classSpecialization and classSpecialization ~= 0 and classSpecialization ~= '0'
-                if not hasSpecialization then
-                    return
-                end
-                
-                --make sure "SPELL_UPDATE_ICON" is processed first
-                C_Timer.After(0, function()
-                    
-
-                    if match then
-                        -- Skip if mock cooldown is active
-                        if match.customFrame.meta.mockCooldownActive then
-                            return
-                        end
-                        local activeSpellID = spellID
-                        local override = C_Spell.GetOverrideSpell(spellID)
-                        if override ~= spellID and not match.customFrame.meta.isItem then
-                            activeSpellID = override
-                            local spellInfoUpdate = C_Spell.GetSpellInfo(override)
-                            --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
-                            --Save the override spell onto the frame though to be able to check future casts
-                            FrameTrackerManager:SetMetaOnBaseAndVariant(match.customFrame, "activeSpellID", override)
-
-                            -- Attempt to update charges if it mutated into a spell with charges
-                            FrameTrackerManager:DriveFrameUpdate(
-                                match.customFrame,
-                                {
-                                    resolveDuration = false,
-                                    syncChargeText = true
-                                },
-                                nil,
-                                "unitSpellcastSucceeded_spellOverwritten"
-                            )
-                        else
-                            local spellInfo = C_Spell.GetSpellInfo(spellID)
-                            -- FrameTrackerManager:ApplyCooldownDuration(match)
-                           
-                            FrameTrackerManager:DriveFrameUpdate(
-                                match.customFrame,
-                                {
-                                    resolveDuration = true,
-                                    syncChargeText = true
-                                },
-                                nil,
-                                "unitSpellcastSucceeded_spellUnchanged"
-                            )
-                        end
-                        -- Check if this spell should track totem duration
-                        if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
-                            FrameTrackerManager:AddSpellToTotemQueue(activeSpellID, match.customFrame.meta.trackerType)
-                        end
-                    end
-                    
-                end)
-            end
-        end)
+            end)
+        end
     end
     if event == "SPELL_UPDATE_COOLDOWN" then
         local spellID, baseSpellID, category, startRecoveryCategory = ...
@@ -4227,60 +3839,33 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if not spellID then
             return
         end
+        FrameTrackerManager:SetActiveSpellID(spellID, nil, "spell update cooldown")
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
+
         if frameMatchData then
             -- Skip if mock cooldown is active
             if frameMatchData.customFrame.meta.mockCooldownActive then
                 return
             end
             
-            local success, error = pcall(function()
-                local isActive
-                pcall(function()
-                    if frameMatchData.customFrame.meta.isSpellWithCharges then
-                        isActive = C_Spell.GetSpellCharges(frameMatchData.customFrame.meta.activeSpellID).isActive
-                    else
-                        isActive = C_Spell.GetSpellCooldown(frameMatchData.customFrame.meta.activeSpellID).isActive
-                    end
-                end)
-                if isActive and frameMatchData.customFrame.meta.trackerType ~= 'buffs' then
-                    -- FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
-                    FrameTrackerManager:DriveFrameUpdate(
-                        frameMatchData.customFrame,
-                        {
-                            resolveDuration = true,
-                            syncChargeText = true
-                        },
-                        nil,
-                        "spellUpdateCooldown_updateOtherSpellsOnCooldown"
-                    )
-                end
+            
 
-                if cooldownInfo.isOnGCD == true then
-                    return  -- GCD only – nothing to do
-                end
-                -- local baseSpellInfo = C_Spell.GetSpellInfo(spellID)
-                local overrideSpellID = C_Spell.GetOverrideSpell(spellID)
-                -- local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
-                if overrideSpellID ~= frameMatchData.customFrame.meta.activeSpellID then
-                    --The spell that was cast, is not equal to the active spell (likely due to changing via its cast). Wait for the spell cast to match the active in order to apply to correct/active cooldown
-                    --Save the override spell onto the frame though to be able to check future casts
-                    FrameTrackerManager:SetMetaOnBaseAndVariant(frameMatchData.customFrame, "activeSpellID", overrideSpellID)
-                    return
-                end
-                -- FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
-                FrameTrackerManager:DriveFrameUpdate(
-                    frameMatchData.customFrame,
-                    {
-                        resolveDuration = true,
-                        syncChargeText = true
-                    },
-                    nil,
-                    "spellUpdateCooldown_updateEventSpell"
-                )
-            end)
+            if cooldownInfo.isOnGCD == true then
+                return  -- GCD only – nothing to do
+            end
+            
+            -- FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
+            FrameTrackerManager:DriveFrameUpdate(
+                frameMatchData.customFrame,
+                {
+                    resolveDuration = true,
+                    syncChargeText = true
+                },
+                nil,
+                "spellUpdateCooldown_updateEventSpell"
+            )
         end
     end
 end)

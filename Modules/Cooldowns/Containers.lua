@@ -146,34 +146,26 @@ function Containers:DetachIconsFromContainer(uniqueIDs)
             local f = FTM:GetTrackerFrame(uniqueID, tType)
             if f then
                 f._inContainer = nil
-                
-                -- Clean up containerAnchorBar with pcall protection
+
                 if f.containerAnchorBar then
-                    pcall(function()
-                        f.containerAnchorBar:SetValue(0)
-                        f.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)
-                        local barTex = f.containerAnchorBar:GetStatusBarTexture()
-                        if barTex then
-                            barTex:SetAlpha(0)
-                            barTex:SetVertexColor(0, 0, 0, 0)
-                        end
-                        f.containerAnchorBar:SetAlpha(0)
-                        f.containerAnchorBar:Hide()
-                        f.containerAnchorBar:ClearAllPoints()
-                        f.containerAnchorBar:SetParent(nil)
-                    end)
+                    
+                    f.containerAnchorBar:SetValue(0)
+                    f.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)
+                    local barTex = f.containerAnchorBar:GetStatusBarTexture()
+                    if barTex then
+                        barTex:SetAlpha(0)
+                        barTex:SetVertexColor(0, 0, 0, 0)
+                    end
+                    f.containerAnchorBar:SetAlpha(0)
+                    f.containerAnchorBar:Hide()
+                    f.containerAnchorBar:ClearAllPoints()
+                    f.containerAnchorBar:SetParent(nil)
                     f.containerAnchorBar = nil
                 end
                 
-                -- Restore frame to full visibility with pcall protection
-                pcall(function()
-                    f:SetAlpha(1)
-                end)
+                f:SetAlpha(1)
                 
-                -- Apply properties with pcall to prevent taint propagation
-                pcall(function()
-                    FTM:ApplyStaticFrameProperties(uniqueID, tType)
-                end)
+                FTM:ApplyStaticFrameProperties(uniqueID, tType)
                 break
             end
         end
@@ -277,7 +269,7 @@ function Containers:LayoutContainer(name)
     end
     local gridWidth  = numCols * containerIconW + (numCols - 1) * 4
     local gridHeight = numRows * containerIconH + (numRows - 1) * 4
-    pcall(function() containerFrame:SetSize(gridWidth + PADDING * 2, gridHeight + PADDING * 2) end)
+    containerFrame:SetSize(gridWidth + PADDING * 2, gridHeight + PADDING * 2)
 
     for i, uid in ipairs(config.associatedIcons) do
         for _, tType in ipairs(trackerTypes) do
@@ -297,29 +289,28 @@ function Containers:LayoutContainer(name)
                 
                 -- Clean up containerAnchorBar if container is not collapsible
                 if not config.collapsible and frame.containerAnchorBar then
-                    pcall(function()
-                        frame.containerAnchorBar:SetValue(0)
-                        frame.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)
-                        local barTex = frame.containerAnchorBar:GetStatusBarTexture()
-                        if barTex then
-                            barTex:SetAlpha(0)
-                            barTex:SetVertexColor(0, 0, 0, 0)
-                        end
-                        frame.containerAnchorBar:SetAlpha(0)
-                        frame.containerAnchorBar:Hide()
-                        frame.containerAnchorBar:ClearAllPoints()
-                        frame.containerAnchorBar:SetParent(nil)
-                    end)
+                    
+                    frame.containerAnchorBar:SetValue(0)
+                    frame.containerAnchorBar:SetStatusBarColor(0, 0, 0, 0)
+                    local barTex = frame.containerAnchorBar:GetStatusBarTexture()
+                    if barTex then
+                        barTex:SetAlpha(0)
+                        barTex:SetVertexColor(0, 0, 0, 0)
+                    end
+                    frame.containerAnchorBar:SetAlpha(0)
+                    frame.containerAnchorBar:Hide()
+                    frame.containerAnchorBar:ClearAllPoints()
+                    frame.containerAnchorBar:SetParent(nil)
                     frame.containerAnchorBar = nil
                 end
                 
                 -- Restore full visibility for non-collapsible containers
                 if not config.collapsible then
-                    pcall(function() frame:SetAlpha(1) end)
+                    frame:SetAlpha(1)
                 end
                 
                 -- Resize the icon to the container's configured dimensions
-                pcall(function() frame:SetSize(containerIconW, containerIconH) end)
+                frame:SetSize(containerIconW, containerIconH)
                 local iconW = containerIconW
                 local iconH = containerIconH
                 local idx   = i - 1  -- 0-based for modular arithmetic
@@ -471,14 +462,12 @@ function Containers:CollapseLayout(name)
                 frame.containerAnchorBar:Show()
                 frame.containerAnchorBar:SetAlpha(0)
                 
-                -- Set bar size based on orientation with pcall protection
-                pcall(function()
-                    if vertical then
-                        frame.containerAnchorBar:SetSize(containerIconW, barSize)
-                    else
-                        frame.containerAnchorBar:SetSize(barSize, containerIconH)
-                    end
-                end)
+                
+                if vertical then
+                    frame.containerAnchorBar:SetSize(containerIconW, barSize)
+                else
+                    frame.containerAnchorBar:SetSize(barSize, containerIconH)
+                end
                 
                 -- Position the bar: first bar anchors to container, others chain to previous
                 frame.containerAnchorBar:ClearAllPoints()

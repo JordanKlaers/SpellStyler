@@ -266,3 +266,6 @@ Vesrion 1.11.3
 	- Fixes updating on talent changes
 	- Modifies style in the settings menu, only cosmetic
 	- Clears totem information upon death to prevent stale states
+
+Version 2.0.0
+	- New Aura container system implemented

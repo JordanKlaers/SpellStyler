@@ -553,9 +553,7 @@ function ConditionalEngine:CalculateCurveValue(healthConfig, overrideValue, base
             }
         else
             local calculatedValue = 1
-            local s, e = pcall(function()
-                calculatedValue = UnitHealthPercent(healthConfig.unit, true, SpellStyler.Util:CurveComparison(healthConfig.targetValue, overrideValue, baseValue, healthConfig.comparison))
-            end)            
+            calculatedValue = UnitHealthPercent(healthConfig.unit, true, SpellStyler.Util:CurveComparison(healthConfig.targetValue, overrideValue, baseValue, healthConfig.comparison))
             return calculatedValue
         end
     else
@@ -669,6 +667,9 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
             duration = override.duration  -- Preserve duration for temporary overrides
         })
     end
+    if frame.meta.baseSpellID == 116670 then
+        -- DevTool:AddData(computedOverrides, "caching property overrides onto frame")
+    end
     -- Apply and cache COMPUTED overrides to all target frames
     for _, targetFrame in ipairs(targetFrames) do
         ConditionalEngine:CacheFramePropertyOverrides(targetFrame, conditionalKey, computedOverrides)
@@ -761,7 +762,7 @@ function ConditionalEngine:EvaluateAll()
     local FrameTrackerManager = SpellStyler.FrameTrackerManager
     if not FrameTrackerManager then return end
 
-    local success, specDatabase = pcall(function() return State:GetDataBase_V2() end)
+    local success, specDatabase = State:GetDataBase_V2()
     if not success or not specDatabase then return end
 
     for _, trackerType in ipairs({ "spells", "buffs" }) do

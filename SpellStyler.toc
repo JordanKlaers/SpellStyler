@@ -1,8 +1,8 @@
-## Interface: 120000, 120005, 120007
+## Interface: 120100
 ## Title: Spell Styler
 ## Notes: Enhanced cooldown tracking with custom layouts, visibility controls, and proc alerts.
 ## Author: EonWorm
-## Version: 1.11.3
+## Version: 2.0.0
 ## SavedVariables: SpellStyler_DB
 ## SavedVariablesPerCharacter: SpellStyler_CharDB
 ## X-Category: Interface Enhancements
@@ -25,6 +25,7 @@ Modules\Cooldowns\GlowAnimation.lua
 Modules\Cooldowns\Util.lua
 Modules\Cooldowns\Containers.lua
 Modules\Cooldowns\FrameTrackerManager.lua
+Modules\Cooldowns\BuffManager.lua
 
 # ============================================================================
 # Core - UI Framework

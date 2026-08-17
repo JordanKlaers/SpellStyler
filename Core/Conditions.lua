@@ -809,14 +809,13 @@ ConditionalCreator.conditionalTypeRenderers = {
                 -- Handle both single ID and table of IDs
                 local firstID = (type(data.buffID) == "table") and data.buffID[1] or data.buffID
                 -- Try to get the buff name
-                pcall(function()
-                    local buffInfo = C_Spell.GetSpellInfo(firstID)
-                    if buffInfo and buffInfo.name then
-                        txt = buffInfo.name
-                    else
-                        txt = "Buff " .. tostring(firstID)
-                    end
-                end)
+                
+                local buffInfo = C_Spell.GetSpellInfo(firstID)
+                if buffInfo and buffInfo.name then
+                    txt = buffInfo.name
+                else
+                    txt = "Buff " .. tostring(firstID)
+                end
             end
             UIDropDownMenu_SetText(buffDropdown, txt)
         end
@@ -833,12 +832,11 @@ ConditionalCreator.conditionalTypeRenderers = {
             local buffsByName = {}
             for buffID, trackerValue in pairs(db.buffs) do
                 local buffName = "Buff " .. tostring(buffID)
-                pcall(function()
-                    local buffInfo = C_Spell.GetSpellInfo(buffID)
-                    if buffInfo and buffInfo.name then
-                        buffName = buffInfo.name
-                    end
-                end)
+                
+                local buffInfo = C_Spell.GetSpellInfo(buffID)
+                if buffInfo and buffInfo.name then
+                    buffName = buffInfo.name
+                end
                 
                 if not buffsByName[buffName] then
                     buffsByName[buffName] = {}

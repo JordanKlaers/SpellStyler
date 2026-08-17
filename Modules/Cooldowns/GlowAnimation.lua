@@ -148,11 +148,9 @@ function GlowUtil:PlayProcGlow(frame, duration, overrideColor)
     end
     holder:Show()
     holder.ProcLoop:Play()
-    pcall(function()
-        if duration then
-            C_Timer.After(duration, function() GlowUtil:StopProcGlow(frame) end)
-        end
-    end)
+    if duration then
+        C_Timer.After(duration, function() GlowUtil:StopProcGlow(frame) end)
+    end
 end
 
 --- Stop and hide the proc-glow animation.
