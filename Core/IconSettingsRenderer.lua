@@ -660,9 +660,7 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
         RADIAL_DISPLAY_OPTIONS = {
-            { label = "Show Always", value = "always" },
             { label = "Show when active", value = "active" },
-            { label = "Show when inactive", value = "inactive" },
             { label = "Show Never", value = "never" },
         }
     else
@@ -1033,9 +1031,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
         RADIAL_DISPLAY_OPTIONS = {
-            -- { label = "Show Always", value = "always" },
             { label = "Show when active", value = "active" },
-            -- { label = "Show when inactive", value = "inactive" },
             { label = "Show Never", value = "never" },
         }
     else
@@ -1229,6 +1225,14 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     tooltip = "Track as a debuff on your target instead of a buff on yourself",
                     getValue = function(self) return config.getValue(self.uniqueID, "isNPCDebuff") == true end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "isNPCDebuff", value) end,
+                })
+            end
+            if config.trackerType == 'buffs' then
+                table.insert(sections, {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderAuraForSpecInput(container, lastControl, uid, tType, rerender, config)
+                    end
                 })
             end
             -- Additional Spell IDs input (buffs only)
@@ -1518,37 +1522,38 @@ end
 -- Maps each user-visible property label to its dot-path in the tracker config
 -- and the type of value input needed.
 local PROPERTY_DEFS = {
-    { label = "Offset X",              path = "position.x",                     inputType = "text"  }, --SetPoint does not accept secret values, so to implement youd need two statusBars for the x and y shift
-    { label = "Offset Y",              path = "position.y",                     inputType = "text"  }, --SetPoint does not accept secret values, so to implement youd need two statusBars for the x and y shift
-    { label = "Icon Color",            path = "iconColor",                      inputType = "color" },
-    { label = "Icon Custom Texture",   path = "iconSettings.iconTexturePath",   inputType = "text",     inputLabel = "Texture path:"  },
-    { label = "Icon Width",            path = "iconSettings.width",             inputType = "text"  },
-    { label = "Icon Height",           path = "iconSettings.height",            inputType = "text"  },
-    { label = "Opacity",               path = "iconSettings.opacity",           inputType = "text"  },
-    { label = "Trigger Glow",          path = "glowNotification.glowColor",     inputType = "color" }, -- This is an unusual one, its assumed that if this property is present then it SHOULD should the glow notification when its associated condition passes
+    { label = "Offset X",              path = "position.x",                     inputType = "text",  default = 0 }, --SetPoint does not accept secret values, so to implement youd need two statusBars for the x and y shift
+    { label = "Offset Y",              path = "position.y",                     inputType = "text",  default = 0  }, --SetPoint does not accept secret values, so to implement youd need two statusBars for the x and y shift
+    { label = "Icon Color",            path = "iconColor",                      inputType = "color", default = { r = 1, g = 1, b = 1, a = 1 } },
+    { label = "Set Desaturated",       path = "iconSettings.desaturated",       inputType = "checkbox", default = false },
+    { label = "Icon Custom Texture",   path = "iconSettings.iconTexturePath",   inputType = "text",  inputLabel = "Texture path:",  default = ""  },
+    { label = "Icon Width",            path = "iconSettings.width",             inputType = "text",  default = 48  },
+    { label = "Icon Height",           path = "iconSettings.height",            inputType = "text",  default = 48  },
+    { label = "Opacity",               path = "iconSettings.opacity",           inputType = "text",  default = 1  },
+    { label = "Trigger Glow",          path = "glowNotification.glowColor",     inputType = "color", default = { r = 1, g = 1, b = 1, a = 1 } }, -- This is an unusual one, its assumed that if this property is present then it SHOULD should the glow notification when its associated condition passes
     -- { label = "Custom Label",          path = "customLabel.text",               inputType = "text"  },
-    { label = "Custom Label Size",     path = "customLabel.size",               inputType = "text"  },
-    { label = "Custom Label X",        path = "customLabel.x",                  inputType = "text"  },
-    { label = "Custom Label Y",        path = "customLabel.y",                  inputType = "text"  },
-    { label = "Custom Label Color",    path = "customLabel.color",              inputType = "color" },
-    { label = "Cooldown Text Size",    path = "cooldownText.size",              inputType = "text"  },
-    { label = "Cooldown Text Color",   path = "cooldownText.color",             inputType = "color" },
-    { label = "Cooldown Text X",       path = "cooldownText.x",                 inputType = "text"  },
-    { label = "Cooldown Text Y",       path = "cooldownText.y",                 inputType = "text"  },
-    { label = "Count Text Size",       path = "countText.size",                 inputType = "text"  },
-    { label = "Count Text X",          path = "countText.x",                    inputType = "text"  },
-    { label = "Count Text Y",          path = "countText.y",                    inputType = "text"  },
-    { label = "Count Text Color",      path = "countText.color",                inputType = "color" },
+    { label = "Custom Label Size",     path = "customLabel.size",               inputType = "text", default = 10 },
+    { label = "Custom Label X",        path = "customLabel.x",                  inputType = "text", default = 0 },
+    { label = "Custom Label Y",        path = "customLabel.y",                  inputType = "text", default = 0  },
+    { label = "Custom Label Color",    path = "customLabel.color",              inputType = "color", default = { r = 1, g = 1, b = 1, a = 1 } },
+    { label = "Cooldown Text Size",    path = "cooldownText.size",              inputType = "text", default = 10  },
+    { label = "Cooldown Text Color",   path = "cooldownText.color",             inputType = "color", default = { r = 1, g = 1, b = 1, a = 1 } },
+    { label = "Cooldown Text X",       path = "cooldownText.x",                 inputType = "text", default = 0  },
+    { label = "Cooldown Text Y",       path = "cooldownText.y",                 inputType = "text", default = 0  },
+    { label = "Count Text Size",       path = "countText.size",                 inputType = "text", default = 0  },
+    { label = "Count Text X",          path = "countText.x",                    inputType = "text", default = 0  },
+    { label = "Count Text Y",          path = "countText.y",                    inputType = "text", default = 0  },
+    { label = "Count Text Color",      path = "countText.color",                inputType = "color", default = { r = 1, g = 1, b = 1, a = 1 } },
     -- { label = "CD Bar Texture",        path = "statusBar.customBarTexture",     inputType = "text"  },
-    { label = "CD Bar Color",          path = "statusBar.color",                inputType = "color" },
+    { label = "CD Bar Color",          path = "statusBar.color",                inputType = "color", default = { r = 1, g = 1, b = 1, a = 1 } },
     -- { label = "CD Bar BG Color",       path = "statusBar.backgroundColor",      inputType = "color" },
     -- { label = "CD Bar Border Color",   path = "statusBar.borderColor",          inputType = "color" },
     -- { label = "CD Bar Border Scale",   path = "statusBar.borderScale",          inputType = "text"  },
-    { label = "CD Bar Scale",          path = "statusBar.scale",                inputType = "text"  },
-    { label = "CD Bar X",              path = "statusBar.x",                    inputType = "text"  },
-    { label = "CD Bar Y",              path = "statusBar.y",                    inputType = "text"  },
-    { label = "CD Bar Width",          path = "statusBar.width",                inputType = "text"  },
-    { label = "CD Bar Height",         path = "statusBar.height",               inputType = "text"  },
+    { label = "CD Bar Scale",          path = "statusBar.scale",                inputType = "text", default = 1  },
+    { label = "CD Bar X",              path = "statusBar.x",                    inputType = "text", default = 0  },
+    { label = "CD Bar Y",              path = "statusBar.y",                    inputType = "text", default = 0  },
+    { label = "CD Bar Width",          path = "statusBar.width",                inputType = "text", default = 0  },
+    { label = "CD Bar Height",         path = "statusBar.height",               inputType = "text", default = 0  },
 }
 
 local _PROP_DEF_BY_PATH = {}
@@ -1556,6 +1561,67 @@ for _, def in ipairs(PROPERTY_DEFS) do _PROP_DEF_BY_PATH[def.path] = def end
 
 local PLUS_ICON_PATH_SVC = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\PlusIcon.tga"
 
+
+function IconSettingsRenderer:RenderAuraForSpecInput(container, lastControl, uniqueID, trackerType, rerender, config)
+    -- Get class and spec info
+    local classSpecInfo = SpellStyler.State:GetClassAndSpecInfo()
+    
+    -- Create header row
+    local headerRow = CreateFrame("Frame", nil, container)
+    headerRow:SetSize(290, 25)
+    headerRow:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -5)
+    
+    local label = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetText("Enable aura for these specializations:")
+    label:SetTextColor(0.8, 0.8, 0.8)
+    label:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
+    
+    local currentAnchor = headerRow
+    
+    -- Create a row for each spec
+    for i, specInfo in ipairs(classSpecInfo.specs) do
+        local specRow = CreateFrame("Frame", nil, container)
+        specRow:SetSize(290, 24)
+        specRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -2)
+        
+        -- Create checkbox
+        local checkbox = CreateFrame("CheckButton", nil, specRow, "UICheckButtonTemplate")
+        checkbox:SetSize(20, 20)
+        checkbox:SetPoint("LEFT", specRow, "LEFT", 0, 0)
+        
+        -- Store references for getValue/setValue
+        checkbox.uniqueID = uniqueID
+        checkbox.specID = specInfo.specId
+        
+        -- Set initial state
+        local auraSpecs = config.getValue(uniqueID, "auraSpecs") or {}
+        checkbox:SetChecked(auraSpecs[specInfo.specId] or false)
+        
+        -- Handle checkbox click
+        checkbox:SetScript("OnClick", function(self)
+            local isChecked = self:GetChecked()
+            local currentAuraSpecs = config.getValue(self.uniqueID, "auraSpecs") or {}
+            currentAuraSpecs[self.specID] = isChecked or false
+            config.setValue(self.uniqueID, "auraSpecs", currentAuraSpecs)
+        end)
+        
+        -- Create spec icon
+        local iconTexture = specRow:CreateTexture(nil, "ARTWORK")
+        iconTexture:SetSize(20, 20)
+        iconTexture:SetPoint("LEFT", checkbox, "RIGHT", 5, 0)
+        iconTexture:SetTexture(specInfo.icon)
+        
+        -- Create spec name label
+        local specNameLabel = specRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        specNameLabel:SetText(specInfo.name)
+        specNameLabel:SetTextColor(0.8, 0.8, 0.8)
+        specNameLabel:SetPoint("LEFT", iconTexture, "RIGHT", 5, 0)
+        
+        currentAnchor = specRow
+    end
+    
+    return currentAnchor
+end
 -- ============================================================================
 -- ADDITIONAL SPELL IDS INPUT RENDERER (Buffs only)
 -- Renders an input field for adding spell IDs to track alongside the main buff
@@ -2063,13 +2129,25 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                         info.checked = (override.property == def.path)
                         info.func    = function(btn)
                             -- TODO: If the property is the glow notification call a method to add or update the glowNotification to work via alpha rather than duration
-                            SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "property", btn.value)
-                            local newDef = _PROP_DEF_BY_PATH[btn.value]
-                            if newDef and newDef.inputType == "color" then
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=1, g=1, b=1, a=1 })
-                            else
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", "")
+                            local updatePayload = {
+                                {
+                                    condIndex = conditionIndex,
+                                    overrideIndex = propertyOverrideIndex,
+                                    field = "property",
+                                    value = btn.value
+                                }
+                            }
+                            -- SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "property", btn.value)
+                            local selectedPropertyConfig = _PROP_DEF_BY_PATH[btn.value]
+                            if selectedPropertyConfig then
+                                table.insert(updatePayload, {
+                                    condIndex = conditionIndex,
+                                    overrideIndex = propertyOverrideIndex,
+                                    field = "value",
+                                    value = selectedPropertyConfig.default
+                                })
                             end
+                            SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, updatePayload)
                             rerender()
                         end
                         UIDropDownMenu_AddButton(info, level)
@@ -2098,23 +2176,32 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=nr, g=ng, b=nb, a=na })
-                                -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
-                                -- No need to call EvaluateAll again during dragging
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, {{
+                                    condIndex = conditionIndex,
+                                    overrideIndex = propertyOverrideIndex,
+                                    field = "value",
+                                    value = { r=nr, g=ng, b=nb, a=na }
+                                }})
                             end,
                             opacityFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorBtn:SetBackdropColor(nr, ng, nb, na)
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=nr, g=ng, b=nb, a=na })
-                                -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
-                                -- No need to call EvaluateAll again during dragging
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, {{
+                                    condIndex = conditionIndex,
+                                    overrideIndex = propertyOverrideIndex,
+                                    field = "value",
+                                    value = { r=nr, g=ng, b=nb, a=na }
+                                }})
                             end,
                             cancelFunc = function(prev)
                                 colorBtn:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
-                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 })
-                                -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
-                                -- No need to call EvaluateAll again during cancel
+                                SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, {{
+                                    condIndex = conditionIndex,
+                                    overrideIndex = propertyOverrideIndex,
+                                    field = "value",
+                                    value = { r=prev.r, g=prev.g, b=prev.b, a=prev.a or 1 }
+                                }})
                             end,
                             hasOpacity = 1,
                             opacity    = cur.a or 1,
@@ -2124,7 +2211,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                         }
                         ColorPickerFrame:SetupColorPickerAndShow(info)
                     end)
-                else
+                elseif propDef and propDef.inputType == "text" then
                     local textInput = CreateFrame("EditBox", nil, overrideBox, "InputBoxTemplate")
                     textInput:SetSize(130, 18)
                     textInput:SetPoint("TOPRIGHT", propDropdown, "BOTTOMRIGHT", -16, -4)
@@ -2132,10 +2219,43 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     textInput:SetMaxLetters(256)
                     textInput:SetText(tostring(override.value or ""))
                     textInput:SetScript("OnTextChanged", function(self)
-                        SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "value", self:GetText())
-                        -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
-                        -- No need to call EvaluateAll again during typing
+                        local number
+                        pcall(function() number = tonumber(self:GetText()) end) 
+                        if number then
+                            SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, {{
+                                condIndex = conditionIndex,
+                                overrideIndex = propertyOverrideIndex,
+                                field = "value",
+                                value = tonumber(self:GetText())
+                            }})
+                        end
                     end)
+                elseif propDef and propDef.inputType == "checkbox" then
+                    -- Create a container frame for the checkbox + label
+                    local checkboxContainer = CreateFrame("Frame", nil, overrideBox)
+                    checkboxContainer:SetSize(150, 20)
+                    checkboxContainer:SetPoint("TOPRIGHT", propDropdown, "BOTTOMRIGHT", -16, -4)
+                    
+                    -- Checkbox
+                    local checkbox = CreateFrame("CheckButton", nil, checkboxContainer, "UICheckButtonTemplate")
+                    checkbox:SetSize(20, 20)
+                    checkbox:SetPoint("RIGHT", checkboxContainer, "RIGHT", 0, 0)
+                    checkbox:SetChecked(override.value or false)
+                    checkbox:SetScript("OnClick", function(self)
+                        SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, {{
+                            condIndex = conditionIndex,
+                            overrideIndex = propertyOverrideIndex,
+                            field = "value",
+                            value = self:GetChecked()
+                        }})
+                    end)
+                    
+                    -- Label (property name from propDef.label)
+                    local checkboxLabel = checkboxContainer:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    checkboxLabel:SetPoint("RIGHT", checkbox, "LEFT", -4, 0)
+                    checkboxLabel:SetText(propDef.label)
+                    checkboxLabel:SetTextColor(0.8, 0.8, 0.8)
+
                 end
 
                 -- ── Row 3: Duration input ──────────────────────────────────────
@@ -2156,9 +2276,12 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 durationInput:SetScript("OnTextChanged", function(self)
                     local text = self:GetText()
                     local duration = (text and text ~= "") and tonumber(text) or nil
-                    SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, conditionIndex, propertyOverrideIndex, "duration", duration)
-                    -- SetPropertyOverrideField already updates cache and triggers ApplyStaticFrameProperties
-                    -- No need to call EvaluateAll again during typing
+                    SpellStyler.State:SetPropertyOverrideField(uniqueID, trackerType, {{
+                            condIndex = conditionIndex,
+                            overrideIndex = propertyOverrideIndex,
+                            field = "duration",
+                            value = duration
+                        }})
                 end)
                 
                 -- Check if the conditional requires constant updates (e.g., UnitHealth)
@@ -2334,9 +2457,10 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 local containerData = SpellStyler.BuffManager.buffContainers[uniqueID]
                 
                 -- Hide and clean up aura container
-                if containerData then
-                    SpellStyler.BuffManager:UpdateAura(containerData, SpellStyler.State:GetSpecificTrackerValue(uniqueID, 'buffs'))
-                    containerData.auraContainer:UpdateAllAuras()
+                local trackedConfig = SpellStyler.State:GetSpecificTrackerValue(uniqueID, 'buffs')
+                if containerData and trackedConfig then
+                    SpellStyler.BuffManager:UpdateAura(containerData, trackedConfig)
+                    -- containerData.auraContainer:UpdateAllAuras()
                 end
             end
         else
@@ -3468,10 +3592,23 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
         local dragEnd = function(self)
             self:StopMovingOrSizing()
             
-            -- Get the current offset directly from GetPoint
-            local point, relativeTo, relativePoint, offsetX, offsetY = self:GetPointByName('CENTER')
+            -- Calculate position using mouse cursor relative to UIParent CENTER
+            -- (similar to Mouse tracking in FrameTrackerManager)
+            local scale = UIParent:GetEffectiveScale()
+            local mouseX, mouseY = GetCursorPosition()
+            mouseX, mouseY = mouseX / scale, mouseY / scale
             
-            -- offsetX is good as-is, but offsetY needs adjustment for statusBar chain
+            -- Calculate offset from UIParent's center (using CENTER anchor point)
+            local uiX, uiY = UIParent:GetCenter()
+            local offsetX = mouseX - uiX
+            local offsetY = mouseY - uiY
+            
+            -- Account for frame's scale (positions are scaled by frame's scale)
+            local frameScale = self:GetScale() or 1
+            offsetX = offsetX / frameScale
+            offsetY = offsetY / frameScale
+            
+            -- offsetY needs adjustment for statusBar chain
             local adjustedOffsetY = offsetY
             
             local anchorModeData = self.meta and self.meta.anchorModeData
@@ -3512,11 +3649,16 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
                 end
             end
             
+            -- Save position using CENTER anchor point (frame's CENTER to UIParent's CENTER)
             State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.x", offsetX)
             State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.y", adjustedOffsetY)
+            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.anchorPoint", "CENTER")
+            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.relativeAnchorPoint", "CENTER")
             
-            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.ApplyStaticFrameProperties then
+            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.ApplyStaticFrameProperties and trackerType ~= 'buffs' then
                 SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+            elseif SpellStyler.BuffManager.buffContainers then
+                -- SpellStyler.BuffManager:UpdateAura(SpellStyler.BuffManager.buffContainers[baseSpellID], SpellStyler.State:GetSpecificTrackerValue(baseSpellID, 'buffs'))
             end
         end
         

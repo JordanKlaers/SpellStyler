@@ -269,3 +269,12 @@ Vesrion 1.11.3
 
 Version 2.0.0
 	- New Aura container system implemented
+
+Version 2.0.1
+	- Updates to add spell and aura to be more reliable
+	- Updates the settings menu dropdowns for aura visibility on the icon and status bars to offer only values that can be controlled
+	- Adds input for auras to flag which specs the aura should be enabled for. "Disable" button at the top turn it off for all specs and removes it from the settings menu. Removing all checkboxes keeps it in the settings menu but disables it. Essentially both have the same outcome.
+	- Corrects some issues with conditionals that should help with a few bugs. These still will not work with auras due to the new system.
+	- Updates so that modifications to the aura in the settings menu should no longer require manually reloading for settings to take affect
+	- Updates so aura frame to NOT unintentionally display when moving between portals, zones, ect.
+	- Spells that changes into other spells should more reliably display the correct cooldown. Added additional event registration to ensure proper response, and updates the way the correct cooldown duration is choosen to apply to the frame

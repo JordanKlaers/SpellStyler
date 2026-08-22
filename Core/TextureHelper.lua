@@ -361,7 +361,7 @@ end
 local donk
 local doop
 -- Keybind handler: Shift+Ctrl+L
-
+local frame 
 pcall(function()
     local texScanFrame = CreateFrame("Frame")
     texScanFrame:SetPropagateKeyboardInput(true)
@@ -371,14 +371,44 @@ pcall(function()
     texScanFrame:SetScript("OnEvent", function()
         texScanFrame:SetScript("OnKeyDown", function(self, key)
             -- Shift+Ctrl+X: Test AuraContainer with spell ID filtering
-            if key == "Z" and IsShiftKeyDown() and IsControlKeyDown() then
-                local a,b,c,d,e,f = C_Spell.GetSpellCooldown(107428)
-                DevTool:AddData({
-                    a,b,c,d,e,f
-                }, "something")
+            if key == "1" and IsShiftKeyDown() and IsControlKeyDown() then
+                
+            end
+            if key == "2" and IsShiftKeyDown() and IsControlKeyDown() then
+                
             end
             if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                SpellStyler.BuffManager:RefreshAllBuffAuras()
+                -- local baseSpellInfo = C_Spell.GetSpellInfo(228260)
+                -- frame = CreateFrame("Button", 'donk', UIParent, "BackdropTemplate")
+                -- frame:SetSize(50,50)
+                -- frame:SetPoint("CENTER", UIParent, "CENTER")
+                -- local icon = frame:CreateTexture(nil, "ARTWORK")
+                -- frame.icon = icon
+                -- icon:SetAllPoints(frame)
+                -- frame.icon:SetTexCoord(0, 1, 0, 1)
+                -- frame.icon:SetTexture(baseSpellInfo.iconID)
+                -- frame[228260] = CreateFrame("Cooldown", "_Cooldown", frame, "CooldownFrameTemplate")
+                -- frame[1242173] = CreateFrame("Cooldown", "_Cooldown2", frame, "CooldownFrameTemplate")
+                -- -- frame.cooldown = CreateFrame("Cooldown", "_Cooldown", frame, "CooldownFrameTemplate")
+                -- frame[228260]:SetAllPoints(frame.icon)
+                -- frame[228260]:SetFrameLevel(frame:GetFrameLevel() + 1)  -- Above icon texture
+                -- frame[228260]:SetDrawEdge(true)
+                -- frame[228260]:SetDrawBling(false)
+                -- frame[228260]:SetSwipeColor(0, 0, 0, 0.8)
+                
+                -- -- Apply sweep and countdown text settings (per-icon overrides tracker-level)
+                -- frame[1242173]:SetDrawSwipe(true)
+                -- frame[1242173]:SetHideCountdownNumbers(false)
+                -- frame[1242173]:SetAllPoints(frame.icon)
+                -- frame[1242173]:SetFrameLevel(frame:GetFrameLevel() + 1)  -- Above icon texture
+                -- frame[1242173]:SetDrawEdge(true)
+                -- frame[1242173]:SetDrawBling(false)
+                -- frame[1242173]:SetSwipeColor(0, 0, 0, 0.8)
+                
+                -- -- Apply sweep and countdown text settings (per-icon overrides tracker-level)
+                -- frame[1242173]:SetDrawSwipe(true)
+                -- frame[1242173]:SetHideCountdownNumbers(false)
+
             end
         end)
         texScanFrame:SetScript("OnKeyUp", function(self, key) end)
@@ -470,13 +500,4 @@ SlashCmdList["SS_PREVIEWHIDE"] = function()
     if previewFrame then previewFrame:Hide() end
 end
 
--- DevTools integration for scanned textures
-SLASH_SS_DEVTEX1 = "/ssdevtex"
-SlashCmdList["SS_DEVTEX"] = function()
-    print("[SpellStyler] Scanned textures added to DevTools")
-end
 
---6725697
-
---4554359 corner and edges
---4554383 - background

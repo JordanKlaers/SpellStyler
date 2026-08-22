@@ -1523,7 +1523,7 @@ FrameTrackerManager.FrameUpdater = {
         else
             data.frame.icon:Show()
         end
-    
+        data.frame.icon:SetDesaturated(data.icon.desaturated)
         -- Apply icon texture and zoom from pre-computed values
         data.frame.icon:SetTexture(data.icon.texture)
         data.frame.icon:SetTexCoord(0 + data.icon.zoom, 1 - data.icon.zoom, 0 + data.icon.zoom, 1 - data.icon.zoom)
@@ -1605,7 +1605,8 @@ FrameTrackerManager.FrameUpdater = {
     Cooldown = function(data)
         -- Apply icon desaturation setting
         if data.frame.icon and data.cooldownText.desaturated ~= nil then
-            data.frame.icon:SetDesaturated(data.cooldownText.desaturated)
+            -- Apply the conditional desaturation, OR the cooldownText version
+            data.frame.icon:SetDesaturated(data.icon.desaturated or data.cooldownText.desaturated)
         end
         
         -- Apply cooldown swipe and bling settings
@@ -1966,7 +1967,7 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
     local function getOverride(path)
         return SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, path)
     end
-    
+
     local shouldOverrideVisibility = State:GetShouldOverrideVisibility()
     -- Build comprehensive data object with all pre-computed property values
     local data = {
@@ -1992,7 +1993,8 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             width = getOverride("iconSettings.width") or trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48,
             height = getOverride("iconSettings.height") or trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48,
             color = getOverride("iconColor") or trackerConfig.iconColor or {r=1, g=1, b=1},
-            alpha = (shouldOverrideVisibility and 1) or getOverride("iconAlpha") or trackerConfig.iconAlpha or 1
+            alpha = (shouldOverrideVisibility and 1) or getOverride("iconAlpha") or trackerConfig.iconAlpha or 1,
+            desaturated = getOverride("iconSettings.desaturated") or trackerConfig.desaturated or false
         },
         alerts = {
             display = trackerConfig.glowNotification.shouldDisplay
@@ -2538,23 +2540,31 @@ function FrameTrackerManager:DriveFrameUpdate(frame, flags, opts, source)
     end
     
     local q = FrameTrackerManager._driveQueue
-    if not q[frame] then
+    -- Use stable metadata as key instead of frame reference
+    local queueKey = frame.meta.baseSpellID .. "_" .. frame.meta.trackerType .. "_" .. tostring(frame.meta.isVariantFrame or false)
+    
+    if not q[queueKey] then
         -- First call in this window: open the timer.
-        q[frame] = {
+        q[queueKey] = {
+            frame   = frame,  -- Store frame reference in the entry
             flags   = { resolveDuration = flags.resolveDuration, syncChargeText = flags.syncChargeText },
             opts    = opts and { durationObject = opts.durationObject, forceUpdate = opts.forceUpdate } or {},
             sources = { source or "unknown" },
         }
+        -- Capture values for debug
+        local activeSpellID = frame.meta.activeSpellID
+        local base = frame.meta.baseSpellID
+        local spellInfo = C_Spell.GetSpellInfo(activeSpellID)
         C_Timer.After(0.005, function()
-            local entry = q[frame]
-            q[frame] = nil
-            if entry then
-                FrameTrackerManager:_ExecuteDrive(frame, entry.flags, entry.opts, entry.sources)
+            local entry = q[queueKey]
+            q[queueKey] = nil
+            if entry and entry.frame then
+                FrameTrackerManager:_ExecuteDrive(entry.frame, entry.flags, entry.opts, entry.sources)
             end
         end)
     else
         -- Subsequent call within the same window: merge, don't open a new timer.
-        local entry = q[frame]
+        local entry = q[queueKey]
         -- OR the boolean flags so no step requested by any caller is skipped.
         if flags.resolveDuration then entry.flags.resolveDuration = true end
         if flags.syncChargeText  then entry.flags.syncChargeText  = true end
@@ -3152,15 +3162,15 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
         else
             -- try to get spell charge duration first
             local maxSpellCharges = 1
-            local spellChargeInfo = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID or data.activeSpellID)
+            local currentSpell = C_Spell.GetOverrideSpell(data.customFrame.meta.baseSpellID)
+            local spellChargeInfo = C_Spell.GetSpellCharges(currentSpell)
             if spellChargeInfo and spellChargeInfo.maxCharges then
                 maxSpellCharges = spellChargeInfo.maxCharges
             end
             if maxSpellCharges > 1 then
-                durationObject = C_Spell.GetSpellChargeDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
+                durationObject = C_Spell.GetSpellChargeDuration(currentSpell, true)
             else
-                durationObject = C_Spell.GetSpellCooldownDuration(data.customFrame.meta.activeSpellID or data.activeSpellID, true)
-                local id = data.customFrame.meta.activeSpellID or data.activeSpellID
+                durationObject = C_Spell.GetSpellCooldownDuration(currentSpell, true)
             end
         end
     end
@@ -3390,24 +3400,7 @@ function FrameTrackerManager:Initalize()
     FrameTrackerManager:FreshCreateFrames("Initalize")
 end
 
--- Event frame for UNIT_AURA and PLAYER_ENTERING_WORLD
-local eventFrame = CreateFrame("Frame")
-eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
-eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
-eventFrame:RegisterEvent("UNIT_AURA")
-eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
-eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
-eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
-eventFrame:RegisterEvent("SPELL_DATA_LOAD_RESULT")
-eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
-eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
-eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
-eventFrame:RegisterEvent("PLAYER_ALIVE")
-eventFrame:RegisterEvent("UNIT_HEALTH")
-eventFrame:RegisterEvent("UNIT_TARGET")
-eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
-eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+
 
 
 local function eventHandlers(event, frame, meta)
@@ -3553,6 +3546,26 @@ function FrameTrackerManager:UpdateActiveSpells()
 end
 
 
+-- Event frame for UNIT_AURA and PLAYER_ENTERING_WORLD
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("SPELL_UPDATE_COOLDOWN")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+eventFrame:RegisterEvent("SPELL_UPDATE_ICON")
+eventFrame:RegisterEvent("UNIT_AURA")
+eventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("PLAYER_LEAVING_WORLD")
+eventFrame:RegisterEvent("SPELL_DATA_LOAD_RESULT")
+eventFrame:RegisterEvent("SPELL_UPDATE_USABLE")
+eventFrame:RegisterEvent("UNIT_POWER_UPDATE")
+eventFrame:RegisterEvent("PLAYER_TOTEM_UPDATE")
+eventFrame:RegisterEvent("PLAYER_ALIVE")
+eventFrame:RegisterEvent("UNIT_HEALTH")
+eventFrame:RegisterEvent("UNIT_TARGET")
+eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
+eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+eventFrame:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -3623,45 +3636,45 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 
     if event == "UNIT_AURA" then
-        -- local unit, donk = ...
-        -- if unit == 'player' or unit == 'target' then
-        --     local s, e = pcall(function()
-        --         local data = {
+        local unit, donk = ...
+        if unit == 'player'then -- or unit == 'target' 
+            -- local s, e = pcall(function()
+            --     local data = {
 
-        --         }
-        --         for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
-        --             local auraa = C_UnitAuras.GetAuraDataByIndex('target', number)
-        --             if auraa then
-        --                 data[auraa.name] = auraa.spellId    
-        --             end
-        --         end
-        --         if donk.removedAuraInstanceIDs then
-        --            for number in ipairs(donk.removedAuraInstanceIDs) do
-        --                 local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
-        --                 if aura then
-        --                     data[aura.name] = aura.spellId    
-        --                 end
+            --     }
+            --     for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
+            --         local auraa = C_UnitAuras.GetAuraDataByIndex('player', number)
+            --         if auraa then
+            --             data[auraa.name] = auraa.spellId    
+            --         end
+            --     end
+            --     if donk.removedAuraInstanceIDs then
+            --        for number in ipairs(donk.removedAuraInstanceIDs) do
+            --             local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
+            --             if aura then
+            --                 data[aura.name] = aura.spellId    
+            --             end
                         
-        --             end 
-        --         end
-        --         if donk.updatedAuraInstanceIDs then 
-        --             for number in ipairs(donk.updatedAuraInstanceIDs) do
-        --                 local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
-        --                 if aura then
-        --                     data[aura.name] = aura.spellId    
-        --                 end
-        --             end
-        --             end
-        --             DevTool:AddData(data, "donk")
-        --     end)
-        --     if e then
-        --         -- DevTool:AddData({
-        --         --     e = e,
-        --         --     donk = donk
-        --         -- }, "e")
-        --     end
-        --     FrameTrackerManager:UpdateActiveSpells()
-        -- end
+            --         end 
+            --     end
+            --     if donk.updatedAuraInstanceIDs then 
+            --         for number in ipairs(donk.updatedAuraInstanceIDs) do
+            --             local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
+            --             if aura then
+            --                 data[aura.name] = aura.spellId    
+            --             end
+            --         end
+            --         end
+            --         DevTool:AddData(data, "donk")
+            -- end)
+            -- if e then
+            --     -- DevTool:AddData({
+            --     --     e = e,
+            --     --     donk = donk
+            --     -- }, "e")
+            -- end
+            FrameTrackerManager:UpdateActiveSpells()
+        end
     end
 
     if event == "SPELL_UPDATE_USABLE" then
@@ -3741,13 +3754,33 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             SpellStyler.ConditionalEngine:EvaluateAll()
         end
     end
-
+    if event == "COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED" then
+        local base, override = ...
+        local match = FrameTrackerManager:MatchTrackerFrame(base)
+        if match then
+            -- Skip if mock cooldown is active
+            if match.customFrame.meta.mockCooldownActive then
+                return
+            end
+            FrameTrackerManager:DriveFrameUpdate(
+                match.customFrame,
+                {
+                    resolveDuration = true,
+                    syncChargeText = true
+                },
+                nil,
+                "iconChanged"
+            )
+        end
+    end
     if event == "SPELL_UPDATE_ICON" then
         local spellID = ...
+        if not spellID then return end
+        local base = C_Spell.GetBaseSpell(spellID)
+        local baseSpellInfo = C_Spell.GetSpellInfo(base)
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local overrideSpell = C_Spell.GetOverrideSpell(spellID)
         local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpell)
-        if not spellID then return end
         local match = FrameTrackerManager:MatchTrackerFrame(spellID)
         if match then
             -- Skip if mock cooldown is active
@@ -3762,10 +3795,37 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 match.customFrame.icon:SetTexture(spellInfo.iconID)
                 if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(spellInfo.iconID) end
             end
-            if (match.trackerType ~= 'buffs') then
-                FrameTrackerManager:SetActiveSpellID(spellID, match.customFrame, "spell update icon")
-                if match.customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("SPELL_UPDATE_ICON", match.customFrame)  end
-                if match.customFrame.variantFrame and match.customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("SPELL_UPDATE_ICON", match.customFrame.variantFrame) end
+            FrameTrackerManager:DriveFrameUpdate(
+                match.customFrame,
+                {
+                    resolveDuration = true,
+                    syncChargeText = true
+                },
+                nil,
+                "iconChanged"
+            )
+        end
+    end
+    if event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+        local unit, _, spellID = ...
+        if unit == 'player' and not issecretvalue(spellID) then
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local baseInfo = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(spellID))
+            local match = FrameTrackerManager:MatchTrackerFrame(spellID)
+            if match then
+                FrameTrackerManager:DriveFrameUpdate(
+                    match.customFrame,
+                    {
+                        resolveDuration = true,
+                        syncChargeText = true
+                    },
+                    nil,
+                    "unitSpellcastChannelStop"
+                )
+                -- Check if this spell should track totem duration
+                if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
+                    FrameTrackerManager:AddSpellToTotemQueue(match.customFrame.meta.activeSpellID, match.customFrame.meta.trackerType)
+                end
             end
         end
     end
@@ -3812,9 +3872,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     if match.customFrame.meta.mockCooldownActive then
                         return
                     end
-                    if not match.customFrame.meta.isItem then
-                        FrameTrackerManager:SetActiveSpellID(spellID, match.customFrame, "unit spellcast succeeded")
-                    end
                     FrameTrackerManager:DriveFrameUpdate(
                         match.customFrame,
                         {
@@ -3839,12 +3896,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if not spellID then
             return
         end
-        FrameTrackerManager:SetActiveSpellID(spellID, nil, "spell update cooldown")
         local spellInfo = C_Spell.GetSpellInfo(spellID)
         local cooldownInfo = C_Spell.GetSpellCooldown(spellID)
         local frameMatchData = FrameTrackerManager:MatchTrackerFrame(spellID)
 
         if frameMatchData then
+            
             -- Skip if mock cooldown is active
             if frameMatchData.customFrame.meta.mockCooldownActive then
                 return
@@ -3855,7 +3912,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             if cooldownInfo.isOnGCD == true then
                 return  -- GCD only – nothing to do
             end
-            
             -- FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
             FrameTrackerManager:DriveFrameUpdate(
                 frameMatchData.customFrame,

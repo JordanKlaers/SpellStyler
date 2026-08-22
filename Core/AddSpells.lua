@@ -235,6 +235,8 @@ function AddSpells:RenderAddSpellsView(parent)
 
     local previewBtn    = nil
     local previewAuraBtn = nil
+    local previewTex    = nil
+    local previewAuraTex = nil
     local addAuraBtn    = nil
     local addBtn        = nil  -- forward-declared so closures can reference it
     -- Forward-declared so the addBtn OnClick closure can reference them
@@ -312,7 +314,7 @@ function AddSpells:RenderAddSpellsView(parent)
         previewBtn:RegisterForClicks("LeftButtonUp")
         previewBtn:Hide()
 
-        local previewTex = previewBtn:CreateTexture(nil, "ARTWORK")
+        previewTex = previewBtn:CreateTexture(nil, "ARTWORK")
         previewTex:SetAllPoints()
         previewTex:SetTexCoord(0, 1, 0, 1)
         local previewHL = previewBtn:CreateTexture(nil, "HIGHLIGHT")
@@ -470,9 +472,9 @@ function AddSpells:RenderAddSpellsView(parent)
         previewAuraBtn:RegisterForClicks("LeftButtonUp")
         previewAuraBtn:Hide()
 
-        local previewTex = previewAuraBtn:CreateTexture(nil, "ARTWORK")
-        previewTex:SetAllPoints()
-        previewTex:SetTexCoord(0, 1, 0, 1)
+        previewAuraTex = previewAuraBtn:CreateTexture(nil, "ARTWORK")
+        previewAuraTex:SetAllPoints()
+        previewAuraTex:SetTexCoord(0, 1, 0, 1)
         local previewHL = previewAuraBtn:CreateTexture(nil, "HIGHLIGHT")
         previewHL:SetAllPoints()
         previewHL:SetColorTexture(1, 1, 1, 0.25)
@@ -506,9 +508,12 @@ function AddSpells:RenderAddSpellsView(parent)
             local trackingID = C_Spell.GetBaseSpell(selectedAura.spellID)
             local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(trackingID, "buffs")
             local trackerConfig
+            local currentSpecID = SpellStyler.State and SpellStyler.State.GetCurrentSpecID and SpellStyler.State:GetCurrentSpecID()
             if existingTrackerConfig and foundConfig then
                 trackerConfig = existingTrackerConfig
                 SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "buffs", 'isEnabled', true)
+                -- If you are readding an aura, flag the aura as being applicable for the current specID
+                SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "buffs", 'auraSpecs.' .. currentSpecID, true)
                 if SpellStyler.BuffManager.buffContainers[trackingID] then
                     BuffManager:UpdateAura(SpellStyler.BuffManager.buffContainers[trackingID], trackerConfig)
                 end
@@ -524,6 +529,9 @@ function AddSpells:RenderAddSpellsView(parent)
                     trackerType             = "buffs",
                     name                    = selectedAura.name,
                     defaultIconTexturePath  = iconTexture,
+                    auraSpecs               = {
+                        [currentSpecID] = true
+                    }
                 })
             end
             
@@ -877,10 +885,7 @@ function AddSpells:RenderAddSpellsView(parent)
         
         
         if foundSpell then
-            local auraPreviewTex = previewAuraBtn:CreateTexture(nil, "ARTWORK")
-            auraPreviewTex:SetAllPoints()
-            auraPreviewTex:SetTexCoord(0, 1, 0, 1)
-            auraPreviewTex:SetTexture(previewAura.iconID)
+            previewAuraTex:SetTexture(previewAura.iconID)
             if previewAuraBtn then
                 previewAuraBtn:Show()
                 

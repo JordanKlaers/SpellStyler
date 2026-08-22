@@ -80,6 +80,9 @@ local function CreateBuffContainers()
     
     for baseSpellID, buffConfig in pairs(buffs) do
         -- Only create if enabled
+		if BuffManager.buffContainers[baseSpellID] then
+			BuffManager:UpdateAura(BuffManager.buffContainers[baseSpellID], buffConfig)
+		end
 		BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
     end
 end
@@ -123,7 +126,6 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 				========================================================= ]]
 				button:SetSize(inputs.width, inputs.height)
 				button:SetScale(inputs.scale or 1)
-				button:SetAlpha(inputs.opacity)
 				button:SetFrameStrata(inputs.frameStrata)
 				button:SetFrameLevel(inputs.frameStrataLevel)
 				--button:SetPoint()
@@ -147,10 +149,10 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 				icon:SetVertexColor(
 					inputs.color.r,
 					inputs.color.g,
-					inputs.color.b
+					inputs.color.b,
+					buffConfig.iconSettings.iconDisplayState == 'never' and 0 or inputs.color.a
 				)
 				
-				icon:SetAlpha(buffConfig.iconSettings.iconDisplayState == 'never' and 0 or inputs.color.a)
 				icon:SetDesaturated(false)
 				
 				--[[ =========================================================
@@ -241,7 +243,6 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 					if isPlaceholder then
 						chargeBar:SetValue(buffConfig.visualChargeBar.maxValue or 4)
 					elseif buffConfig['visualChargeBar'].displayState ~= 'never' then
-						DevTool:AddData(buffConfig, "Real frame bar config")
 						button:SetApplicationBar(chargeBar, {
 							maxApplications = buffConfig.visualChargeBar.maxValue or 4,  -- Adjust based on buff max stacks
 							interpolation = Enum.StatusBarInterpolation.Smooth
@@ -382,6 +383,7 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 	end
 end
 
+
 function BuffManager:UpdateAura(aura, trackerValue)
 	--[[
 		{
@@ -392,11 +394,11 @@ function BuffManager:UpdateAura(aura, trackerValue)
 			buffConfig = buffConfig
 		}
 	]]
-	
-	if trackerValue.isEnabled then
-		aura.auraContainer.SetEnabled(true)
+	local currentSpecID = SpellStyler.State:GetCurrentSpecID()
+	if trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] then
+		aura.auraContainer:SetEnabled(true)
 	else
-		aura.auraContainer.SetEnabled(false)
+		aura.auraContainer:SetEnabled(false)
 	end
 
 	local inputs = {
@@ -428,29 +430,29 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	}
 	
 	local function update(frame, isPlaceholder)
-		if isPlaceholder and trackerValue.isEnabled then
+		if isPlaceholder and trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] and (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown()) then
 			frame:Show()
-		elseif isPlaceholder and not trackerValue.isEnabled then
+		elseif isPlaceholder and (not trackerValue.isEnabled or not trackerValue.auraSpecs[currentSpecID] or not (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown()))then
 			frame:Hide()
 		end
 
 		-- Base Frame Properties
 		frame:SetSize(inputs.width, inputs.height)
 		frame:SetScale(inputs.scale)
-		frame:SetAlpha(inputs.opacity)
 		frame:SetFrameStrata(inputs.frameStrata)
 		frame:SetFrameLevel(inputs.frameStrataLevel)
-		frame:ClearAllPoints()
 		frame:SetPoint("CENTER", UIParent, "CENTER", inputs.posX / inputs.scale, inputs.posY / inputs.scale)
 		
 		-- Icon Properties
 		if frame.icon then
 			frame.icon:SetTexCoord(0 + inputs.zoom, 1 - inputs.zoom, 0 + inputs.zoom, 1 - inputs.zoom)
 			if isPlaceholder or inputs.iconTexture then
+				if frame.ClearIcon then frame:ClearIcon() end
 				frame.icon:SetTexture(inputs.iconTexture)
+			else
+				if frame.SetIcon then frame:SetIcon(frame.icon) end
 			end
-			frame.icon:SetVertexColor(inputs.color.r, inputs.color.g, inputs.color.b)
-			frame.icon:SetAlpha(trackerValue.iconSettings.iconDisplayState == 'never' and 0 or inputs.color.a)
+			frame.icon:SetVertexColor(inputs.color.r, inputs.color.g, inputs.color.b, trackerValue.iconSettings.iconDisplayState == 'never' and 0 or inputs.color.a)
 			frame.icon:SetDesaturated(false)
 		end
 		
@@ -487,7 +489,10 @@ function BuffManager:UpdateAura(aura, trackerValue)
 
 		-- Status Bar Properties
 		local function updateStatusBar(barFrame, config)
-			if barFrame then
+			if barFrame and trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] then
+				if isPlaceholder then
+					barFrame:Show()
+				end
 				barFrame:ClearAllPoints()
 				barFrame:SetPoint(config.anchorSelf or "LEFT", frame, config.anchorParent or "RIGHT", config.x or 0, config.y or 0)
 				barFrame:SetSize(config.width, config.height)
@@ -523,18 +528,22 @@ function BuffManager:UpdateAura(aura, trackerValue)
 				barFrame:SetOrientation(
 					(config.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
 				)
+			else
+				if isPlaceholder then
+					barFrame:Hide()
+				end
 			end
 		end
 		
 		-- Update duration bar if configured
 		local barConfig = trackerValue['statusBar']
-		if barConfig and barConfig.displayState ~= 'never' then
+		if barConfig and frame.durationBar then
 			updateStatusBar(frame.durationBar, barConfig)
 		end
 		
 		-- Update charge bar if configured
 		local chargeBarConfig = trackerValue['visualChargeBar']
-		if chargeBarConfig and frame.chargeBar and chargeBarConfig.displayState ~= 'never' then
+		if chargeBarConfig and frame.chargeBar then
 			updateStatusBar(frame.chargeBar, chargeBarConfig)
 		end
 
@@ -549,7 +558,7 @@ function BuffManager:UpdateAura(aura, trackerValue)
 		local fontPath = SpellStyler.State:ResolveFontPath(inputs.countText.font, _fontPath)
 		local fontFlags = SpellStyler.State:ResolveFontFlags(inputs.countText.fontFlags, _fontFlags)
 		frame.count:SetFont(fontPath, inputs.countText.size, fontFlags or "OUTLINE")
-		if inputs.countText and inputs.countText.color then
+		if inputs.countText and inputs.countText.color and frame.count then
 			frame.count:SetTextColor(
 				inputs.countText.color.r or 1,
 				inputs.countText.color.g or 1,
@@ -561,6 +570,7 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	
 	update(aura.slotFrame, false)
 	update(aura.placeHolder, true)
+	aura.auraContainer:UpdateAura()
 end
 -- ============================================================================
 -- BUFF FRAME HIGHLIGHT
@@ -794,6 +804,10 @@ eventFrame:RegisterEvent("PLAYER_DEAD")
 eventFrame:RegisterEvent("PLAYER_ALIVE")
 eventFrame:RegisterEvent("PLAYER_UNGHOST")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
+eventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
+eventFrame:RegisterEvent("UNIT_EXITING_VEHICLE")
+eventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
+eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
 
 local hasPlayerEnteredWorld = false
@@ -811,7 +825,15 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if hasPlayerEnteredWorld then
             BuffManager:RefreshAllBuffAuras()
         end
-    elseif event == "PLAYER_DEAD" or event == "PLAYER_ALIVE" or event == "PLAYER_UNGHOST" then
+    elseif
+		event == "UNIT_EXITING_VEHICLE"
+		or event == "PLAYER_ENTERING_WORLD"
+		or event == "ZONE_CHANGED_NEW_AREA"
+		or event == "UNIT_EXITED_VEHICLE"
+		or event == "UNIT_ENTERED_VEHICLE"
+		or event == "PLAYER_DEAD"
+		or event == "PLAYER_ALIVE"
+		or event == "PLAYER_UNGHOST" then
         -- Refresh when dying or resurrecting
         if hasPlayerEnteredWorld then
             BuffManager:RefreshAllBuffAuras()

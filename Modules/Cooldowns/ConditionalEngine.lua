@@ -144,6 +144,7 @@ local function EvaluateConditional(conditionalName, currentLiveValues, context)
 	local requiresConstantUpdate = false
 
 	local partiallyResolved = {}
+
 	for index, conditionStructure in ipairs(conditionalData.entries) do
 		if conditionStructure.type == "condition" then
 			if conditionStructure.conditionType == "ComboPoints" then
@@ -627,7 +628,6 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
     local computedOverrides = {}
     local healthConfig = self:GetUnitHealthConfig(conditionalName or "")
     local usesUnitHealth = (healthConfig ~= nil)
-    
     for _, override in ipairs(propertyOverrides) do
         local overrideValue = override.value
 
@@ -666,9 +666,6 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
             value = overrideValue,
             duration = override.duration  -- Preserve duration for temporary overrides
         })
-    end
-    if frame.meta.baseSpellID == 116670 then
-        -- DevTool:AddData(computedOverrides, "caching property overrides onto frame")
     end
     -- Apply and cache COMPUTED overrides to all target frames
     for _, targetFrame in ipairs(targetFrames) do
@@ -762,8 +759,8 @@ function ConditionalEngine:EvaluateAll()
     local FrameTrackerManager = SpellStyler.FrameTrackerManager
     if not FrameTrackerManager then return end
 
-    local success, specDatabase = State:GetDataBase_V2()
-    if not success or not specDatabase then return end
+    local specDatabase = State:GetDataBase_V2()
+    if not specDatabase then return end
 
     for _, trackerType in ipairs({ "spells", "buffs" }) do
         local trackerTypeDatabase = specDatabase[trackerType]

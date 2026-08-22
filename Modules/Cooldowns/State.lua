@@ -77,6 +77,9 @@ local function AddNewTrackerValueConfig(data)
         defaultIconTexturePath = data.defaultIconTexturePath,
         isItem = data.isItem or false,  -- Flag to identify item trackers (for icon lookup)
         scale = 1,
+        auraSpecs = data.auraSpecs or {
+            -- table to indicate which specs the aura should be enabled for
+        },
         isNPCDebuff = data.trackerType == 'buffs' and false or nil,  -- For buffs: track as debuff on target instead of buff on player
         additionalBuffIDs = {},
         position = {
@@ -285,6 +288,37 @@ local function AddNewTrackerValueConfig(data)
     }
 end
 
+function State:GetClassAndSpecInfo()
+    local specIndex = GetSpecialization()
+    local specID = GetSpecializationInfo(specIndex)
+    local classID = C_SpecializationInfo.GetClassIDFromSpecID(specID)
+    local numSpecs = C_SpecializationInfo.GetNumSpecializationsForClassID(classID)
+    local specs = {}
+    for i = 1, numSpecs do
+        local specId, name, description, icon, role, primaryStat, pointsSpent, background, previewPointsSpent, isUnlocked = C_SpecializationInfo.GetSpecializationInfo(i)
+        specs[i] = {
+            specId = specId,
+            name = name,
+            description = description,
+            icon = icon,
+            role = role,
+            primaryStat = primaryStat,
+            pointsSpent = pointsSpent,
+            background = background,
+            previewPointsSpent = previewPointsSpent,
+            isUnlocked = isUnlocked
+        }
+    end
+    return {
+        specIndex = specIndex,
+        currentSpecID = specID,
+        classID = classID,
+        numSpecs = numSpecs,
+        specs = specs
+    }
+end
+
+
 local _cachedSpecID = nil
 function State:GetCurrentSpecID()
     local specIndex = GetSpecialization()
@@ -380,6 +414,8 @@ function State:HandleTalentChange()
 
 	local specDB = SpellStyler_CharDB.classSpecializations[State:GetCurrentSpecID()]
 	State:SetCorrectOverride(specDB)
+
+    SpellStyler.BuffManager:RefreshAllBuffAuras()
 end
 
 -- ============================================================================
@@ -473,6 +509,21 @@ function State:MigrateDatabase()
                 if trackerType == 'buffs' then
                     if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
                     if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
+                    if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
+                    if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
+                    local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
+                    if trackerValue.auraSpecs and next(trackerValue.auraSpecs) == nil then
+                        for _, spec in ipairs(classAndSpecData.specs) do
+                            trackerValue.auraSpecs[spec.specId] = classAndSpecData.currentSpecID == spec.specId
+                        end
+                    end
+                    local isEnabledForAnyAura = false
+                    for _, spec in ipairs(classAndSpecData.specs) do
+                        isEnabledForAnyAura = isEnabledForAnyAura or trackerValue.auraSpecs[spec.specId]
+                    end
+                    if not isEnabledForAnyAura and trackerValue.isEnabled then
+                        trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
+                    end
                 end
 
                 local defaults = AddNewTrackerValueConfig({
@@ -608,7 +659,7 @@ function State:SetTrackerValueConfigProperty(baseSpellID, trackerType, path, val
             local containerData = SpellStyler.BuffManager.buffContainers[baseSpellID]
             
             -- Hide and clean up aura container
-            if containerData then
+            if containerData and trackerValue then
                 SpellStyler.BuffManager:UpdateAura(containerData, trackerValue)
                 containerData.auraContainer:UpdateAllAuras()
             end
@@ -963,27 +1014,31 @@ function State:RemovePropertyOverride(baseSpellID, trackerType, condIndex, overr
     FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
 end
 
-function State:SetPropertyOverrideField(baseSpellID, trackerType, condIndex, overrideIndex, field, value)
+function State:SetPropertyOverrideField(baseSpellID, trackerType, propertiesToUpdate)
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
     local db = State:GetDataBase_V2()
     local entry = db[trackerType] and db[trackerType][baseSpellID]
-    if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[condIndex] then return end
-    local cond = entry.specialVisibilityConditions[condIndex]
-    if not cond.propertyOverrides or not cond.propertyOverrides[overrideIndex] then return end
-    
-    -- Update database (persistent storage)
-    cond.propertyOverrides[overrideIndex][field] = value
-    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
-        and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-    
-    -- Generate consistent conditional key using helper method
-    local conditionalKey = SpellStyler.ConditionalEngine:GenerateConditionalKey(cond, condIndex)
-    
-    -- Clear evaluation and property override caches for this specific conditional
-    -- This ensures fresh evaluation with the new field value
-    if frame and SpellStyler.ConditionalEngine then
-        SpellStyler.ConditionalEngine:ClearEvaluationCache(frame, conditionalKey)
+
+    for _, propertyConfig in ipairs(propertiesToUpdate) do
+        if not entry or not entry.specialVisibilityConditions or not entry.specialVisibilityConditions[propertyConfig.condIndex] then return end
+        local cond = entry.specialVisibilityConditions[propertyConfig.condIndex]
+        if not cond.propertyOverrides or not cond.propertyOverrides[propertyConfig.overrideIndex] then return end
+        
+        -- Update database (persistent storage)
+        cond.propertyOverrides[propertyConfig.overrideIndex][propertyConfig.field] = propertyConfig.value
+        local frame = FrameTrackerManager.SpellStyler_frames[trackerType] 
+            and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+        
+        -- Generate consistent conditional key using helper method
+        local conditionalKey = SpellStyler.ConditionalEngine:GenerateConditionalKey(cond, propertyConfig.condIndex)
+        
+        -- Clear evaluation and property override caches for this specific conditional
+        -- This ensures fresh evaluation with the new field value
+        if frame and SpellStyler.ConditionalEngine then
+            SpellStyler.ConditionalEngine:ClearEvaluationCache(frame, conditionalKey)
+        end    
     end
+    
     
     -- CRITICAL: Re-evaluate conditionals to apply the new property override
     -- Without this, property overrides are cleared but never re-applied!
