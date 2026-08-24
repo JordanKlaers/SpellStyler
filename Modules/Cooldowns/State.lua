@@ -69,6 +69,7 @@ end
 local function AddNewTrackerValueConfig(data)
     local iconSize = 48  -- Default icon size
     return {
+        baseSpellID = data.baseSpellID,
         itemID = data.itemID,
 		isEnabled = true,
 		overrideSpellID = data.overrideSpellID,
@@ -512,7 +513,10 @@ function State:MigrateDatabase()
                     if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
                     if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
                     local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
-                    if trackerValue.auraSpecs and next(trackerValue.auraSpecs) == nil then
+                    if not trackerValue.auraSpecs then
+                        trackerValue.auraSpecs = {}
+                    end
+                    if next(trackerValue.auraSpecs) == nil then
                         for _, spec in ipairs(classAndSpecData.specs) do
                             trackerValue.auraSpecs[spec.specId] = classAndSpecData.currentSpecID == spec.specId
                         end
@@ -525,7 +529,6 @@ function State:MigrateDatabase()
                         trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
                     end
                 end
-
                 local defaults = AddNewTrackerValueConfig({
                     baseSpellID            = baseSpellID,
                     trackerType            = trackerType,

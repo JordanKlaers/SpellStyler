@@ -570,6 +570,24 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	
 	update(aura.slotFrame, false)
 	update(aura.placeHolder, true)
+
+	local candidateFilters = {
+		isFromPlayerOrPlayerPet = true,
+		includeSpellIDs = {
+			[trackerValue.baseSpellID] = true,
+		}
+	}
+	if trackerValue.additionalBuffIDs then
+		for _, buffId in ipairs(trackerValue.additionalBuffIDs) do
+			candidateFilters.includeSpellIDs[buffId] = true
+		end
+	end
+	aura.auraContainer:SetAuraSlotCandidateFilters(aura.slotName, candidateFilters)
+	
+	local auraType = (trackerValue.isNPCDebuff == true) and AuraUtil.AuraFilters.Harmful or AuraUtil.AuraFilters.Helpful
+	local unitToTrack = (trackerValue.isNPCDebuff == true) and "target" or "player"
+	aura.auraContainer:SetAuraSlotFilterString(aura.slotName, auraType .. "|" .. AuraUtil.AuraFilters.Player)
+	aura.auraContainer:SetUnit(unitToTrack)
 	aura.auraContainer:UpdateAllAuras()
 end
 -- ============================================================================
@@ -834,7 +852,7 @@ eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 local hasPlayerEnteredWorld = false
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_ENTERING_WORLD" then
+	if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnteredWorld = true
         CreateBuffContainers()
         -- Refresh auras after containers are created
@@ -855,12 +873,16 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif
 		event == "UNIT_EXITING_VEHICLE"
 		or event == "PLAYER_ENTERING_WORLD"
-		or event == "ZONE_CHANGED_NEW_AREA"
 		or event == "UNIT_EXITED_VEHICLE"
 		or event == "PLAYER_ALIVE"
 		or event == "PLAYER_UNGHOST" then
         -- Refresh when dying or resurrecting
         if hasPlayerEnteredWorld then
+			BuffManager:EnableAllAuras()
+            BuffManager:RefreshAllBuffAuras()
+        end
+	elseif event == "ZONE_CHANGED_NEW_AREA" then
+		if hasPlayerEnteredWorld and not (InCombatLockdown() or UnitAffectingCombat("player")) then
 			BuffManager:EnableAllAuras()
             BuffManager:RefreshAllBuffAuras()
         end

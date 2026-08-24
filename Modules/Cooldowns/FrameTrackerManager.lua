@@ -3636,15 +3636,21 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     if event == "UNIT_AURA" then
         local unit, donk = ...
-        if unit == 'player'then -- or unit == 'target' 
+        if unit == 'player' then --  or unit == 'target'
             -- local s, e = pcall(function()
             --     local data = {
 
             --     }
             --     for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
+            --         local auraa = C_UnitAuras.GetAuraDataByIndex('target', number)
+            --         if auraa then
+            --             data['target - ' .. auraa.name] = auraa.spellId    
+            --         end
+            --     end
+            --     for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
             --         local auraa = C_UnitAuras.GetAuraDataByIndex('player', number)
             --         if auraa then
-            --             data[auraa.name] = auraa.spellId    
+            --             data['player - ' .. auraa.name] = auraa.spellId    
             --         end
             --     end
             --     if donk.removedAuraInstanceIDs then

@@ -282,3 +282,8 @@ Version 2.0.1
 Version 2.0.2
 	- Updates Add spells to properly add items.
 	- Updates auras to properly disable during vehicles, like flight paths or other similar things
+
+Version 2.0.3
+	- Updates one of the events to only update auras when registering the event when out of combat
+	- Updates the database so previously existing buffs should now contain information of which spec they should be enabled for. Defaults to the current spec if the association was missing
+	- Updates auras to enable adding additional spell id without needing to reload. Also updates to not need a reload if you toggle "Is NPC debuff for target"
