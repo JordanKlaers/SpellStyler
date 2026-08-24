@@ -432,7 +432,7 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	local function update(frame, isPlaceholder)
 		if isPlaceholder and trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] and (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown()) then
 			frame:Show()
-		elseif isPlaceholder and (not trackerValue.isEnabled or not trackerValue.auraSpecs[currentSpecID] or not (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown()))then
+		elseif isPlaceholder and (not trackerValue.isEnabled or not trackerValue.auraSpecs[currentSpecID] or not (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown())) then
 			frame:Hide()
 		end
 
@@ -570,7 +570,7 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	
 	update(aura.slotFrame, false)
 	update(aura.placeHolder, true)
-	aura.auraContainer:UpdateAura()
+	aura.auraContainer:UpdateAllAuras()
 end
 -- ============================================================================
 -- BUFF FRAME HIGHLIGHT
@@ -724,11 +724,12 @@ end
 -- Uses IconSettingsRenderer methods for consistency with spells/items
 -- ============================================================================
 function BuffManager:EnablePlaceholderDragging(enable)
+	local currentSpecID = SpellStyler.State:GetCurrentSpecID()
     for baseSpellID, containerData in pairs(BuffManager.buffContainers) do
         if containerData.placeHolder then
             containerData.placeHolder._draggingEnabled = enable
-            
-            if enable then
+			local trackerValue = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, 'buffs')
+            if enable and trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] then
                 -- Show placeholder when enabling
                 containerData.placeHolder:Show()
                 
@@ -776,6 +777,25 @@ function BuffManager:SetupBuffs()
     CreateBuffContainers()
 end
 
+
+function BuffManager:DisableAllAuras()
+	for baseSpellID, containerData in pairs(BuffManager.buffContainers) do
+        if containerData.auraContainer then
+			containerData.auraContainer:SetEnabled(false)
+			containerData.placeHolder:Hide()
+        end
+    end
+end
+function BuffManager:EnableAllAuras()
+	for baseSpellID, containerData in pairs(BuffManager.buffContainers) do
+        if containerData.auraContainer then
+			local trackerValue = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, 'buffs')
+			BuffManager:UpdateAura(containerData, trackerValue)
+        end
+    end
+end
+
+
 -- ============================================================================
 -- REFRESH ALL BUFF AURAS
 -- Calls UpdateAllAuras on all buff containers to refresh displayed buffs
@@ -807,6 +827,7 @@ eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 eventFrame:RegisterEvent("UNIT_EXITED_VEHICLE")
 eventFrame:RegisterEvent("UNIT_EXITING_VEHICLE")
 eventFrame:RegisterEvent("UNIT_ENTERED_VEHICLE")
+eventFrame:RegisterEvent("UNIT_ENTERING_VEHICLE")
 eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
 
@@ -825,17 +846,22 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if hasPlayerEnteredWorld then
             BuffManager:RefreshAllBuffAuras()
         end
+	elseif event == "PLAYER_DEAD"
+		or event == "UNIT_ENTERING_VEHICLE"
+		or event == "UNIT_ENTERED_VEHICLE" then
+		if hasPlayerEnteredWorld then
+            BuffManager:DisableAllAuras()
+        end
     elseif
 		event == "UNIT_EXITING_VEHICLE"
 		or event == "PLAYER_ENTERING_WORLD"
 		or event == "ZONE_CHANGED_NEW_AREA"
 		or event == "UNIT_EXITED_VEHICLE"
-		or event == "UNIT_ENTERED_VEHICLE"
-		or event == "PLAYER_DEAD"
 		or event == "PLAYER_ALIVE"
 		or event == "PLAYER_UNGHOST" then
         -- Refresh when dying or resurrecting
         if hasPlayerEnteredWorld then
+			BuffManager:EnableAllAuras()
             BuffManager:RefreshAllBuffAuras()
         end
 	elseif event == "PLAYER_TARGET_CHANGED" then

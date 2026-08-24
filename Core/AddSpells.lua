@@ -351,14 +351,16 @@ function AddSpells:RenderAddSpellsView(parent)
             if isItem then
                 -- Get the spell ID from the item (for event tracking and cooldown)
                 local spellName, spellID = C_Item.GetItemSpell(selectedSpell.itemID)
+                -- Track item by spellID as the database key
+                trackingID = spellID
                 local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(spellID, "items")
                 if existingTrackerConfig and foundConfig then
                     trackerConfig = existingTrackerConfig
                     SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'isEnabled', true)
+                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'itemID', selectedSpell.itemID)
+                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'baseSpellID', spellID)
+                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'overrideSpellID', spellID)
                 else
-                    -- Track item by spellID as the database key
-                    trackingID = spellID
-                    
                     -- Get the item icon texture path directly
                     local iconTexture = C_Item.GetItemIconByID(selectedSpell.itemID)
                     
@@ -815,16 +817,25 @@ function AddSpells:RenderAddSpellsView(parent)
         end
         
         -- If spell not found, try item lookup
-        if not foundSpell and id then
-            local itemName = C_Item.GetItemNameByID(id)
-            local itemIcon = C_Item.GetItemIconByID(id)
-            
-            if itemName and itemIcon then
-                previewSpell = { itemID = id, name = itemName, iconID = itemIcon }
-                foundItem = true
+        if not foundSpell then
+            if id then
+                local itemName = C_Item.GetItemNameByID(id)
+                local itemIcon = C_Item.GetItemIconByID(id)
+                
+                if itemName and itemIcon then
+                    previewSpell = { itemID = id, name = itemName, iconID = itemIcon }
+                    foundItem = true
+                end    
+            else
+                local itemName = C_Item.GetItemNameByID(text)
+                local itemIcon = C_Item.GetItemIconByID(text)
+                local itemID = C_Item.GetItemIDForItemInfo(text)
+                if itemName and itemIcon then
+                    previewSpell = { itemID = itemID, name = itemName, iconID = itemIcon }
+                    foundItem = true
+                end 
             end
         end
-        
         if foundSpell or foundItem then
             previewTex:SetTexture(previewSpell.iconID)
             previewBtn:Show()

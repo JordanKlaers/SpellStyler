@@ -278,3 +278,7 @@ Version 2.0.1
 	- Updates so that modifications to the aura in the settings menu should no longer require manually reloading for settings to take affect
 	- Updates so aura frame to NOT unintentionally display when moving between portals, zones, ect.
 	- Spells that changes into other spells should more reliably display the correct cooldown. Added additional event registration to ensure proper response, and updates the way the correct cooldown duration is choosen to apply to the frame
+
+Version 2.0.2
+	- Updates Add spells to properly add items.
+	- Updates auras to properly disable during vehicles, like flight paths or other similar things

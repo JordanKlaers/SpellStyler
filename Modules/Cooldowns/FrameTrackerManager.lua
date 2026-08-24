@@ -2177,7 +2177,6 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
     if not entryInfo or not entryInfo.name or entryInfo.name == nil or entryInfo.name == '' then
         entryInfo = C_Spell.GetSpellInfo(baseSpellID)
     end
-    
     local dataBaseFrame = {
         frameName = "SpellStyler_" .. entryInfo.name .. "_" .. baseSpellID .. "_" .. trackerType,
         baseSpellID = baseSpellID,
