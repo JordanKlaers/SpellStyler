@@ -770,8 +770,8 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         type = "dropdown",
         label = "Fill or Empty:",
         options = {
-            { label = "Fill", value = "regular" },
-            { label = "Empty", value = "inverse" },
+            { label = "Empty", value = "regular" },
+            { label = "Fill", value = "inverse" },
         },
         getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".fillOrEmpty") or "regular" end,
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".fillOrEmpty", value) end,
@@ -801,16 +801,18 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".textureRotation", value) end,
     })
     
-    table.insert(inputs, {
-        type = "dropdown",
-        label = "Default Fill Value:",
-        options = {
-            { label = "Empty", value = "empty" },
-            { label = "Full",  value = "full" },
-        },
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".defaultFillValue") or "empty" end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".defaultFillValue", value) end,
-    })
+    if config.trackerType ~= 'buffs' then
+        table.insert(inputs, {
+            type = "dropdown",
+            label = "Default Fill Value:",
+            options = {
+                { label = "Empty", value = "empty" },
+                { label = "Full",  value = "full" },
+            },
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".defaultFillValue") or "empty" end,
+            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".defaultFillValue", value) end,
+        })
+    end
     
     table.insert(inputs, {
         type = "colorpicker",
@@ -1572,7 +1574,7 @@ function IconSettingsRenderer:RenderAuraForSpecInput(container, lastControl, uni
     headerRow:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -5)
     
     local label = headerRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    label:SetText("Enable aura for these specializations:")
+    label:SetText("Enable for these specializations:")
     label:SetTextColor(0.8, 0.8, 0.8)
     label:SetPoint("LEFT", headerRow, "LEFT", 0, 0)
     

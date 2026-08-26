@@ -176,19 +176,23 @@ local function ShowBorderDemo()
         insetSettingsContainer:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
 
 
-        local cdmToggleBtn = CreateFrame("Button", nil, insetSettingsContainer, "UIPanelButtonTemplate")
-        cdmToggleBtn:SetSize(100, 22)
-        cdmToggleBtn:SetPoint("BOTTOMLEFT", SpellStyler.settingsMenu, "BOTTOMLEFT", 10, 5)
-        cdmToggleBtn:SetText("Toggle CDM")
-        cdmToggleBtn:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
-        cdmToggleBtn:SetScript("OnClick", function()
-            
-            if _G["CooldownViewerSettings"]:IsShown() then
-                HideUIPanel(_G["CooldownViewerSettings"])
-            else
-                ShowUIPanel(_G["CooldownViewerSettings"]) 
-            end
+        local auraRefreshBtn = CreateFrame("Button", nil, insetSettingsContainer, "UIPanelButtonTemplate")
+        auraRefreshBtn:SetSize(160, 22)
+        auraRefreshBtn:SetPoint("BOTTOMLEFT", SpellStyler.settingsMenu, "BOTTOMLEFT", 10, 5)
+        auraRefreshBtn:SetText("Force Refresh Auras")
+        auraRefreshBtn:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
+        auraRefreshBtn:SetScript("OnClick", function()
+            SpellStyler.BuffManager:EnableAllAuras()
         end)
+        auraRefreshBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            local isInCombat = (InCombatLockdown() or UnitAffectingCombat("player"))
+            local tooltipText = isInCombat and 'You are experiencing combat lockdown. This will only refresh the aura data, handled by blizzard. If you exit combat it should also update any settings.' or 'This should update aura data, handled by blizzard as well as any settings that affect the auras display.'
+            GameTooltip:SetText(tooltipText, 1, 1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        auraRefreshBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        auraRefreshBtn:EnableMouse(true)
 
 
 

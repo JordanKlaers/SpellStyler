@@ -1468,7 +1468,7 @@ FrameTrackerManager.FrameBuilder = {
         -- If the "Replace with Spell Display Count" setting is on, start a ticker
         -- that reads the action-bar display count and writes it into frame.count.
         if data.trackerConfig.countText and data.trackerConfig.countText.useSpellDisplayCount then
-            local spellID = data.frame.meta.activeSpellID
+            local spellID = C_Spell.GetOverrideSpell(data.frame.meta.baseSpellID)
             data.frame.count:SetAlpha(1)
             data.frame.count:Show()
             data.frame._displayCountTicker = C_Timer.NewTicker(0.05, function()
@@ -1661,7 +1661,7 @@ FrameTrackerManager.FrameUpdater = {
         
         -- Create new ticker if enabled
         if data.useSpellDisplayCount then
-            local spellID = data.frame.meta.activeSpellID
+            local spellID = C_Spell.GetOverrideSpell(data.frame.meta.baseSpellID)
             data.frame.count:SetAlpha(1)
             data.frame.count:Show()
             data.frame._displayCountTicker = C_Timer.NewTicker(0.05, function()
@@ -2382,13 +2382,12 @@ end
 --- @param opts    { durationObject?: table|userdata, forceUpdate?: boolean }
 --- @param sources string[]  All source labels collected during the window (for debugging)
 function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
-    local spellName = C_Spell.GetSpellName(frame.meta.activeSpellID) or "Unknown"
     opts = opts or {}
     local config, foundConfig = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
     if not config or not foundConfig then
-        local spellName = C_Spell.GetSpellName(frame.meta.activeSpellID) or "Unknown"
+        local spellName = C_Spell.GetSpellName(C_Spell.GetOverrideSpell(frame.meta.baseSpellID)) or "Unknown"
         local stateKey = frame.meta.baseSpellID
-        local errorMsg = spellName .. " was not found in state. The key used to pull from state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(frame.meta.activeSpellID) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
+        local errorMsg = spellName .. " was not found in state. The key used to pull from state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(C_Spell.GetOverrideSpell(frame.meta.baseSpellID)) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
         
         -- Try to save error to devNotes if config exists
         if config and config.devNotes then
@@ -2430,7 +2429,6 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         SpellStyler.ConditionalEngine:CacheFrameAlphas(frame, whenAvailable, whenActive, progressBar, fullBar)
     end
 
-    -- Get current charges first (needed for ApplyCooldownDuration)
     local currentCharges = nil
     local useDisplayCount = config.countText and config.countText.useSpellDisplayCount
     if flags.syncChargeText and not useDisplayCount then
@@ -2447,9 +2445,9 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
     -- Guard: If iconSettings doesn't exist, the config is malformed/incomplete
     -- This can happen during spec transitions, database corruption, or legacy data
     if not config.iconSettings or not config.statusBar or not config.cooldownText then
-        local spellName = C_Spell.GetSpellName(frame.meta.activeSpellID) or "Unknown"
+        local spellName = C_Spell.GetSpellName(C_Spell.GetOverrideSpell(frame.meta.baseSpellID)) or "Unknown"
         local stateKey = frame.meta.baseSpellID
-        local errorMsg = spellName .. " has a malformed configuration entry in state. The key in state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(frame.meta.activeSpellID) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
+        local errorMsg = spellName .. " has a malformed configuration entry in state. The key in state is " .. tostring(stateKey) .. ". The active spell id is " .. tostring(C_Spell.GetOverrideSpell(frame.meta.baseSpellID)) .. ". The tracker type is " .. tostring(frame.meta.trackerType)
         
         -- Save error to devNotes using State method
         local devNotes = config.devNotes or {}
@@ -2551,9 +2549,6 @@ function FrameTrackerManager:DriveFrameUpdate(frame, flags, opts, source)
             sources = { source or "unknown" },
         }
         -- Capture values for debug
-        local activeSpellID = frame.meta.activeSpellID
-        local base = frame.meta.baseSpellID
-        local spellInfo = C_Spell.GetSpellInfo(activeSpellID)
         C_Timer.After(0.005, function()
             local entry = q[queueKey]
             q[queueKey] = nil
@@ -2592,7 +2587,8 @@ end
 --- @return number fullBar Alpha = 1 during GCD/available, 0 during real cooldown
 function FrameTrackerManager:GetFrameStateAlphas(frame)
     local trackerType = frame.meta.trackerType
-    local activeSpellID = frame.meta.activeSpellID
+    -- local currentSpell = C_Spell.GetOverrideSpell(frame.meta.baseSpellID)
+    local activeSpellID = C_Spell.GetOverrideSpell(frame.meta.baseSpellID) --frame.meta.activeSpellID
     local config = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
     
     -- Handle mock cooldown override
@@ -2635,7 +2631,6 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     local durationObj = frame.meta.totemDuration
         or (chargeInfo and chargeInfo.maxCharges > 1) and C_Spell.GetSpellChargeDuration(activeSpellID, true)
         or C_Spell.GetSpellCooldownDuration(activeSpellID, true)
-    local spellInfo = C_Spell.GetSpellInfo(frame.meta.activeSpellID)
     local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
     
     if chargeInfo and chargeInfo.maxCharges > 1 then
@@ -2777,7 +2772,8 @@ function FrameTrackerManager:renderUpdateChargesText(data)
                 data.customFrame.count:SetAlpha(0)
             else
                 -- Spells: show charge count for multi-charge spells
-                local chargesData = C_Spell.GetSpellCharges(data.customFrame.meta.activeSpellID)
+                
+                local chargesData = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(data.customFrame.meta.baseSpellID))
                 local currentCharges
                 if not chargesData or chargesData.maxCharges == 1 then
                     -- set zero so that spells with only 1 charge dont render the text
@@ -2955,7 +2951,6 @@ FrameTrackerManager.ApplyVisibility = {
         local onlyBar = (onlyBarOverride ~= nil) and onlyBarOverride or (context.config.statusBar.onlyRenderBar or false)
         if not onlyBar and context.config.statusBar.displayState ~= 'never' and context.config.statusBar.displayState ~= 'always' then
             -- Apply onlyRenderBar setting and visibility state to bg/glow/border
-            local spellInfo = C_Spell.GetSpellInfo(context.customFrame.meta.activeSpellID)
             FrameTrackerManager:SetStatusBarContainerVisibility({
                 customFrame = context.customFrame,
                 config = context.config,
@@ -3046,7 +3041,7 @@ FrameTrackerManager.ApplyVisibility = {
                 local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
                 local durationObject
                 local maxSpellCharges = 1
-                local spellChargeInfo = C_Spell.GetSpellCharges(context.customFrame.meta.activeSpellID)
+                local spellChargeInfo = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(context.customFrame.meta.baseSpellID))
                 if spellChargeInfo and spellChargeInfo.maxCharges then
                     maxSpellCharges = spellChargeInfo.maxCharges
                 end
@@ -3055,9 +3050,9 @@ FrameTrackerManager.ApplyVisibility = {
                     durationObject = context.customFrame.meta.totemDuration
                 else
                     if maxSpellCharges > 1 then
-                        durationObject = C_Spell.GetSpellChargeDuration(context.customFrame.meta.activeSpellID, true)
+                        durationObject = C_Spell.GetSpellChargeDuration(C_Spell.GetOverrideSpell(context.customFrame.meta.baseSpellID), true)
                     else
-                        durationObject = C_Spell.GetSpellCooldownDuration(context.customFrame.meta.activeSpellID, true)
+                        durationObject = C_Spell.GetSpellCooldownDuration(C_Spell.GetOverrideSpell(context.customFrame.meta.baseSpellID), true)
                     end
                 end
                 
@@ -3141,9 +3136,8 @@ end
 
 --- Performs the actual cooldown application work: resolves the duration object,
 --- then calls SetTimerDuration, SetCooldown, SetIconVisibility, and SetStatusBarVisibility.
---- Must NOT be called directly from outside this file; use ApplyCooldownDuration instead.
+--- Must NOT be called directly from outside this file;
 --- @param data ApplyCooldownDurationData
---local function _DoApplyCooldownDuration(data)
 function FrameTrackerManager:ApplyCooldownDuration(data)
     -- Skip duration resolution if mock cooldown is active BUT we don't have a pre-provided duration
     -- (If we have a durationObject, we're SETTING the mock cooldown, so we should continue)
@@ -3171,6 +3165,9 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
             else
                 durationObject = C_Spell.GetSpellCooldownDuration(currentSpell, true)
             end
+
+            local spellInfoBase = C_Spell.GetSpellInfo(data.customFrame.meta.baseSpellID)
+            local spellInfoOverride = C_Spell.GetSpellInfo(currentSpell)
         end
     end
     if data.forceUpdate then
@@ -3180,8 +3177,6 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
     if not durationObject then
         return
     end
-
-    local spellInfo = C_Spell.GetSpellInfo(data.customFrame.meta.activeSpellID)
 
     if data.customFrame.statusBar and data.customFrame.statusBar.SetTimerDuration then
         local cdTimerDir = (data.config and data.config.statusBar and data.config.statusBar.fillOrEmpty == 'inverse')
@@ -3193,7 +3188,6 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
             data.customFrame.statusBar:RotateTextures(textureRotation)
         end
         data.customFrame.statusBar:SetFillStyle(cdFillStyle and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
-        local spellInfo = C_Spell.GetSpellInfo(data.customFrame.meta.activeSpellID or data.config.overrideSpellID)
         data.customFrame.statusBar:SetTimerDuration(
             durationObject,
             Enum.StatusBarInterpolation.Immediate,
@@ -3258,7 +3252,7 @@ end
 
 --- @param spellID number
 --- @return ApplyCooldownDurationData|nil
-function FrameTrackerManager:MatchTrackerFrame(spellID, trackerType)
+function FrameTrackerManager:MatchTrackerFrame(targetSpell, trackerType)
     local match = nil
     --[[
         -- This should match the values used by apply Cooldown Duration
@@ -3270,17 +3264,11 @@ function FrameTrackerManager:MatchTrackerFrame(spellID, trackerType)
             config
         }
     ]]
-    local apiBase = C_Spell.GetBaseSpell(spellID)
-    local cacheBase = overrideToBase[spellID]
-    local currentSpellToBaseSpellID
-    if apiBase == cacheBase then
-        currentSpellToBaseSpellID = apiBase
-    elseif apiBase == spellID and apiBase ~= cacheBase and cacheBase then
-        -- The cached association remembered there was a previous connection to its base spellID so use that instead of the api. (Example: when void shield turns back into power word shield, the API's break the association to the baseSpellID from the void shield spell)
-        currentSpellToBaseSpellID = cacheBase
-    end
+    local targetSpellBase = C_Spell.GetBaseSpell(targetSpell)
+    local cache = overrideToBase[targetSpell]
+    local cacheBase = overrideToBase[targetSpellBase]
 
-    local activeSpellID = C_Spell.GetOverrideSpell(spellID)
+
     local lookThrough
     local type = 'all tracker types'
     if trackerType ~= nil then
@@ -3292,13 +3280,41 @@ function FrameTrackerManager:MatchTrackerFrame(spellID, trackerType)
 
     for _, tType in ipairs(lookThrough) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
-            for baseSpellID, trackedFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+            for keySpellID, trackedFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 --match found, update the return data
-                if currentSpellToBaseSpellID == baseSpellID or baseSpellID == spellID then
+
+                --[[
+                    The reason there are so many checks to match the spell to frame:
+                        The spellID used as the key in the database can be different than BOTH the base and override.
+                        For example - keySpellID == 'Avenging Crusader', baseSpellID == 'Avening Wrath', overrideSpellID == 'Crusader Strike' (when active)
+                        Additionally, the cache stuff is require because sometimes the blizzard API breaks the association, like disc priest void shield changing back into power word: Shield
+                            - the cache helps find the frame so that it can properly update the cooldown having swapped back to the original "power word: Shield" despite the override association being removed - meaning, if targetSpell was void shield from SPELL_UPDATE_COOLDOWN but it turned back into power word:Shield, we still need to match
+                ]]
+                local keyBaseSpellID = C_Spell.GetBaseSpell(keySpellID)
+
+                local keySpellID_Matches_TargetSpell = keySpellID == targetSpell
+                local keySpellID_Matches_TargetSpellBase = keySpellID == targetSpellBase
+                local keySpellID_Matches_CacheSpell = keySpellID == cache
+                local keySpellID_Matches_CacheSpellBase = keySpellID == cacheBase
+
+                local keySpellIDBase_Matches_TargetSpell = keyBaseSpellID == targetSpell
+                local keySpellIDBase_Matches_TargetSpellBase = keyBaseSpellID == targetSpellBase
+                local keySpellIDBase_Matches_CacheSpell = keyBaseSpellID == cache
+                local keySpellIDBase_Matches_CacheSpellBase = keyBaseSpellID == cacheBase
+
+                if keySpellID_Matches_TargetSpell
+                    or keySpellID_Matches_TargetSpellBase
+                    or keySpellID_Matches_CacheSpell
+                    or keySpellID_Matches_CacheSpellBase
+                    or keySpellIDBase_Matches_TargetSpell
+                    or keySpellIDBase_Matches_TargetSpellBase
+                    or keySpellIDBase_Matches_CacheSpell
+                    or keySpellIDBase_Matches_CacheSpellBase
+                    then
                     match = {
-                        config = State:GetSpecificTrackerValue(baseSpellID, tType),
-                        baseSpellID = baseSpellID,
-                        activeSpellID = activeSpellID,
+                        config = State:GetSpecificTrackerValue(keySpellID, tType),
+                        baseSpellID = keyBaseSpellID,
+                        activeSpellID = C_Spell.GetOverrideSpell(keySpellID),
                         customFrame = trackedFrame,
                         trackerType = tType
                     }
@@ -3526,9 +3542,9 @@ function FrameTrackerManager:UpdateActiveSpells()
     for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
         local isActive
         if customFrame.meta.isSpellWithCharges then
-            isActive = C_Spell.GetSpellCharges(customFrame.meta.activeSpellID).isActive
+            isActive = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(customFrame.meta.baseSpellID)).isActive
         else
-            isActive = C_Spell.GetSpellCooldown(customFrame.meta.activeSpellID).isActive
+            isActive = C_Spell.GetSpellCooldown(C_Spell.GetOverrideSpell(customFrame.meta.baseSpellID)).isActive
         end
         if isActive then
             FrameTrackerManager:DriveFrameUpdate(
@@ -3678,12 +3694,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             --     --     donk = donk
             --     -- }, "e")
             -- end
-            FrameTrackerManager:UpdateActiveSpells()
+
+            -- FrameTrackerManager:UpdateActiveSpells()
         end
     end
 
     if event == "SPELL_UPDATE_USABLE" then
-        FrameTrackerManager:UpdateActiveSpells()
+        -- FrameTrackerManager:UpdateActiveSpells()
     end
 
     if event == "PLAYER_TOTEM_UPDATE" then
@@ -3829,7 +3846,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 )
                 -- Check if this spell should track totem duration
                 if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
-                    FrameTrackerManager:AddSpellToTotemQueue(match.customFrame.meta.activeSpellID, match.customFrame.meta.trackerType)
+                    FrameTrackerManager:AddSpellToTotemQueue(C_Spell.GetOverrideSpell(match.customFrame.meta.baseSpellID), match.customFrame.meta.trackerType)
                 end
             end
         end
@@ -3840,6 +3857,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if isSecretSpellID then
         else
             local spellInfo = C_Spell.GetSpellInfo(spellID)
+            local spellInfoBase = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(spellID))
+            local spellInfoOverride = C_Spell.GetSpellInfo(C_Spell.GetOverrideSpell(C_Spell.GetBaseSpell(spellID)))
             local match = FrameTrackerManager:MatchTrackerFrame(spellID)
             if match then
                 FrameTrackerManager.lastSpellCast = {
@@ -3888,7 +3907,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                     )
                     -- Check if this spell should track totem duration
                     if match.config and match.config.totemBar and match.config.totemBar.attemptToTrack then
-                        FrameTrackerManager:AddSpellToTotemQueue(match.customFrame.meta.activeSpellID, match.customFrame.meta.trackerType)
+                        FrameTrackerManager:AddSpellToTotemQueue(C_Spell.GetOverrideSpell(match.customFrame.meta.baseSpellID), match.customFrame.meta.trackerType)
                     end
                 end
                 
@@ -3917,7 +3936,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             if cooldownInfo.isOnGCD == true then
                 return  -- GCD only – nothing to do
             end
-            -- FrameTrackerManager:ApplyCooldownDuration(frameMatchData)
             FrameTrackerManager:DriveFrameUpdate(
                 frameMatchData.customFrame,
                 {

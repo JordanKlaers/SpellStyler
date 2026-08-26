@@ -287,3 +287,10 @@ Version 2.0.3
 	- Updates one of the events to only update auras when registering the event when out of combat
 	- Updates the database so previously existing buffs should now contain information of which spec they should be enabled for. Defaults to the current spec if the association was missing
 	- Updates auras to enable adding additional spell id without needing to reload. Also updates to not need a reload if you toggle "Is NPC debuff for target"
+
+Version 2.0.4
+	- Updates spelsl again to properly track the current override spell. All references to the active/override spell are referenced right when the value is used, isntead of caching the value. This prevents multiple methods at the same time overwriting the spellID to be used to an incorrect state.
+	- Updates the statusBar and charge bar for auras to properly implement some of the settings that werent taking affect - fill/empty and direction.
+	- Updates aura cooldowns to update the text size, color and placement correctly.
+	- Updates the method that refreshes aura settings and data to be protected when in combat. This should prevent the auras from becoming stale or incorrect.
+	- Adds a button in the settings menu to manually update auras. This include a tooltip that shows if you are in combat or not when trying to click. This is just a temporary solution. Please report any issues if you find yourself needing to use this button.

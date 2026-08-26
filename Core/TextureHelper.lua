@@ -361,7 +361,7 @@ end
 local donk
 local doop
 -- Keybind handler: Shift+Ctrl+L
-local frame 
+
 pcall(function()
     local texScanFrame = CreateFrame("Frame")
     texScanFrame:SetPropagateKeyboardInput(true)
@@ -378,36 +378,7 @@ pcall(function()
                 
             end
             if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                -- local baseSpellInfo = C_Spell.GetSpellInfo(228260)
-                -- frame = CreateFrame("Button", 'donk', UIParent, "BackdropTemplate")
-                -- frame:SetSize(50,50)
-                -- frame:SetPoint("CENTER", UIParent, "CENTER")
-                -- local icon = frame:CreateTexture(nil, "ARTWORK")
-                -- frame.icon = icon
-                -- icon:SetAllPoints(frame)
-                -- frame.icon:SetTexCoord(0, 1, 0, 1)
-                -- frame.icon:SetTexture(baseSpellInfo.iconID)
-                -- frame[228260] = CreateFrame("Cooldown", "_Cooldown", frame, "CooldownFrameTemplate")
-                -- frame[1242173] = CreateFrame("Cooldown", "_Cooldown2", frame, "CooldownFrameTemplate")
-                -- -- frame.cooldown = CreateFrame("Cooldown", "_Cooldown", frame, "CooldownFrameTemplate")
-                -- frame[228260]:SetAllPoints(frame.icon)
-                -- frame[228260]:SetFrameLevel(frame:GetFrameLevel() + 1)  -- Above icon texture
-                -- frame[228260]:SetDrawEdge(true)
-                -- frame[228260]:SetDrawBling(false)
-                -- frame[228260]:SetSwipeColor(0, 0, 0, 0.8)
                 
-                -- -- Apply sweep and countdown text settings (per-icon overrides tracker-level)
-                -- frame[1242173]:SetDrawSwipe(true)
-                -- frame[1242173]:SetHideCountdownNumbers(false)
-                -- frame[1242173]:SetAllPoints(frame.icon)
-                -- frame[1242173]:SetFrameLevel(frame:GetFrameLevel() + 1)  -- Above icon texture
-                -- frame[1242173]:SetDrawEdge(true)
-                -- frame[1242173]:SetDrawBling(false)
-                -- frame[1242173]:SetSwipeColor(0, 0, 0, 0.8)
-                
-                -- -- Apply sweep and countdown text settings (per-icon overrides tracker-level)
-                -- frame[1242173]:SetDrawSwipe(true)
-                -- frame[1242173]:SetHideCountdownNumbers(false)
 
             end
         end)
@@ -417,6 +388,7 @@ pcall(function()
         texScanFrame:EnableKeyboard(true)
     end)
 end)
+
 
 
 -- Texture Previewer UI

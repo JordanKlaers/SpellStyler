@@ -24,6 +24,7 @@ function BuffManager:CreateStatusBar(frame, key, trackerConfig)
     local _iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
     local statusBarWidth = barConfig and barConfig.width or (_iconW * 4)
     local statusBarHeight = barConfig and barConfig.height or (_iconH / 2)
+	local reverseFill = barConfig.fillOrEmpty == 'inverse'
 
     bar:SetSize(statusBarWidth, statusBarHeight)
     bar:SetScale(barConfig.scale or 1)
@@ -55,7 +56,7 @@ function BuffManager:CreateStatusBar(frame, key, trackerConfig)
     )
     
     -- Fill direction is controlled via TimerDirection in SetTimerDuration (ElapsedTime = fills up, RemainingTime = depletes)
-    bar:SetReverseFill(false)
+    bar:SetReverseFill(reverseFill)
     bar:SetOrientation(
         (barConfig.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
     )
@@ -114,7 +115,8 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 					scale = buffConfigObj.scale or 1,
 					opacity = buffConfigObj.iconSettings.opacity  or 1,
 					displayCooldownText = buffConfigObj.cooldownText.display or false,
-					cooldownTextSize = buffConfigObj.cooldownText.fontSize or 12,
+					cooldownTextSize = buffConfigObj.cooldownText.size or 12,
+					cooldownTextColor = buffConfigObj.cooldownText.color or { r=1, g=1, b=1, a=1 },
 					cooldownTextFont = buffConfigObj.cooldownText.font,
 					cooldownTextFontFlags = buffConfigObj.cooldownText.fontFlags,
 					cooldownTextX = buffConfigObj.cooldownText.x,
@@ -189,6 +191,12 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 						-- Apply position from pre-computed values
 						cdText:ClearAllPoints()
 						cdText:SetPoint("CENTER", cooldown, "CENTER", inputs.cooldownTextX, inputs.cooldownTextY)
+						cdText:SetTextColor(
+							inputs.cooldownTextColor.r,
+							inputs.cooldownTextColor.g,
+							inputs.cooldownTextColor.b,
+							inputs.cooldownTextColor.a
+						)
 					end
 				end
 				button.cooldown = cooldown
@@ -216,8 +224,11 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 					if isPlaceholder then
 						durationBar:SetValue(1)
 					elseif buffConfig['statusBar'].displayState ~= 'never' then
+						local direction = buffConfig['statusBar'].fillOrEmpty == 'inverse'
+							and Enum.StatusBarTimerDirection.ElapsedTime
+							or  Enum.StatusBarTimerDirection.RemainingTime
 						button:SetDurationBar(durationBar, {
-							direction = Enum.StatusBarTimerDirection.RemainingTime,
+							direction = direction,
 							interpolation = Enum.StatusBarInterpolation.Smooth
 						})
 					end
@@ -243,9 +254,13 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 					if isPlaceholder then
 						chargeBar:SetValue(buffConfig.visualChargeBar.maxValue or 4)
 					elseif buffConfig['visualChargeBar'].displayState ~= 'never' then
-						button:SetApplicationBar(chargeBar, {
+						local direction = buffConfig['visualChargeBar'].fillOrEmpty == 'inverse'
+							and Enum.StatusBarTimerDirection.ElapsedTime
+							or  Enum.StatusBarTimerDirection.RemainingTime
+						button:SetDurationBar(chargeBar, {
+							direction = direction,
+							interpolation = Enum.StatusBarInterpolation.Smooth,
 							maxApplications = buffConfig.visualChargeBar.maxValue or 4,  -- Adjust based on buff max stacks
-							interpolation = Enum.StatusBarInterpolation.Smooth
 						})
 					end	
 				end
@@ -394,6 +409,13 @@ function BuffManager:UpdateAura(aura, trackerValue)
 			buffConfig = buffConfig
 		}
 	]]
+	-- just refresh the aura data and exist early if in combat to avoid issues
+	if (InCombatLockdown() or UnitAffectingCombat("player")) then
+		aura.auraContainer:UpdateAllAuras()
+		return
+	end
+
+
 	local currentSpecID = SpellStyler.State:GetCurrentSpecID()
 	if trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] then
 		aura.auraContainer:SetEnabled(true)
@@ -421,7 +443,8 @@ function BuffManager:UpdateAura(aura, trackerValue)
 		posX = trackerValue.position and trackerValue.position.x or 0,
 		posY = trackerValue.position and trackerValue.position.y or 0,
 		displayCooldownText = trackerValue.cooldownText.display or false,
-		cooldownTextSize = trackerValue.cooldownText.fontSize or 12,
+		cooldownTextSize = trackerValue.cooldownText.size or 12,
+		cooldownTextColor = trackerValue.cooldownText.color or { r=1, g=1, b=1, a=1 },
 		cooldownTextFont = trackerValue.cooldownText.font,
 		cooldownTextFontFlags = trackerValue.cooldownText.fontFlags,
 		cooldownTextX = trackerValue.cooldownText.x,
@@ -483,6 +506,12 @@ function BuffManager:UpdateAura(aura, trackerValue)
 					cdText:SetFont(resolvedFontPath, inputs.cooldownTextSize, resolvedFontFlags or "OUTLINE")
 					cdText:ClearAllPoints()
 					cdText:SetPoint("CENTER", frame.cooldown, "CENTER", inputs.cooldownTextX, inputs.cooldownTextY)
+					cdText:SetTextColor(
+                        inputs.cooldownTextColor.r,
+                        inputs.cooldownTextColor.g,
+                        inputs.cooldownTextColor.b,
+                        inputs.cooldownTextColor.a
+                    )
 				end
 			end
 		end
@@ -524,10 +553,23 @@ function BuffManager:UpdateAura(aura, trackerValue)
 				if barTexture then 
 					barFrame:SetStatusBarTexture(barTexture)
 				end
-				barFrame:SetReverseFill(false)
+				barFrame:SetReverseFill(config.fillOrEmpty == 'inverse')
+				barFrame:SetFillStyle(config.progressDirection == 'reverse' and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
 				barFrame:SetOrientation(
 					(config.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
 				)
+
+				local direction = config.fillOrEmpty == 'inverse'
+					and Enum.StatusBarTimerDirection.ElapsedTime
+					or  Enum.StatusBarTimerDirection.RemainingTime
+				if not isPlaceholder then
+					frame:SetDurationBar(barFrame, {
+						direction = direction,
+						interpolation = Enum.StatusBarInterpolation.Smooth
+					})
+				else
+
+				end
 			else
 				if isPlaceholder then
 					barFrame:Hide()
@@ -686,45 +728,31 @@ function BuffManager:ToggleMockCooldown(baseSpellID)
         
         -- Clear duration bar
         if placeHolder.durationBar then
-            placeHolder.durationBar:SetValue(0)
+			placeHolder.durationBar:SetMinMaxValues(0, 1)
+            placeHolder.durationBar:SetValue(1)
         end
     else
-        -- Enable mock cooldown (15 second duration)
         placeHolder.meta.mockCooldownActive = true
-        
-        local mockDuration = 15
+		local mockDuration = 15
         local now = GetTime()
         
-        -- Apply cooldown to placeholder's cooldown frame
+        -- Create a proper DurationObject for Apply Cooldown Duration()
+        local mockDurationObj = C_DurationUtil.CreateDuration()
+        mockDurationObj:SetTimeFromStart(now, mockDuration)
+
+
         if placeHolder.cooldown then
-            placeHolder.cooldown:SetCooldown(now, mockDuration)
+            placeHolder.cooldown:SetCooldownFromDurationObject(mockDurationObj)
         end
-        
-        -- Apply duration to placeholder's duration bar
-        if placeHolder.durationBar then
-            placeHolder.durationBar:SetMinMaxValues(0, mockDuration)
-            placeHolder.durationBar:SetValue(mockDuration)
-            
-            -- Animate the bar countdown
-            local startTime = now
-            local function updateBar()
-                if not placeHolder.meta.mockCooldownActive then return end
-                
-                local elapsed = GetTime() - startTime
-                local remaining = math.max(0, mockDuration - elapsed)
-                
-                if placeHolder.durationBar then
-                    placeHolder.durationBar:SetValue(remaining)
-                end
-                
-                if remaining > 0 then
-                    C_Timer.After(0.05, updateBar)
-                else
-                    placeHolder.meta.mockCooldownActive = false
-                end
-            end
-            updateBar()
-        end
+		local config = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, 'buffs')
+		local cdTimerDir = config.statusBar.fillOrEmpty == 'inverse'
+            and Enum.StatusBarTimerDirection.ElapsedTime
+            or  Enum.StatusBarTimerDirection.RemainingTime
+		placeHolder.durationBar:SetTimerDuration(
+            mockDurationObj,
+            Enum.StatusBarInterpolation.Immediate,
+            cdTimerDir
+        )
     end
     
     return not isMockActive  -- Return new state
@@ -859,30 +887,18 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         C_Timer.After(0.5, function()
             BuffManager:RefreshAllBuffAuras()
         end)
-    elseif event == "ZONE_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" then
-        -- Refresh when changing zones
-        if hasPlayerEnteredWorld then
-            BuffManager:RefreshAllBuffAuras()
-        end
 	elseif event == "PLAYER_DEAD"
 		or event == "UNIT_ENTERING_VEHICLE"
-		or event == "UNIT_ENTERED_VEHICLE" then
-		if hasPlayerEnteredWorld then
-            BuffManager:DisableAllAuras()
-        end
-    elseif
-		event == "UNIT_EXITING_VEHICLE"
+		or event == "UNIT_ENTERED_VEHICLE" 
+		or event == "UNIT_EXITING_VEHICLE"
 		or event == "PLAYER_ENTERING_WORLD"
 		or event == "UNIT_EXITED_VEHICLE"
 		or event == "PLAYER_ALIVE"
-		or event == "PLAYER_UNGHOST" then
+		or event == "PLAYER_UNGHOST"
+		or event == "ZONE_CHANGED"
+		or event == "ZONE_CHANGED_NEW_AREA" then
         -- Refresh when dying or resurrecting
         if hasPlayerEnteredWorld then
-			BuffManager:EnableAllAuras()
-            BuffManager:RefreshAllBuffAuras()
-        end
-	elseif event == "ZONE_CHANGED_NEW_AREA" then
-		if hasPlayerEnteredWorld and not (InCombatLockdown() or UnitAffectingCombat("player")) then
 			BuffManager:EnableAllAuras()
             BuffManager:RefreshAllBuffAuras()
         end
