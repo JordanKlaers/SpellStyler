@@ -294,3 +294,6 @@ Version 2.0.4
 	- Updates aura cooldowns to update the text size, color and placement correctly.
 	- Updates the method that refreshes aura settings and data to be protected when in combat. This should prevent the auras from becoming stale or incorrect.
 	- Adds a button in the settings menu to manually update auras. This include a tooltip that shows if you are in combat or not when trying to click. This is just a temporary solution. Please report any issues if you find yourself needing to use this button.
+
+Version 2.0.5
+	- Updates the check to use "are uaras secret" instead of "Is the player in combat" to allow for aura updates without exploding everything

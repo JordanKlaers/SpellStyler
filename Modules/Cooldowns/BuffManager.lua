@@ -410,7 +410,8 @@ function BuffManager:UpdateAura(aura, trackerValue)
 		}
 	]]
 	-- just refresh the aura data and exist early if in combat to avoid issues
-	if (InCombatLockdown() or UnitAffectingCombat("player")) then
+	local hasSecretAuras = C_Secrets.ShouldAurasBeSecret()
+	if (hasSecretAuras) then
 		aura.auraContainer:UpdateAllAuras()
 		return
 	end
