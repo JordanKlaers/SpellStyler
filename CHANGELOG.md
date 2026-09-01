@@ -297,3 +297,7 @@ Version 2.0.4
 
 Version 2.0.5
 	- Updates the check to use "are uaras secret" instead of "Is the player in combat" to allow for aura updates without exploding everything
+
+Version 2.0.6
+	- Updates to prevent duplicate frames from being create for auras when "entering the world" which can happen more than just logging in or reloading.
+	- Updates aura creating when swapping specs
