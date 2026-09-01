@@ -416,7 +416,7 @@ function State:HandleTalentChange()
 	local specDB = SpellStyler_CharDB.classSpecializations[State:GetCurrentSpecID()]
 	State:SetCorrectOverride(specDB)
 
-    SpellStyler.BuffManager:RefreshAllBuffAuras()
+    SpellStyler.BuffManager:CreateBuffContainers()
 end
 
 -- ============================================================================

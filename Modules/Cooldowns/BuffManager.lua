@@ -71,7 +71,7 @@ end
 -- BUFF CONTAINER CREATION
 -- Creates a single container and slot for each buff in the State
 -- ============================================================================
-local function CreateBuffContainers()
+function BuffManager:CreateBuffContainers()
     local buffs = State:GetAllTrackerValues("buffs")
     
     if not buffs then
@@ -83,15 +83,20 @@ local function CreateBuffContainers()
         -- Only create if enabled
 		if BuffManager.buffContainers[baseSpellID] then
 			BuffManager:UpdateAura(BuffManager.buffContainers[baseSpellID], buffConfig)
+		else
+			BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 		end
-		BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
     end
 end
 
 function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 	if buffConfig.isEnabled ~= false then
+		if BuffManager.buffContainers[baseSpellID] then
+			BuffManager:UpdateAura(BuffManager.buffContainers[baseSpellID], buffConfig)
+			return
+		end
 		-- Create container frame
-		local auraContainer = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+		local auraContainer = CreateFrame("AuraContainer", 'AuraContainer_' .. baseSpellID, UIParent, "CustomAuraContainerTemplate")
 		auraContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 
 		local options = {
@@ -357,7 +362,7 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 		
 		auraContainer:SetUnit(unitToTrack)
 		-- Create placeholder frame for dragging in settings menu
-		local placeHolder = CreateFrame("Button", 'buffPlaceholder_' .. buffConfig.name, UIParent, "BackdropTemplate")
+		local placeHolder = CreateFrame("Button", 'buffPlaceholder_' .. baseSpellID .. "-" .. buffConfig.name, UIParent, "BackdropTemplate")
 		options.initializeFrame(placeHolder, true)
 		placeHolder:SetPoint("CENTER", UIParent, "CENTER", posX / (buffConfig.scale or 1), posY / (buffConfig.scale or 1))
 
@@ -883,7 +888,7 @@ local hasPlayerEnteredWorld = false
 eventFrame:SetScript("OnEvent", function(self, event, ...)
 	if event == "PLAYER_ENTERING_WORLD" then
         hasPlayerEnteredWorld = true
-        CreateBuffContainers()
+        BuffManager:CreateBuffContainers()
         -- Refresh auras after containers are created
         C_Timer.After(0.5, function()
             BuffManager:RefreshAllBuffAuras()

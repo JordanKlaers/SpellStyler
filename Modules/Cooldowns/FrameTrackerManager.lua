@@ -3660,12 +3660,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             --     for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
             --         local auraa = C_UnitAuras.GetAuraDataByIndex('target', number)
             --         if auraa then
+            --             -- print('target - ' .. auraa.name .. ': ' .. auraa.spellId)
             --             data['target - ' .. auraa.name] = auraa.spellId    
             --         end
             --     end
             --     for number in ipairs({1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30}) do
             --         local auraa = C_UnitAuras.GetAuraDataByIndex('player', number)
             --         if auraa then
+            --             -- print('player - ' .. auraa.name .. ': ' .. auraa.spellId)
             --             data['player - ' .. auraa.name] = auraa.spellId    
             --         end
             --     end
@@ -3673,6 +3675,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             --        for number in ipairs(donk.removedAuraInstanceIDs) do
             --             local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
             --             if aura then
+            --                 -- print(unit .. ' removed - ' .. aura.name .. ': ' .. aura.spellId)
             --                 data[aura.name] = aura.spellId    
             --             end
                         
@@ -3682,11 +3685,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             --         for number in ipairs(donk.updatedAuraInstanceIDs) do
             --             local aura = C_UnitAuras.GetAuraDataByAuraInstanceID(unit, number)
             --             if aura then
+            --                 -- print(unit .. ' updated - ' .. aura.name .. ': ' .. aura.spellId)
             --                 data[aura.name] = aura.spellId    
             --             end
             --         end
             --         end
-            --         DevTool:AddData(data, "donk")
+            --         -- DevTool:AddData(data, "donk")
             -- end)
             -- if e then
             --     -- DevTool:AddData({
@@ -3695,12 +3699,12 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             --     -- }, "e")
             -- end
 
-            -- FrameTrackerManager:UpdateActiveSpells()
+            FrameTrackerManager:UpdateActiveSpells()
         end
     end
 
     if event == "SPELL_UPDATE_USABLE" then
-        -- FrameTrackerManager:UpdateActiveSpells()
+        FrameTrackerManager:UpdateActiveSpells()
     end
 
     if event == "PLAYER_TOTEM_UPDATE" then

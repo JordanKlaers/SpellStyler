@@ -186,8 +186,8 @@ local function ShowBorderDemo()
         end)
         auraRefreshBtn:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            local isInCombat = (InCombatLockdown() or UnitAffectingCombat("player"))
-            local tooltipText = isInCombat and 'You are experiencing combat lockdown. This will only refresh the aura data, handled by blizzard. If you exit combat it should also update any settings.' or 'This should update aura data, handled by blizzard as well as any settings that affect the auras display.'
+            local hasSecretAuras = C_Secrets.ShouldAurasBeSecret()
+            local tooltipText = hasSecretAuras and 'You are experiencing aura lockdown. This will only refresh the aura data, handled by blizzard. If auras are no longer secret it should also update any settings.' or 'This should update aura data, handled by blizzard as well as any settings that affect the auras display.'
             GameTooltip:SetText(tooltipText, 1, 1, 1, 1, true)
             GameTooltip:Show()
         end)
