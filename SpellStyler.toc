@@ -2,7 +2,7 @@
 ## Title: Spell Styler
 ## Notes: Enhanced cooldown tracking with custom layouts, visibility controls, and proc alerts.
 ## Author: EonWorm
-## Version: 2.0.6
+## Version: 2.1.0
 ## SavedVariables: SpellStyler_DB
 ## SavedVariablesPerCharacter: SpellStyler_CharDB
 ## X-Category: Interface Enhancements
@@ -33,6 +33,7 @@ Modules\Cooldowns\BuffManager.lua
 Core\Settings.lua
 Core\AddSpells.lua
 Core\IconSettingsRenderer.lua
+Core\TexturePreviewRenderer.lua
 Core\HelpContentRenderer.lua
 Core\ContainerSettings.lua
 Core\Conditions.lua

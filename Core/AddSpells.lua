@@ -168,7 +168,7 @@ function AddSpells:CreatePlusButton(parent)
     tex:SetTexture(PLUS_ICON_PATH)
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetText("Add Spell", 1, 1, 1)
+        GameTooltip:SetText("Add Tracker", 1, 1, 1)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -226,43 +226,46 @@ function AddSpells:RenderAddSpellsView(parent)
     parent.currentControlsContainer = container
 
     -- ── Selection state ────────────────────────────────────────────────
-    local selectedSpell = nil
-    local selectedAura  = nil
+    -- entryType is one of "spell" | "item" | "aura"
+    local selectedEntry = nil
+    local selectedType  = nil
     local selectedBtn   = nil
 
-    local previewAura = nil
-    local previewSpell = nil
+    local previewEntry = nil
+    local previewType  = nil
 
-    local previewBtn    = nil
-    local previewAuraBtn = nil
-    local previewTex    = nil
-    local previewAuraTex = nil
-    local addAuraBtn    = nil
-    local addBtn        = nil  -- forward-declared so closures can reference it
-    -- Forward-declared so the addBtn OnClick closure can reference them
+    local previewBtn = nil  -- forward-declared: single shared preview icon
+    local previewTex = nil
+    local addBtn     = nil  -- forward-declared: single shared add button
+
+    -- These are also needed by the slot-picker before the shared controls are built.
+    local slotPreviewBtn = nil
+    local slotAddBtn = nil
+    -- Forward-declared so closures can reference them
     -- (Lua closures only capture locals that are in scope at definition time)
     local gridSF
     local gridButtons
     local lastFilter = ""
     local FilterAndLayoutSafe
+    local UpdatePreview
 
     local function Deselect()
         if selectedBtn and SpellStyler.GlowUtil then
             SpellStyler.GlowUtil:StopAnts(selectedBtn)
         end
-        selectedSpell = nil
-        selectedAura = nil
+        selectedEntry = nil
+        selectedType  = nil
         selectedBtn   = nil
         if addBtn then addBtn:Disable() end
-        if addAuraBtn then addAuraBtn:Disable() end
     end
 
-    local function SelectSpell(spell, btn)
+    local function SelectEntry(entry, entryType, btn)
         -- deselect old
         if selectedBtn and SpellStyler.GlowUtil then
             SpellStyler.GlowUtil:StopAnts(selectedBtn)
         end
-        selectedSpell = spell
+        selectedEntry = entry
+        selectedType  = entryType
         selectedBtn   = btn
         if SpellStyler.GlowUtil then
             SpellStyler.GlowUtil:SetupAnts(btn, { r = 1, g = 0.82, b = 0 })
@@ -270,167 +273,40 @@ function AddSpells:RenderAddSpellsView(parent)
         end
         if addBtn then addBtn:Enable() end
     end
-
-    local function SelectAura(spell, btn)
-        -- deselect old
-        if selectedBtn and SpellStyler.GlowUtil then
-            SpellStyler.GlowUtil:StopAnts(selectedBtn)
-        end
-        selectedAura = spell
-        selectedBtn   = btn
-        if SpellStyler.GlowUtil then
-            SpellStyler.GlowUtil:SetupAnts(btn, { r = 1, g = 0.82, b = 0 })
-            SpellStyler.GlowUtil:PlayAnts(btn)
-        end
-        if addAuraBtn then addAuraBtn:Enable() end
-    end
     -- clicking empty space deselects
     container:SetScript("OnMouseDown", function() Deselect() end)
 
-    -- ── Static header UI ───────────────────────────────────────────────
-    local title = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", container, "TOPLEFT", 12, -16)
-    title:SetText("|cFFFFD700Add Spell|r")
-
-    local subtitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    subtitle:SetText("Showing class spells and items with cooldowns.")
-    subtitle:SetTextColor(0.7, 0.7, 0.7)
-
-    local function createSearchAddInputs(anchor, container)
-        -- Search / spell-ID input
-        local PREVIEW_SIZE = 30
+    
+    --- Creates a labeled search input for the given entry type ("spell" | "item" | "aura").
+    --- Focusing or typing in this box makes it the active source for the shared
+    --- preview icon and Add button.
+    local function createSearchInput(anchor, container, entryType, tooltipLines)
         local editBox = CreateFrame("EditBox", nil, container, "InputBoxTemplate")
         editBox:SetSize(160, 22)
-        editBox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -14)
+        editBox:SetPoint("BOTTOM", anchor, "BOTTOM", 0, 0)
+        editBox:SetPoint("RIGHT", container, "RIGHT", -12, 0)
         editBox:SetAutoFocus(false)
         editBox:SetMaxLetters(100)
 
-        -- Lookup preview icon (right of editBox, hidden until a match is found)
-        previewBtn = CreateFrame("Button", nil, container)
-        previewBtn:SetSize(PREVIEW_SIZE, PREVIEW_SIZE)
-        previewBtn:SetPoint("LEFT", editBox, "RIGHT", 8, 0)
-        previewBtn:EnableMouse(true)
-        previewBtn:RegisterForClicks("LeftButtonUp")
-        previewBtn:Hide()
-
-        previewTex = previewBtn:CreateTexture(nil, "ARTWORK")
-        previewTex:SetAllPoints()
-        previewTex:SetTexCoord(0, 1, 0, 1)
-        local previewHL = previewBtn:CreateTexture(nil, "HIGHLIGHT")
-        previewHL:SetAllPoints()
-        previewHL:SetColorTexture(1, 1, 1, 0.25)
-
-        previewBtn:SetScript("OnEnter", function(self)
-            if previewSpell then
+        if tooltipLines then
+            editBox:SetScript("OnEnter", function(self)
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetSpellByID(previewSpell.spellID)
+                for _, line in ipairs(tooltipLines) do
+                    GameTooltip:AddLine(line, 1, 1, 1)
+                end
                 GameTooltip:Show()
-            end
+            end)
+            editBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
+
+        -- Clicking into this field makes it the active source for the shared preview/add controls
+        editBox:SetScript("OnEditFocusGained", function(self)
+            UpdatePreview(entryType, self:GetText())
         end)
-        previewBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        previewBtn:SetScript("OnClick", function(self)
-            if previewSpell then SelectSpell(previewSpell, self) end
-        end)
 
-        -- Add button (disabled until a spell is selected)
-        addBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
-        addBtn:SetSize(60, 22)
-        addBtn:SetPoint("LEFT", previewBtn, "RIGHT", 8, (PREVIEW_SIZE - 22) / 2)
-        addBtn:SetText("Add")
-        addBtn:Disable()
-        addBtn:SetScript("OnClick", function()
-            if not selectedSpell then return end
-            local FTM   = SpellStyler.FrameTrackerManager
-            local State = SpellStyler.State
-            
-            -- Determine if selected item is a spell or an item
-            local isItem = selectedSpell.itemID ~= nil
-            local trackingID
-            local trackerConfig
-            if isItem then
-                -- Get the spell ID from the item (for event tracking and cooldown)
-                local spellName, spellID = C_Item.GetItemSpell(selectedSpell.itemID)
-                -- Track item by spellID as the database key
-                trackingID = spellID
-                local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(spellID, "items")
-                if existingTrackerConfig and foundConfig then
-                    trackerConfig = existingTrackerConfig
-                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'isEnabled', true)
-                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'itemID', selectedSpell.itemID)
-                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'baseSpellID', spellID)
-                    SpellStyler.State:SetTrackerValueConfigProperty(spellID, "items", 'overrideSpellID', spellID)
-                else
-                    -- Get the item icon texture path directly
-                    local iconTexture = C_Item.GetItemIconByID(selectedSpell.itemID)
-                    
-                    trackerConfig = State:AddTrackerValue({
-                        itemID                  = selectedSpell.itemID,       -- Store actual itemID
-                        baseSpellID             = spellID,                    -- Use spellID as the key
-                        overrideSpellID         = spellID,                    -- Also use spellID for activeSpellID
-                        trackerType             = "items",                    -- Use dedicated "items" tracker type
-                        name                    = selectedSpell.name,
-                        defaultIconTexturePath  = iconTexture,                -- Store actual texture path, not itemID
-                        isItem                  = true,                       -- Flag to identify this as an item tracker
-                    })
-                end
-            else
-                trackingID = C_Spell.GetBaseSpell(selectedSpell.spellID)
-                local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(trackingID, "spells")
-                if existingTrackerConfig and foundConfig then
-                    trackerConfig = existingTrackerConfig
-                    SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "spells", 'isEnabled', true)
-                else
-                    -- Track spell by baseSpellID
-                    local overrideSpellID = C_Spell.GetOverrideSpell(selectedSpell.spellID)
-                    -- Get icon from override spell for correct initial appearance
-                    local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
-                    local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedSpell.iconID
-                    trackerConfig = State:AddTrackerValue({
-                        baseSpellID             = trackingID,
-                        overrideSpellID         = overrideSpellID,
-                        trackerType             = "spells",
-                        name                    = selectedSpell.name,
-                        defaultIconTexturePath  = iconTexture,
-                    })
-                end
-            end
-            
-            if not trackerConfig then return end
-
-            -- Wipe devNotes before creating frame (fresh start for error tracking)
-            local trackerType = isItem and "items" or "spells"
-            SpellStyler.State:SetTrackerValueConfigProperty(trackingID, trackerType, "devNotes", {})
-            
-            -- CreateFrameMiddleware creates base frame, variant frame (if needed),
-            -- sets up charge infrastructure, and drives updates
-
-            FTM:CreateCompleteFrame(trackingID, trackerConfig, trackerType)
-
-            -- Remove from the grid so it can't be added twice
-            local addedID = isItem and selectedSpell.itemID or selectedSpell.spellID
-            for i = #gridButtons, 1, -1 do
-                local entryID = gridButtons[i].type == "item" 
-                    and gridButtons[i].data.itemID 
-                    or gridButtons[i].data.spellID
-                if entryID == addedID then
-                    gridButtons[i].btn:Hide()
-                    table.remove(gridButtons, i)
-                end
-            end
-            FilterAndLayoutSafe(lastFilter, gridSF:GetWidth())
-
-            -- Clear selection
-            Deselect()
-
-            -- Refresh the icon list in the settings panel so the new spell/item appears
-            if SpellStyler.settingsContentFrame then
-                SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-                local ISR = SpellStyler.IconSettingsRenderer
-                if ISR and ISR.EnableDraggingForAllFrames then
-                    ISR:EnableDraggingForAllFrames()
-                end
-            end
+        editBox:SetScript("OnTextChanged", function(self)
+            UpdatePreview(entryType, self:GetText())
+            FilterAndLayoutSafe(self:GetText(), gridSF:GetWidth())
         end)
 
         -- ESC: clear search text first, then deselect on second press
@@ -446,147 +322,353 @@ function AddSpells:RenderAddSpellsView(parent)
         return editBox
     end
 
-    local function createAuraSearchAddInputs(anchor, container)
-        -- Search / spell-ID input
-        local PREVIEW_SIZE = 30
-        local editBox = CreateFrame("EditBox", nil, container, "InputBoxTemplate")
-        editBox:SetSize(160, 22)
-        editBox:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
-        editBox:SetAutoFocus(false)
-        editBox:SetMaxLetters(100)
+    -- Equippable slots (matches TextureHelper's equipment scan; Shirt/Tabard excluded)
+    local equipmentSlots = {
+        { id = 1,  name = "Head" },
+        { id = 2,  name = "Neck" },
+        { id = 3,  name = "Shoulder" },
+        { id = 5,  name = "Chest" },
+        { id = 6,  name = "Waist" },
+        { id = 7,  name = "Legs" },
+        { id = 8,  name = "Feet" },
+        { id = 9,  name = "Wrist" },
+        { id = 10, name = "Hands" },
+        { id = 11, name = "Finger 1" },
+        { id = 12, name = "Finger 2" },
+        { id = 13, name = "Trinket 1" },
+        { id = 14, name = "Trinket 2" },
+        { id = 15, name = "Back" },
+        { id = 16, name = "Main Hand" },
+        { id = 17, name = "Off Hand" },
+        { id = 18, name = "Ranged" },
+    }
 
-        editBox:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:AddLine("Any spellID should work.", 1,1,1)
-            GameTooltip:AddLine("You can add additional IDs", 1,1,1)
-            GameTooltip:AddLine("in the settings menu after adding.", 1,1,1)
-            GameTooltip:AddLine("All aura data will display within the", 1,1,1)
-            GameTooltip:AddLine("same frame using the games own priority", 1, 1, 1)
-            GameTooltip:AddLine("Reach out in the discord if you cant find your buff ID", 1, 1, 1)
-            GameTooltip:Show()
-        end)
-        editBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        -- Lookup preview icon (right of editBox, hidden until a match is found)
-        previewAuraBtn = CreateFrame("Button", nil, container)
-        previewAuraBtn:SetSize(PREVIEW_SIZE, PREVIEW_SIZE)
-        previewAuraBtn:SetPoint("LEFT", editBox, "RIGHT", 8, 0)
-        previewAuraBtn:EnableMouse(true)
-        previewAuraBtn:RegisterForClicks("LeftButtonUp")
-        previewAuraBtn:Hide()
+    --- Creates a dropdown listing each equipment slot, labeled by the currently
+    --- equipped item's inventoryType, with that item's icon shown alongside it.
+    local function getItemSlotTrackerKey(slotInfo)
+        local slotName = (slotInfo and (slotInfo.name or slotInfo.slotName or "")) or ""
+        local key = string.lower(slotName)
+        key = key:gsub("%s+", "")
+        key = key:gsub("[%-%/]+", "")
+        return key
+    end
 
-        previewAuraTex = previewAuraBtn:CreateTexture(nil, "ARTWORK")
-        previewAuraTex:SetAllPoints()
-        previewAuraTex:SetTexCoord(0, 1, 0, 1)
-        local previewHL = previewAuraBtn:CreateTexture(nil, "HIGHLIGHT")
-        previewHL:SetAllPoints()
-        previewHL:SetColorTexture(1, 1, 1, 0.25)
+    local function createItemSlotDropdown(anchor, container)
+        local dropdown = CreateFrame("Frame", nil, container, "UIDropDownMenuTemplate")
+        dropdown:SetPoint("BOTTOM", anchor, "BOTTOM", 0, -8)
+        dropdown:SetPoint("RIGHT", container, "RIGHT", 6, 0)
+        UIDropDownMenu_SetWidth(dropdown, 160)
 
-          -- current spell shown in previewAuraBtn
+        local function applySlotSelection(slotInfo)
+            local itemID = GetInventoryItemID("player", slotInfo.id)
+            local itemName = itemID and C_Item.GetItemNameByID(itemID) or slotInfo.name
+            local itemIcon = itemID and C_Item.GetItemIconByID(itemID) or nil
+            local slotEntry = {
+                isSlotEntry = true,
+                itemID = itemID,
+                name = itemName,
+                iconID = itemIcon,
+                slotID = slotInfo.id,
+                slotName = slotInfo.name,
+                slotKey = getItemSlotTrackerKey(slotInfo)
+            }
 
-        previewAuraBtn:SetScript("OnEnter", function(self)
-            if previewAura then
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetSpellByID(previewAura.spellID)
-                GameTooltip:Show()
+            if selectedBtn and SpellStyler.GlowUtil then
+                SpellStyler.GlowUtil:StopAnts(selectedBtn)
+            end
+            selectedEntry = slotEntry
+            selectedType = "item"
+            selectedBtn = previewBtn
+            previewEntry = slotEntry
+            previewType = "item"
+            if itemIcon then
+                if previewTex then previewTex:SetTexture(itemIcon) end
+                if previewBtn then previewBtn:Show() end
+                if SpellStyler.GlowUtil and previewBtn then
+                    SpellStyler.GlowUtil:SetupAnts(previewBtn, { r = 1, g = 0.82, b = 0 })
+                    SpellStyler.GlowUtil:PlayAnts(previewBtn)
+                end
+            else
+                previewEntry, previewType = nil, nil
+                if previewBtn then previewBtn:Hide() end
+            end
+
+            if itemID then
+                if addBtn then addBtn:Enable() end
+            else
+                if addBtn then addBtn:Disable() end
+            end
+        end
+
+        UIDropDownMenu_Initialize(dropdown, function(self, level)
+            for _, slotInfo in ipairs(equipmentSlots) do
+                local itemLocation = ItemLocation:CreateFromEquipmentSlot(slotInfo.id)
+                local iconTexture = GetInventoryItemTexture("player", slotInfo.id)
+                local inventoryType = itemLocation:IsValid() and C_Item.GetItemInventoryType(itemLocation) or nil
+
+                local info = UIDropDownMenu_CreateInfo()
+                info.text = slotInfo.name
+                info.icon = iconTexture
+                info.notCheckable = true
+                info.value = {
+                    slotInfo = slotInfo,
+                    itemLocation = itemLocation,
+                    inventoryType = inventoryType
+                }
+                info.func = function()
+                    UIDropDownMenu_SetSelectedValue(dropdown, slotInfo.id)
+                    UIDropDownMenu_SetText(dropdown, slotInfo.name)
+                    applySlotSelection(slotInfo)
+                end
+                UIDropDownMenu_AddButton(info, level)
             end
         end)
-        previewAuraBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        previewAuraBtn:SetScript("OnClick", function(self)
-            if previewAura then SelectAura(previewAura, self) end
-        end)
 
-        -- Add button (disabled until a spell is selected)
-        addAuraBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
-        addAuraBtn:SetSize(60, 22)
-        addAuraBtn:SetPoint("LEFT", previewAuraBtn, "RIGHT", 8, 0)
-        addAuraBtn:SetText("Add")
-        addAuraBtn:Disable()
-        addAuraBtn:SetScript("OnClick", function()
-            if not selectedAura then return end
-            local FTM   = SpellStyler.FrameTrackerManager
-            local State = SpellStyler.State
-            local BuffManager = SpellStyler.BuffManager
-            
-            local trackingID = C_Spell.GetBaseSpell(selectedAura.spellID)
-            local existingTrackerConfig, foundConfig = SpellStyler.State:GetSpecificTrackerValue(trackingID, "buffs")
-            local trackerConfig
-            local currentSpecID = SpellStyler.State and SpellStyler.State.GetCurrentSpecID and SpellStyler.State:GetCurrentSpecID()
+        UIDropDownMenu_SetText(dropdown, "Select Slot")
+
+        return dropdown
+    end
+
+    -- ── Static header UI ───────────────────────────────────────────────
+    local title = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", container, "TOPLEFT", 12, -4)
+    title:SetText("|cFFFFD700Spell|r")
+    local editBox = createSearchInput(title, container, "spell")
+
+    local itemTitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    itemTitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
+    itemTitle:SetText("|cFFFFD700Item|r")
+
+    local itemEditBox = createSearchInput(itemTitle, container, "item")
+
+    local itemBySlotTitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    itemBySlotTitle:SetPoint("TOPLEFT", itemTitle, "BOTTOMLEFT", 0, -10)
+    itemBySlotTitle:SetText("|cFFFFD700Item by Slot|r")
+
+    local itemBySlotDropdown = createItemSlotDropdown(itemBySlotTitle, container)
+
+    local auraTitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    auraTitle:SetPoint("TOPLEFT", itemBySlotTitle, "BOTTOMLEFT", 0, -10)
+    auraTitle:SetText("|cFFFFD700Aura|r")
+
+    local auraEditBox = createSearchInput(auraTitle, container, "aura", {
+        "Any spellID should work.",
+        "You can add additional IDs",
+        "in the settings menu after adding.",
+        "All aura data will display within the",
+        "same frame using the games own priority",
+        "Reach out in the discord if you cant find your buff ID",
+    })
+
+    -- ── Shared preview icon + Add button ────────────────────────────────
+    -- Whichever input field is active (spell/item/aura) drives what these show and do.
+    local PREVIEW_SIZE = 30
+    previewBtn = CreateFrame("Button", nil, container)
+    previewBtn:SetSize(PREVIEW_SIZE, PREVIEW_SIZE)
+    previewBtn:SetPoint("TOPLEFT", auraEditBox, "BOTTOMLEFT", 0, -10)
+    previewBtn:EnableMouse(true)
+    previewBtn:RegisterForClicks("LeftButtonUp")
+    previewBtn:Hide()
+
+    previewTex = previewBtn:CreateTexture(nil, "ARTWORK")
+    previewTex:SetAllPoints()
+    previewTex:SetTexCoord(0, 1, 0, 1)
+    local previewHL = previewBtn:CreateTexture(nil, "HIGHLIGHT")
+    previewHL:SetAllPoints()
+    previewHL:SetColorTexture(1, 1, 1, 0.25)
+
+    previewBtn:SetScript("OnEnter", function(self)
+        if previewEntry then
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            if previewType == "item" then
+                GameTooltip:SetItemByID(previewEntry.itemID)
+            else
+                GameTooltip:SetSpellByID(previewEntry.spellID)
+            end
+            GameTooltip:Show()
+        end
+    end)
+    previewBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    previewBtn:SetScript("OnClick", function(self)
+        if previewEntry then SelectEntry(previewEntry, previewType, self) end
+    end)
+
+    addBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+    addBtn:SetSize(60, 22)
+    addBtn:SetPoint("LEFT", previewBtn, "RIGHT", 8, (PREVIEW_SIZE - 22) / 2)
+    addBtn:SetText("Add")
+    addBtn:Disable()
+    addBtn:SetScript("OnClick", function()
+        if not selectedEntry or not selectedType then return end
+        local FTM   = SpellStyler.FrameTrackerManager
+        local State = SpellStyler.State
+
+        local trackingID
+        local trackerConfig
+        local trackerType
+
+        if selectedType == "spell" then
+            trackerType = "spells"
+            trackingID = C_Spell.GetBaseSpell(selectedEntry.spellID)
+            local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "spells")
             if existingTrackerConfig and foundConfig then
                 trackerConfig = existingTrackerConfig
-                SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "buffs", 'isEnabled', true)
+                State:SetTrackerValueConfigProperty(trackingID, "spells", 'isEnabled', true)
+            else
+                -- Track spell by baseSpellID
+                local overrideSpellID = C_Spell.GetOverrideSpell(selectedEntry.spellID)
+                -- Get icon from override spell for correct initial appearance
+                local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
+                local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedEntry.iconID
+                trackerConfig = State:AddTrackerValue({
+                    trackerKey              = trackingID,
+                    baseSpellID             = trackingID,
+                    overrideSpellID         = overrideSpellID,
+                    trackerType             = "spells",
+                    name                    = selectedEntry.name,
+                    defaultIconTexturePath  = iconTexture,
+                })
+            end
+        elseif selectedType == "item" then
+            trackerType = "items"
+
+            -- If this came from an equipped slot picker, key the DB by the slot name
+            -- (e.g. "head", "finger1") and use the current item data for the config.
+            if selectedEntry.isSlotEntry then
+                local itemID = selectedEntry.itemID
+                local _, spellID = C_Item.GetItemSpell(itemID)
+                trackingID = selectedEntry.slotKey
+
+                local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "items")
+                if existingTrackerConfig and foundConfig then
+                    trackerConfig = existingTrackerConfig
+                    State:SetTrackerValueConfigProperty(trackingID, "items", 'isEnabled', true)
+                    State:SetTrackerValueConfigProperty(trackingID, "items", 'itemID', itemID)
+                    State:SetTrackerValueConfigProperty(trackingID, "items", 'baseSpellID', spellID or trackingID)
+                    State:SetTrackerValueConfigProperty(trackingID, "items", 'overrideSpellID', spellID or trackingID)
+                    State:SetTrackerValueConfigProperty(trackingID, "items", 'name', selectedEntry.name)
+                    State:SetTrackerValueConfigProperty(trackingID, "items", 'defaultIconTexturePath', C_Item.GetItemIconByID(itemID))
+                else
+                    local iconTexture = C_Item.GetItemIconByID(itemID)
+                    trackerConfig = State:AddTrackerValue({
+                        trackerKey              = trackingID,
+                        itemID                  = itemID,
+                        baseSpellID             = spellID or trackingID,
+                        overrideSpellID         = spellID or trackingID,
+                        trackerType             = "items",
+                        name                    = selectedEntry.name,
+                        defaultIconTexturePath  = iconTexture,
+                        isItem                  = true,
+                    })
+                end
+            else
+                -- Normal item search result: keep the existing spell-ID item key behavior.
+                local spellName, spellID = C_Item.GetItemSpell(selectedEntry.itemID)
+                trackingID = spellID
+                local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(spellID, "items")
+                if existingTrackerConfig and foundConfig then
+                    trackerConfig = existingTrackerConfig
+                    State:SetTrackerValueConfigProperty(spellID, "items", 'isEnabled', true)
+                    State:SetTrackerValueConfigProperty(spellID, "items", 'itemID', selectedEntry.itemID)
+                    State:SetTrackerValueConfigProperty(spellID, "items", 'baseSpellID', spellID)
+                    State:SetTrackerValueConfigProperty(spellID, "items", 'overrideSpellID', spellID)
+                else
+                    local iconTexture = C_Item.GetItemIconByID(selectedEntry.itemID)
+                    trackerConfig = State:AddTrackerValue({
+                        trackerKey              = trackingID,
+                        itemID                  = selectedEntry.itemID,
+                        baseSpellID             = spellID,
+                        overrideSpellID         = spellID,
+                        trackerType             = "items",
+                        name                    = selectedEntry.name,
+                        defaultIconTexturePath  = iconTexture,
+                        isItem                  = true,
+                    })
+                end
+            end
+        elseif selectedType == "aura" then
+            trackerType = "buffs"
+            local BuffManager = SpellStyler.BuffManager
+            trackingID = C_Spell.GetBaseSpell(selectedEntry.spellID)
+            local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "buffs")
+            local currentSpecID = State and State.GetCurrentSpecID and State:GetCurrentSpecID()
+            if existingTrackerConfig and foundConfig then
+                trackerConfig = existingTrackerConfig
+                State:SetTrackerValueConfigProperty(trackingID, "buffs", 'isEnabled', true)
                 -- If you are readding an aura, flag the aura as being applicable for the current specID
-                SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "buffs", 'auraSpecs.' .. currentSpecID, true)
-                if SpellStyler.BuffManager.buffContainers[trackingID] then
-                    BuffManager:UpdateAura(SpellStyler.BuffManager.buffContainers[trackingID], trackerConfig)
+                State:SetTrackerValueConfigProperty(trackingID, "buffs", 'auraSpecs.' .. currentSpecID, true)
+                if BuffManager.buffContainers[trackingID] then
+                    BuffManager:UpdateAura(BuffManager.buffContainers[trackingID], trackerConfig)
                 end
             else
                 -- Track aura by baseSpellID
-                local overrideSpellID = C_Spell.GetOverrideSpell(selectedAura.spellID)
+                local overrideSpellID = C_Spell.GetOverrideSpell(selectedEntry.spellID)
                 -- Get icon from override spell for correct initial appearance
                 local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
-                local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedAura.iconID
+                local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedEntry.iconID
                 trackerConfig = State:AddTrackerValue({
+                    trackerKey              = trackingID,
                     baseSpellID             = trackingID,
                     overrideSpellID         = overrideSpellID,
                     trackerType             = "buffs",
-                    name                    = selectedAura.name,
+                    name                    = selectedEntry.name,
                     defaultIconTexturePath  = iconTexture,
                     auraSpecs               = {
                         [currentSpecID] = true
                     }
                 })
             end
-            
-            if not trackerConfig then return end
+        end
 
-            -- Wipe devNotes before creating frame (fresh start for error tracking)
-            SpellStyler.State:SetTrackerValueConfigProperty(trackingID, "buffs", "devNotes", {})
-            
-            -- Create buff container and placeholder
+        if not trackerConfig then return end
+
+        -- Wipe devNotes before creating frame (fresh start for error tracking)
+        State:SetTrackerValueConfigProperty(trackingID, trackerType, "devNotes", {})
+
+        if selectedType == "aura" then
+            local BuffManager = SpellStyler.BuffManager
             if BuffManager and BuffManager.CreateSingleAuraContainer then
                 BuffManager:CreateSingleAuraContainer(trackingID, trackerConfig)
             end
+        else
+            -- CreateFrameMiddleware creates base frame, variant frame (if needed),
+            -- sets up charge infrastructure, and drives updates
+            FTM:CreateCompleteFrame(trackingID, trackerConfig, trackerType)
 
-            -- Clear selection
-            Deselect()
-
-            -- Refresh the icon list in the settings panel so the new buff appears
-            if SpellStyler.settingsContentFrame then
-                SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-                local ISR = SpellStyler.IconSettingsRenderer
-                if ISR and ISR.EnableDraggingForAllFrames then
-                    ISR:EnableDraggingForAllFrames()
+            -- Remove from the grid so it can't be added twice (auras aren't in the grid)
+            local addedID = selectedType == "item" and selectedEntry.itemID or selectedEntry.spellID
+            for i = #gridButtons, 1, -1 do
+                local entryID = gridButtons[i].type == "item"
+                    and gridButtons[i].data.itemID
+                    or gridButtons[i].data.spellID
+                if gridButtons[i].type == selectedType and entryID == addedID then
+                    gridButtons[i].btn:Hide()
+                    table.remove(gridButtons, i)
                 end
             end
-        end)
+            FilterAndLayoutSafe(lastFilter, gridSF:GetWidth())
+        end
 
-        -- ESC: clear search text first, then deselect on second press
-        editBox:SetScript("OnEscapePressed", function(self)
-            if self:GetText() ~= "" then
-                self:SetText("")
-            else
-                Deselect()
+        -- Clear selection
+        Deselect()
+
+        -- Refresh the icon list in the settings panel so the new entry appears
+        if SpellStyler.settingsContentFrame then
+            SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+            local ISR = SpellStyler.IconSettingsRenderer
+            if ISR and ISR.EnableDraggingForAllFrames then
+                ISR:EnableDraggingForAllFrames()
             end
-            self:ClearFocus()
-        end)
-
-        return editBox
-    end
-    
-    local editBox = createSearchAddInputs(subtitle, container)
-
-    local auraTitle = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    auraTitle:SetPoint("TOPLEFT", editBox, "BOTTOMLEFT", 0, -10)
-    auraTitle:SetText("|cFFFFD700Add Aura|r")
-
-    local auraEditBox = createAuraSearchAddInputs(auraTitle, container)
+        end
+    end)
 
     -- ── Separator ──────────────────────────────────────────────────────
     local sep = container:CreateTexture(nil, "ARTWORK")
     sep:SetColorTexture(0.4, 0.4, 0.4, 0.5)
     sep:SetHeight(1)
-    sep:SetPoint("TOPLEFT", auraEditBox, "BOTTOMLEFT", -2, -5)
-    sep:SetPoint("RIGHT",   container, "RIGHT", -12, 0)
+    sep:SetPoint("LEFT", auraTitle, "LEFT", 0, 0)
+    sep:SetPoint("TOP", previewBtn, "BOTTOM", 0, -5)
+    sep:SetPoint("RIGHT", container, "RIGHT", -12, 0)
 
     -- ── Grid scroll frame ──────────────────────────────────────────────
     local ICONS_PER_ROW_GRID = 6
@@ -658,7 +740,7 @@ function AddSpells:RenderAddSpellsView(parent)
             end)
             btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
             btn:SetScript("OnClick", function(self)
-                SelectSpell(capturedSpell, self)
+                SelectEntry(capturedSpell, "spell", self)
             end)
 
             table.insert(gridButtons, { btn = btn, data = capturedSpell, type = "spell" })
@@ -695,7 +777,7 @@ function AddSpells:RenderAddSpellsView(parent)
             end)
             btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
             btn:SetScript("OnClick", function(self)
-                SelectSpell(capturedItem, self)
+                SelectEntry(capturedItem, "item", self)
             end)
 
             table.insert(gridButtons, { btn = btn, data = capturedItem, type = "item" })
@@ -788,71 +870,53 @@ function AddSpells:RenderAddSpellsView(parent)
     end
 
     -- ── Lookup icon update (direct spell-ID/item-ID or name lookup) ──────
-    local function UpdateLookupIcon(text)
+    -- Shared by all three inputs; entryType selects which lookup API to use.
+    UpdatePreview = function(entryType, text)
         if not text or text == "" then
             if previewBtn then previewBtn:Hide() end
-            previewSpell = nil
-            -- stop glow if previewBtn was selected
+            previewEntry, previewType = nil, nil
             if selectedBtn == previewBtn then Deselect() end
             return
         end
-        
+
         local id = tonumber(text)
-        local foundSpell, foundItem = false, false
-        
-        -- Try spell lookup first
-        if id then
-            local si = C_Spell.GetSpellInfo(id)
-            if si then
-                previewSpell = { spellID = id, name = si.name, iconID = si.iconID }
-                foundSpell = true
-            end
-        else
-            -- Try spell name lookup
-            local si = C_Spell.GetSpellInfo(text)
-            if si then
-                previewSpell = { spellID = si.spellID, name = si.name, iconID = si.iconID }
-                foundSpell = true
-            end
-        end
-        
-        -- If spell not found, try item lookup
-        if not foundSpell then
+        local found = nil
+
+        if entryType == "item" then
             if id then
                 local itemName = C_Item.GetItemNameByID(id)
                 local itemIcon = C_Item.GetItemIconByID(id)
-                
                 if itemName and itemIcon then
-                    previewSpell = { itemID = id, name = itemName, iconID = itemIcon }
-                    foundItem = true
-                end    
+                    found = { itemID = id, name = itemName, iconID = itemIcon }
+                end
             else
                 local itemName = C_Item.GetItemNameByID(text)
                 local itemIcon = C_Item.GetItemIconByID(text)
                 local itemID = C_Item.GetItemIDForItemInfo(text)
                 if itemName and itemIcon then
-                    previewSpell = { itemID = itemID, name = itemName, iconID = itemIcon }
-                    foundItem = true
-                end 
+                    found = { itemID = itemID, name = itemName, iconID = itemIcon }
+                end
+            end
+        else
+            -- "spell" and "aura" both resolve against the spell APIs
+            if id then
+                local si = C_Spell.GetSpellInfo(id)
+                if si then
+                    found = { spellID = id, name = si.name, iconID = si.iconID }
+                end
+            else
+                local si = C_Spell.GetSpellInfo(text)
+                if si then
+                    found = { spellID = si.spellID, name = si.name, iconID = si.iconID }
+                end
             end
         end
-        if foundSpell or foundItem then
-            previewTex:SetTexture(previewSpell.iconID)
+
+        if found then
+            previewEntry, previewType = found, entryType
+            previewTex:SetTexture(found.iconID)
             previewBtn:Show()
-            
-            -- Update tooltip handler based on type
-            previewBtn:SetScript("OnEnter", function(self)
-                if previewSpell then
-                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                    if previewSpell.itemID then
-                        GameTooltip:SetItemByID(previewSpell.itemID)
-                    else
-                        GameTooltip:SetSpellByID(previewSpell.spellID)
-                    end
-                    GameTooltip:Show()
-                end
-            end)
-            
+
             -- If the previously glow-selected btn was this preview icon,
             -- re-apply glow since SetupAnts was called on it before Show
             if selectedBtn == previewBtn then
@@ -860,81 +924,12 @@ function AddSpells:RenderAddSpellsView(parent)
                 SpellStyler.GlowUtil:PlayAnts(previewBtn)
             end
         else
-            previewSpell = nil
+            previewEntry, previewType = nil, nil
             if previewBtn then previewBtn:Hide() end
             if selectedBtn == previewBtn then Deselect() end
         end
     end
 
-    local function UpdateAuraLookupIcon(text)
-        if not text or text == "" then
-            if previewAuraBtn then previewAuraBtn:Hide() end
-            previewAura = nil
-            -- stop glow if previewAuraBtn was selected
-            if selectedBtn == previewAuraBtn then Deselect() end
-            return
-        end
-        
-        local id = tonumber(text)
-        local foundSpell = false
-        
-        -- Try spell lookup first
-        if id then
-            local si = C_Spell.GetSpellInfo(id)
-            if si then
-                previewAura = { spellID = id, name = si.name, iconID = si.iconID }
-                foundSpell = true
-            end
-        else
-            -- Try spell name lookup
-            local si = C_Spell.GetSpellInfo(text)
-            if si then
-                previewAura = { spellID = si.spellID, name = si.name, iconID = si.iconID }
-                foundSpell = true
-            end
-        end
-        
-        
-        if foundSpell then
-            previewAuraTex:SetTexture(previewAura.iconID)
-            if previewAuraBtn then
-                previewAuraBtn:Show()
-                
-                -- Update tooltip handler based on type
-                previewAuraBtn:SetScript("OnEnter", function(self)
-                    if previewAura then
-                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                        GameTooltip:SetSpellByID(previewAura.spellID)
-                        GameTooltip:Show()
-                    end
-                end)
-                
-                -- If the previously glow-selected btn was this preview icon,
-                -- re-apply glow since SetupAnts was called on it before Show
-                if selectedBtn == previewAuraBtn then
-                    SpellStyler.GlowUtil:SetupAnts(previewAuraBtn, { r = 1, g = 0.82, b = 0 })
-                    SpellStyler.GlowUtil:PlayAnts(previewAuraBtn)
-                end
-            end
-        else
-            previewAura = nil
-            if previewAuraBtn then previewAuraBtn:Hide() end
-            if selectedBtn == previewAuraBtn then Deselect() end
-        end
-    end
-
-    -- ── Wire editBox ───────────────────────────────────────────────────
-    editBox:SetScript("OnTextChanged", function(self)
-        local text = self:GetText()
-        UpdateLookupIcon(text)
-        FilterAndLayoutSafe(text, gridSF:GetWidth())
-    end)
-
-    auraEditBox:SetScript("OnTextChanged", function(self)
-        local text = self:GetText()
-        UpdateAuraLookupIcon(text)
-        FilterAndLayoutSafe(text, gridSF:GetWidth())
-    end)
     -- ── Scroll + resize ────────────────────────────────────────────────
     gridSF:SetScript("OnMouseWheel", function(self, delta)
         local cur  = self:GetVerticalScroll()

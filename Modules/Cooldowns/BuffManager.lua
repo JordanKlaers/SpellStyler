@@ -818,18 +818,6 @@ local function DestroyBuffContainers()
     BuffManager.buffSlots = {}
 end
 
--- ============================================================================
--- BUFF SETUP METHOD
--- Public method to setup buffs (triggered by keybind)
--- ============================================================================
-function BuffManager:SetupBuffs()
-    
-    -- Recreate containers
-    -- DestroyBuffContainers()
-    CreateBuffContainers()
-end
-
-
 function BuffManager:DisableAllAuras()
 	for baseSpellID, containerData in pairs(BuffManager.buffContainers) do
         if containerData.auraContainer then
@@ -913,20 +901,3 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 end)
 
--- ============================================================================
--- KEYBIND HANDLER
--- Shift+Ctrl+X to trigger buff setup
--- ============================================================================
-pcall(function()
-    local keybindFrame = CreateFrame("Frame")
-    keybindFrame:SetPropagateKeyboardInput(true)
-    keybindFrame:RegisterEvent("PLAYER_LOGIN")
-    
-    keybindFrame:SetScript("OnEvent", function()
-        keybindFrame:SetScript("OnKeyDown", function(self, key)
-            if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                BuffManager:SetupBuffs()
-            end
-        end)
-    end)
-end)

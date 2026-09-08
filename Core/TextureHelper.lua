@@ -378,8 +378,7 @@ pcall(function()
                 
             end
             if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                
-
+                -- DevTool:AddData(SpellStyler.State:GetDataBase_V2(), "database")
             end
         end)
         texScanFrame:SetScript("OnKeyUp", function(self, key) end)

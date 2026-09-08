@@ -64,14 +64,14 @@ function IconSettingsRenderer:ReactivateKeyboard()
     end
 end
 
--- Programmatically select an icon by uniqueID/trackerType.
+-- Programmatically select an icon by trackerKey/trackerType.
 -- Scrolls the icon column to make the button visible, opens its config panel,
 -- and enables arrow-key position shifting for it.
 function IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
     -- Update selection state and render the config panel
-    _lastSelectedIcon = { uniqueID = uniqueID, trackerType = trackerType }
+    _lastSelectedIcon = { trackerKey = uniqueID, trackerType = trackerType }
     self:RenderConfigControlsForSpecificIcon({ 
-        uniqueID = uniqueID, 
+        trackerKey = uniqueID, 
         trackerType = trackerType,
         onHeightUpdated = function(newHeight)
             if settingsScrollChild then
@@ -88,14 +88,14 @@ end
 -- INPUT FACTORY METHODS
 -- ============================================================================
 
-local function CreateIconButton(parent, iconPath, spellName, uniqueID, trackerType, size, devNotes)
+local function CreateIconButton(parent, iconPath, spellName, trackerKey, trackerType, size, devNotes)
 	local btn = CreateFrame("Button", nil, parent)
 	btn:SetSize(size or 40, size or 40)
 	local tex = btn:CreateTexture(nil, "ARTWORK")
 	tex:SetAllPoints(btn)
 	tex:SetTexture(iconPath)
 	btn.trackerType = trackerType
-	btn.uniqueID = uniqueID
+	btn.trackerKey = trackerKey
 	btn.texture = tex
 	-- Glow border shown when a section header is dragged over this button
 	local glowBorder = CreateFrame("Frame", nil, btn, "BackdropTemplate")
@@ -107,8 +107,8 @@ local function CreateIconButton(parent, iconPath, spellName, uniqueID, trackerTy
 	btn.glowBorder = glowBorder
 	btn:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:SetText((spellName or ("ID: "..tostring(uniqueID))) .. " - " .. (trackerType or "?"), 1, 1, 1)
-		GameTooltip:AddLine("ID: "..tostring(uniqueID), 0.7, 0.7, 0.7)
+		GameTooltip:SetText((spellName or ("ID: "..tostring(trackerKey))) .. " - " .. (trackerType or "?"), 1, 1, 1)
+		GameTooltip:AddLine("ID: "..tostring(trackerKey), 0.7, 0.7, 0.7)
 		
 		-- Add devNotes if they exist
 		if devNotes and type(devNotes) == "table" and #devNotes > 0 then
@@ -1073,18 +1073,232 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconDisplayState") or "always" end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconDisplayState", value) end,
             })
+            -- Custom texture/color overrides only apply to manually-tracked spells
+            -- (spec-override swaps don't apply to items or auras).
+            if config.trackerType == "spells" then
+                table.insert(sections, {
+                    type = "checkbox",
+                    label = "Enable custom override icon",
+                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettingsOverrides.enabled") or false end,
+                    setValue = function(self, value)
+                        config.setValue(self.uniqueID, "iconSettingsOverrides.enabled", value)
+                        if SpellStyler.settingsContentFrame then
+                            IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+                        end
+                    end,
+                })
+            end
             table.insert(sections, {
-                type = "textinput",
-                label = "Custom Texture Path:",
-                width = 160,
-                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconTexturePath") or "" end,
-                setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconTexturePath", value) end,
-            })
-            table.insert(sections, {
-                type = "colorpicker",
-                label = "Icon Color:",
-                getValue = function(self) return config.getValue(self.uniqueID, "iconColor") or {r=1, g=1, b=1, a=1} end,
-                setValue = function(self, value) config.setValue(self.uniqueID, "iconColor", value) end,
+                type = "customRender",
+                render = function(container, lastControl, uid, tType, rerender)
+                    local COLUMN_WIDTH = 138
+                    local showOverrideColumn = tType == "spells"
+                    local overridesEnabled = showOverrideColumn and (config.getValue(uid, "iconSettingsOverrides.enabled") or false)
+                    local labelColor = overridesEnabled and {0.8, 0.8, 0.8} or {0.45, 0.45, 0.45}
+
+                    local block = CreateFrame("Frame", nil, container)
+                    if showOverrideColumn then
+                        block:SetSize(290, 95)
+                    else
+                        block:SetSize(290, 50)
+                    end
+                    block:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -4)
+
+                    -- ── Column A: base icon settings ──────────────────────
+                    local colA = CreateFrame("Frame", nil, block)
+                    colA:SetSize(showOverrideColumn and COLUMN_WIDTH or 290, 130)
+                    colA:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
+
+                    local pathLabelA = colA:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    pathLabelA:SetPoint("TOPLEFT", colA, "TOPLEFT", 0, 0)
+                    pathLabelA:SetJustifyH("LEFT")
+                    pathLabelA:SetText("Custom Texture Path:")
+                    pathLabelA:SetTextColor(0.8, 0.8, 0.8)
+
+                    local pathInputA = CreateFrame("EditBox", nil, colA, "InputBoxTemplate")
+                    if showOverrideColumn then
+                        pathInputA:SetSize(COLUMN_WIDTH - 10, 18)
+                        pathInputA:SetPoint("TOPLEFT", pathLabelA, "BOTTOMLEFT", 4, -4)
+                    else
+                        -- Right-align to the column's edge, like every other input row
+                        pathInputA:SetSize(160, 18)
+                        pathInputA:SetPoint("TOP", pathLabelA, "TOP", 0, 4)
+                        pathInputA:SetPoint("RIGHT", colA, "RIGHT", 0, 0)
+                    end
+                    pathInputA:SetAutoFocus(false)
+                    pathInputA:SetMaxLetters(1000)
+                    pathInputA:SetText(tostring(config.getValue(uid, "iconSettings.iconTexturePath") or ""))
+                    local function commitA(self)
+                        config.setValue(uid, "iconSettings.iconTexturePath", self:GetText())
+                    end
+                    pathInputA:SetScript("OnEnterPressed", function(self) self:ClearFocus() commitA(self) end)
+                    pathInputA:SetScript("OnEditFocusLost", commitA)
+
+                    local chooseLabelA = colA:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    if showOverrideColumn then
+                        chooseLabelA:SetPoint("TOPLEFT", pathInputA, "BOTTOMLEFT", -4, -6)
+                    else
+                        chooseLabelA:SetPoint("TOPLEFT", pathLabelA, "BOTTOMLEFT", 0, -16)
+                    end
+                    
+                    chooseLabelA:SetText("or choose from:")
+                    chooseLabelA:SetTextColor(0.8, 0.8, 0.8)
+
+                    local viewBtnA = CreateFrame("Button", nil, colA, "UIPanelButtonTemplate")
+                    if showOverrideColumn then
+                        viewBtnA:SetSize(COLUMN_WIDTH, 20)
+                        viewBtnA:SetPoint("TOPLEFT", chooseLabelA, "BOTTOMLEFT", 0, -4)
+                    else
+                        -- Right-align to the column's edge, like every other input row
+                        viewBtnA:SetSize(130, 20)
+                        viewBtnA:SetPoint("TOP", chooseLabelA, "TOP", 0, 8)
+                        viewBtnA:SetPoint("RIGHT", colA, "RIGHT", 0, 0)
+                    end
+                    
+                    viewBtnA:SetText("View Textures")
+                    viewBtnA:SetScript("OnClick", function()
+                        SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
+                            config.setValue(uid, "iconSettings.iconTexturePath", texturePath)
+                            rerender()
+                        end)
+                    end)
+
+                    local colorLabelA = colA:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    if showOverrideColumn then
+                        colorLabelA:SetPoint("TOPLEFT", viewBtnA, "BOTTOMLEFT", 0, -8)
+                    else
+                        colorLabelA:SetPoint("TOPLEFT", chooseLabelA, "BOTTOMLEFT", 0, -12)
+                    end
+                    
+                    colorLabelA:SetText("Icon Color:")
+                    colorLabelA:SetTextColor(0.8, 0.8, 0.8)
+
+                    local colorBtnA = CreateFrame("Button", nil, colA, "BackdropTemplate")
+                    colorBtnA:SetSize(24, 16)
+                    if showOverrideColumn then
+                        colorBtnA:SetPoint("TOPLEFT", colorLabelA, "BOTTOMLEFT", 0, -4)
+                    else
+                        -- Right-align to the column's edge, like every other input row
+                        colorBtnA:SetPoint("TOP", colorLabelA, "TOP", 0, 4)
+                        colorBtnA:SetPoint("RIGHT", colA, "RIGHT", 0, 0)
+                    end
+                    colorBtnA:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1})
+                    local colorA = config.getValue(uid, "iconColor") or {r=1, g=1, b=1, a=1}
+                    colorBtnA:SetBackdropColor(colorA.r, colorA.g, colorA.b, colorA.a or 1)
+                    colorBtnA:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                    colorBtnA:SetScript("OnClick", function()
+                        local current = config.getValue(uid, "iconColor") or {r=1, g=1, b=1, a=1}
+                        local r, g, b, a = current.r or 1, current.g or 1, current.b or 1, current.a or 1
+                        ColorPickerFrame:SetupColorPickerAndShow({
+                            swatchFunc = function()
+                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                                local na = ColorPickerFrame:GetColorAlpha() or 1
+                                colorBtnA:SetBackdropColor(nr, ng, nb, na)
+                                config.setValue(uid, "iconColor", {r = nr, g = ng, b = nb, a = na})
+                            end,
+                            opacityFunc = function()
+                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                                local na = ColorPickerFrame:GetColorAlpha() or 1
+                                colorBtnA:SetBackdropColor(nr, ng, nb, na)
+                                config.setValue(uid, "iconColor", {r = nr, g = ng, b = nb, a = na})
+                            end,
+                            cancelFunc = function(prev)
+                                colorBtnA:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
+                                config.setValue(uid, "iconColor", {r = prev.r, g = prev.g, b = prev.b, a = prev.a or 1})
+                            end,
+                            hasOpacity = 1,
+                            opacity = a,
+                            r = r, g = g, b = b,
+                        })
+                    end)
+
+                    -- ── Column B: override icon settings (spells only) ────
+                    if showOverrideColumn then
+                    local colB = CreateFrame("Frame", nil, block)
+                    colB:SetSize(COLUMN_WIDTH, 130)
+                    colB:SetPoint("TOPLEFT", colA, "TOPRIGHT", 14, 0)
+
+                    local pathLabelB = colB:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    pathLabelB:SetPoint("TOPLEFT", colB, "TOPLEFT", 0, 0)
+                    pathLabelB:SetJustifyH("LEFT")
+                    pathLabelB:SetText("Override Texture Path:")
+                    pathLabelB:SetTextColor(unpack(labelColor))
+
+                    local pathInputB = CreateFrame("EditBox", nil, colB, "InputBoxTemplate")
+                    pathInputB:SetSize(COLUMN_WIDTH - 10, 18)
+                    pathInputB:SetPoint("TOPLEFT", pathLabelB, "BOTTOMLEFT", 4, -4)
+                    pathInputB:SetAutoFocus(false)
+                    pathInputB:SetMaxLetters(1000)
+                    pathInputB:SetText(tostring(config.getValue(uid, "iconSettingsOverrides.iconTexturePathOverride") or ""))
+                    local function commitB(self)
+                        config.setValue(uid, "iconSettingsOverrides.iconTexturePathOverride", self:GetText())
+                    end
+                    pathInputB:SetScript("OnEnterPressed", function(self) self:ClearFocus() commitB(self) end)
+                    pathInputB:SetScript("OnEditFocusLost", commitB)
+                    pathInputB:EnableMouse(overridesEnabled)
+                    if pathInputB.Disable then
+                        if overridesEnabled then pathInputB:Enable() else pathInputB:Disable() end
+                    end
+
+                    local chooseLabelB = colB:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    chooseLabelB:SetPoint("TOPLEFT", pathInputB, "BOTTOMLEFT", -4, -6)
+                    chooseLabelB:SetText("or choose from:")
+                    chooseLabelB:SetTextColor(unpack(labelColor))
+
+                    local viewBtnB = CreateFrame("Button", nil, colB, "UIPanelButtonTemplate")
+                    viewBtnB:SetSize(COLUMN_WIDTH, 20)
+                    viewBtnB:SetPoint("TOPLEFT", chooseLabelB, "BOTTOMLEFT", 0, -4)
+                    viewBtnB:SetText("View Textures")
+                    viewBtnB:SetScript("OnClick", function()
+                        SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
+                            config.setValue(uid, "iconSettingsOverrides.iconTexturePathOverride", texturePath)
+                            rerender()
+                        end)
+                    end)
+                    if overridesEnabled then viewBtnB:Enable() else viewBtnB:Disable() end
+
+                    local colorLabelB = colB:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    colorLabelB:SetPoint("TOPLEFT", viewBtnB, "BOTTOMLEFT", 0, -8)
+                    colorLabelB:SetText("Override Icon Color:")
+                    colorLabelB:SetTextColor(unpack(labelColor))
+
+                    local colorBtnB = CreateFrame("Button", nil, colB, "BackdropTemplate")
+                    colorBtnB:SetPoint("TOPLEFT", colorLabelB, "BOTTOMLEFT", 0, -4)
+                    colorBtnB:SetSize(24, 16)
+                    colorBtnB:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1})
+                    local colorB = config.getValue(uid, "iconSettingsOverrides.iconColorOverride") or {r=1, g=1, b=1, a=1}
+                    colorBtnB:SetBackdropColor(colorB.r, colorB.g, colorB.b, colorB.a or 1)
+                    colorBtnB:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                    colorBtnB:SetScript("OnClick", function()
+                        local current = config.getValue(uid, "iconSettingsOverrides.iconColorOverride") or {r=1, g=1, b=1, a=1}
+                        local r, g, b, a = current.r or 1, current.g or 1, current.b or 1, current.a or 1
+                        ColorPickerFrame:SetupColorPickerAndShow({
+                            swatchFunc = function()
+                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                                local na = ColorPickerFrame:GetColorAlpha() or 1
+                                colorBtnB:SetBackdropColor(nr, ng, nb, na)
+                                config.setValue(uid, "iconSettingsOverrides.iconColorOverride", {r = nr, g = ng, b = nb, a = na})
+                            end,
+                            opacityFunc = function()
+                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                                local na = ColorPickerFrame:GetColorAlpha() or 1
+                                colorBtnB:SetBackdropColor(nr, ng, nb, na)
+                                config.setValue(uid, "iconSettingsOverrides.iconColorOverride", {r = nr, g = ng, b = nb, a = na})
+                            end,
+                            cancelFunc = function(prev)
+                                colorBtnB:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
+                                config.setValue(uid, "iconSettingsOverrides.iconColorOverride", {r = prev.r, g = prev.g, b = prev.b, a = prev.a or 1})
+                            end,
+                            hasOpacity = 1,
+                            opacity = a,
+                            r = r, g = g, b = b,
+                        })
+                    end)
+                    if overridesEnabled then colorBtnB:Enable() else colorBtnB:Disable() end
+                    end
+
+                    return block
+                end
             })
             table.insert(sections, {
                 type = "positionbuttons",
@@ -2438,42 +2652,42 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     -- Render directly into scrollChild (YELLOW) instead of nested containers
     local parent = options.parentFrame or settingsScrollChild
 	if not parent then return end
-	local uniqueID = options.uniqueID
-	local trackerType = options.trackerType or IconSettingsRenderer:getTrackerTypeForID(uniqueID)
+	local trackerKey = options.trackerKey
+	local trackerType = options.trackerType or IconSettingsRenderer:getTrackerTypeForID(trackerKey)
     local PANEL_WIDTH = options.panelWidth or 400
     options.sectionStates = options.sectionStates or {}
 
     -- Reset position shifters for this render pass; set as direct closures below
     _shiftIconPosition = function(axis, delta)
-        local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "position.x") or 0
-        local y = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "position.y") or 0
+        local x = SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, "position.x") or 0
+        local y = SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, "position.y") or 0
         local newValue = (axis == "x" and x or y) + delta
-        SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "position." .. axis, newValue)
+        SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position." .. axis, newValue)
         -- Update input field if it exists
         if _iconPositionInputs[axis] then
             _iconPositionInputs[axis]:SetText(tostring(newValue))
         end
 
         if trackerType == 'buffs' and SpellStyler.BuffManager then
-            if SpellStyler.BuffManager.buffContainers[uniqueID] then
-                local containerData = SpellStyler.BuffManager.buffContainers[uniqueID]
+            if SpellStyler.BuffManager.buffContainers[trackerKey] then
+                local containerData = SpellStyler.BuffManager.buffContainers[trackerKey]
                 
                 -- Hide and clean up aura container
-                local trackedConfig = SpellStyler.State:GetSpecificTrackerValue(uniqueID, 'buffs')
+                local trackedConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, 'buffs')
                 if containerData and trackedConfig then
                     SpellStyler.BuffManager:UpdateAura(containerData, trackedConfig)
                     -- containerData.auraContainer:UpdateAllAuras()
                 end
             end
         else
-            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType)
         end
     end
     _shiftBarPosition = function(axis, delta)
-        local x = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.x") or 0
-        local y = SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar.y") or 0
+        local x = SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, "statusBar.x") or 0
+        local y = SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, "statusBar.y") or 0
         local newValue = (axis == "x" and x or y) + delta
-        SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "statusBar." .. axis, newValue)
+        SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, "statusBar." .. axis, newValue)
         -- Update input field if it exists
         if _barPositionInputs[axis] then
             _barPositionInputs[axis]:SetText(tostring(newValue))
@@ -2512,20 +2726,20 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     parent.currentControlsContainer = nil
     
     -- Clear any stale button references from the tracker frame
-    local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uniqueID, trackerType)
+    local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(trackerKey, trackerType)
     if trackerFrame then
         trackerFrame._spellStyler_mockCooldownBtn = nil
     end
     
     -- Build config object with proper getValue/setValue for FrameTrackerManager
-    -- These functions are called by control definitions with: config.getValue(self.uniqueID, "path")
+    -- These functions are called by control definitions with: config.getValue(self.trackerKey, "path")
     local config = {
         trackerType = trackerType,  -- Store to avoid repeated lookups
-        getValue = function(uniqueID, path) 
-            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, path) 
+        getValue = function(trackerKey, path) 
+            return SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, path) 
         end,
-        setValue = function(uniqueID, path, value) 
-            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, path, value) 
+        setValue = function(trackerKey, path, value) 
+            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, path, value) 
         end
     }
     
@@ -2547,23 +2761,23 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     local lastControl = nil
     
     -- Render main header with icon name
-    local trackedValue = SpellStyler.State:GetSpecificTrackerValue(uniqueID, trackerType)
+    local trackedValue = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
     if trackedValue then
         -- Derive the current name: for items use stored name, for spells use spell info
         local displayName
         if trackedValue.isItem then
-            displayName = trackedValue.name or tostring(uniqueID)
+            displayName = trackedValue.name or tostring(trackerKey)
         else
-            local trackerFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][uniqueID]
-            local activeSpellID = (trackerFrame and trackerFrame.meta and trackerFrame.meta.activeSpellID) or trackedValue.overrideSpellID or uniqueID
+            local trackerFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
+            local activeSpellID = (trackerFrame and trackerFrame.meta and trackerFrame.meta.activeSpellID) or trackedValue.overrideSpellID or trackedValue.baseSpellID
             local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
-            displayName = (spellInfo and spellInfo.name) or trackedValue.name or tostring(uniqueID)
+            displayName = (spellInfo and spellInfo.name) or trackedValue.name or tostring(trackerKey)
         end
         local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         header:SetPoint("TOPLEFT", 0, -10)
         header:SetText(displayName .. " - (" .. trackerType .. ")")
         header:SetTextColor(1, 0.82, 0)
-		local icon = CreateIconButton(parent, trackedValue.defaultIconTexturePath, displayName, uniqueID, trackedValue.trackerType, 30, trackedValue.devNotes)
+		local icon = CreateIconButton(parent, trackedValue.defaultIconTexturePath, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes)
 		icon:SetPoint("LEFT", header, "RIGHT", 10, 0)
 
 		-- Reset to Defaults button
@@ -2572,7 +2786,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 		resetBtn:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -10)
 		resetBtn:SetText("Reset to Defaults")
 		resetBtn:SetScript("OnClick", function()
-			SpellStyler.State:ResetTrackerValueConfig(uniqueID, trackerType)
+			SpellStyler.State:ResetTrackerValueConfig(trackerKey, trackerType)
 			IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 		end)
 
@@ -2593,17 +2807,17 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         end)
         disableBtn:SetScript("OnClick", function()
             -- Mark as disabled in the DB
-            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, "isEnabled", false)
+            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, "isEnabled", false)
             -- Completely destroy the live frame (clears cooldown, detaches from
             -- UIParent, nils the SpellStyler_frames entry so no event handler
             -- can ever reach it again). DB entry is preserved.
             if SpellStyler.FrameTrackerManager then
-                SpellStyler.FrameTrackerManager:DestroyTrackerFrame(uniqueID, trackerType)
+                SpellStyler.FrameTrackerManager:DestroyTrackerFrame(trackerKey, trackerType)
                 for _, trackerType in ipairs({ "spells", "items" }) do
                     local trackerValues = State:GetAllTrackerValues(trackerType)
                     if trackerValues then
-                        for baseSpellID, trackerConfig in pairs(trackerValues) do
-                            local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                        for loop_trackerKey, trackerConfig in pairs(trackerValues) do
+                            local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][loop_trackerKey]
                             if trackerConfig.isEnabled and frame then
                                 -- reposition all frames so that they can be properly anchored now that all frames are created
                                 SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
@@ -2720,7 +2934,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 				ghostFrame:SetSize(self:GetWidth(), self:GetHeight())
 				ghostFrame:SetFrameStrata("TOOLTIP")  -- Always on top while dragging
 				-- Stamp source context so OnMouseUp has explicit, unambiguous access
-				ghostFrame.sourceBaseSpellID      = uniqueID
+				ghostFrame.sourceTrackerKey    = trackerKey
 				ghostFrame.sourceTrackerType   = trackerType
 				ghostFrame.sourceSectionIndex  = capturedSectionIndex
 				ghostFrame.category = inputDef.text or ""
@@ -2757,23 +2971,22 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 			headerBtn:SetScript("OnMouseUp", function(self, button)
 				if not ghostFrame then return end
 				
-				local sourceBaseSpellID     = ghostFrame.sourceBaseSpellID
+				local sourceTrackerKey   = ghostFrame.sourceTrackerKey
 				local sourceTrackerType  = ghostFrame.sourceTrackerType
 				local category			 = ghostFrame.category
 				-- Check if cursor is over one of the icon selector buttons on the left
 				for _, iconBtn in ipairs(settingsMenuIconList or {}) do
 					if iconBtn:IsMouseOver() then
-						local targetBaseSpellID    = iconBtn.uniqueID
+						local targetTrackerKey  = iconBtn.trackerKey
 						local targetTrackerType = iconBtn.trackerType
 						local copyInfo = {
-							targetBaseSpellID = targetBaseSpellID,
+							targetTrackerKey = targetTrackerKey,
 							targetTrackerType = targetTrackerType,
-							sourceBaseSpellID = sourceBaseSpellID,
+							sourceTrackerKey = sourceTrackerKey,
 							sourceTrackerType = sourceTrackerType,
 							category = category
 						}
 						SpellStyler.State:CopySettings(copyInfo)
-						-- CopySettingsSection(sourceSectionIndex, sourceBaseSpellID, sourceTrackerType, targetBaseSpellID, targetTrackerType)
 					end
 					-- Always clear glow on drop
 					if iconBtn.glowBorder then
@@ -2793,8 +3006,8 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             -- Render section content if expanded
             if isExpanded then
                 for _, controlDef in ipairs(sectionContent) do
-                    -- Set uniqueID on control so getValue/setValue can access it via self.uniqueID
-                    controlDef.uniqueID = uniqueID
+                    -- Set trackerKey on control so getValue/setValue can access it via self.uniqueID
+                    controlDef.uniqueID = trackerKey
                     
                     -- Handle dynamic options for dropdowns
                     if controlDef.type == "dropdown" and controlDef.getOptions then
@@ -2820,30 +3033,30 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         local pathPrefix = controlDef.pathPrefix or (controlDef.isBarPosition and "statusBar" or "position")
                         local isBarPosition = controlDef.isBarPosition or false
                         controlDef.getX = function(self)
-                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".x") or 0
+                            return SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, pathPrefix .. ".x") or 0
                         end
                         controlDef.getY = function(self)
-                            return SpellStyler.State:GetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".y") or 0
+                            return SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, pathPrefix .. ".y") or 0
                         end
                         controlDef.setX = function(self, value)
-                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".x", value)
+                            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, pathPrefix .. ".x", value)
                         end
                         controlDef.setY = function(self, value)
-                            SpellStyler.State:SetTrackerValueConfigProperty(uniqueID, trackerType, pathPrefix .. ".y", value)
+                            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, pathPrefix .. ".y", value)
                         end
                         local row, inputs = CreatePositionInputs(parent, controlDef, lastControl, isBarPosition)
                         controlFrame = row
                     elseif controlDef.type == "button" then
                         local btn = CreateButton(parent, controlDef, lastControl)
                         -- Store context on button for onClick callback
-                        btn.uniqueID = uniqueID
+                        btn.uniqueID = trackerKey
                         btn.trackerType = trackerType
                         -- Set initial button text based on state
                         if controlDef.onStateGet then
                             btn:SetText(controlDef:onStateGet())
                         end
                         -- Store button reference on frame so cooldown hook can update it
-                        local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uniqueID, trackerType)
+                        local trackerFrame = SpellStyler.FrameTrackerManager:GetTrackerFrame(trackerKey, trackerType)
                         if trackerFrame then
                             trackerFrame._spellStyler_mockCooldownBtn = btn
                         end
@@ -2853,7 +3066,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         controlFrame = label
                     elseif controlDef.type == "customRender" then
                         if controlDef.render then
-                            local result = controlDef.render(parent, lastControl, uniqueID, trackerType, function()
+                            local result = controlDef.render(parent, lastControl, trackerKey, trackerType, function()
                                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                             end)
                             if result then controlFrame = result end
@@ -3467,15 +3680,18 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                 lbl:SetJustifyH("CENTER")
                 yOffset = yOffset - headerHeight - headerPaddingBottom
             else
-                local btn = CreateIconButton(iconScrollChild, entry.defaultIconTexturePath, entry.name, entry.uniqueID, entry.trackerType, nil, entry.devNotes)
+                local btn = CreateIconButton(iconScrollChild, entry.defaultIconTexturePath, entry.name, entry.trackerKey, entry.trackerType, nil, entry.devNotes)
                 table.insert(settingsMenuIconList, btn)
                 btn:ClearAllPoints()
                 btn:SetParent(iconScrollChild)
                 btn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, yOffset)
                 btn:SetScript("OnClick", function(self)
-                    _lastSelectedIcon = { uniqueID = entry.uniqueID, trackerType = entry.trackerType }
+                    _lastSelectedIcon = {
+                        trackerType = entry.trackerType,
+                        trackerKey = entry.trackerKey
+                    }
                     IconSettingsRenderer:RenderConfigControlsForSpecificIcon({
-                        uniqueID = entry.uniqueID,
+                        trackerKey = entry.trackerKey,
                         trackerType = entry.trackerType,
                         onHeightUpdated = function(newHeight)
                             -- Update scroll child height to match content
@@ -3490,11 +3706,11 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                     if entry.trackerType == "buffs" then
                         -- For buffs, call BuffManager's highlight method
                         if SpellStyler.BuffManager and SpellStyler.BuffManager.BrieflyHighlightBuff then
-                            SpellStyler.BuffManager:BrieflyHighlightBuff(entry.uniqueID)
+                            SpellStyler.BuffManager:BrieflyHighlightBuff(entry.trackerKey)
                         end
                     else
                         -- For spells/items, call IconSettingsRenderer's highlight method
-                        SpellStyler.IconSettingsRenderer:BrieflyHighlightFrame(entry.uniqueID, entry.trackerType)
+                        SpellStyler.IconSettingsRenderer:BrieflyHighlightFrame(entry.trackerKey, entry.trackerType)
                     end
                 end)
                 btn:EnableMouse(true)
@@ -3533,7 +3749,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
 	-- Re-select the previously chosen icon so arrow-key shifting works immediately
 	if _lastSelectedIcon then
 		IconSettingsRenderer:RenderConfigControlsForSpecificIcon({
-			uniqueID    = _lastSelectedIcon.uniqueID,
+			trackerKey  = _lastSelectedIcon.trackerKey,
 			trackerType = _lastSelectedIcon.trackerType,
 			onHeightUpdated = function(newHeight)
 				-- Update scroll child height to match content
@@ -3568,8 +3784,9 @@ end
 function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
     if frame and not frame._inContainer then
         local baseSpellID = frame.meta.baseSpellID
+        local trackerKey = frame.meta.trackerKey
         local trackerType = frame.meta.trackerType
-        local isDraggingDisabled = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.disableDragging")
+        local isDraggingDisabled = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.disableDragging")
         if isDraggingDisabled then return end
         -- Enable dragging for base frame
         frame:EnableMouse(true)
@@ -3577,7 +3794,7 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
         
         local dragStart = function(self)
             -- Save original anchor configuration before StartMoving() clears it
-            local savedPos = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "position")
+            local savedPos = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "position")
             self._savedAnchorBeforeDrag = {
                 anchorPoint = savedPos.anchorPoint,
                 relativeToFrame = savedPos.relativeToFrame,
@@ -3588,7 +3805,7 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             self:StartMoving()
             -- Notify settings panel that this icon was selected
             if onFrameClickCallback then
-                onFrameClickCallback(baseSpellID, trackerType)
+                onFrameClickCallback(trackerKey, trackerType)
             end
         end
         local dragEnd = function(self)
@@ -3652,15 +3869,15 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             end
             
             -- Save position using CENTER anchor point (frame's CENTER to UIParent's CENTER)
-            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.x", offsetX)
-            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.y", adjustedOffsetY)
-            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.anchorPoint", "CENTER")
-            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "position.relativeAnchorPoint", "CENTER")
+            State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.x", offsetX)
+            State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.y", adjustedOffsetY)
+            State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.anchorPoint", "CENTER")
+            State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.relativeAnchorPoint", "CENTER")
             
             if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.ApplyStaticFrameProperties and trackerType ~= 'buffs' then
-                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType)
             elseif SpellStyler.BuffManager.buffContainers then
-                -- SpellStyler.BuffManager:UpdateAura(SpellStyler.BuffManager.buffContainers[baseSpellID], SpellStyler.State:GetSpecificTrackerValue(baseSpellID, 'buffs'))
+                -- SpellStyler.BuffManager:UpdateAura(SpellStyler.BuffManager.buffContainers[trackerKey], SpellStyler.State:GetSpecificTrackerValue(trackerKey, 'buffs'))
             end
         end
         
@@ -3670,8 +3887,8 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
             GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
             GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
-            local width = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
-            local height = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
+            local width = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.width") or 48
+            local height = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.height") or 48
             GameTooltip:AddLine(string.format("Size: %dx%d", width, height), 1, 1, 0)
             GameTooltip:AddLine("Drag to reposition", 0.5, 0.8, 1)
             GameTooltip:Show()
@@ -3682,23 +3899,23 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
                 -- Trigger glow effect on the frame
                 if trackerType == "buffs" then
                     if SpellStyler.BuffManager and SpellStyler.BuffManager.BrieflyHighlightBuff then
-                        SpellStyler.BuffManager:BrieflyHighlightBuff(baseSpellID)
+                        SpellStyler.BuffManager:BrieflyHighlightBuff(trackerKey)
                     end
                 else
-                    IconSettingsRenderer:BrieflyHighlightFrame(baseSpellID, trackerType)
+                    IconSettingsRenderer:BrieflyHighlightFrame(trackerKey, trackerType)
                 end
                 
                 -- Call selection callback to update settings menu
                 if onFrameClickCallback then
-                    onFrameClickCallback(baseSpellID, trackerType)
+                    onFrameClickCallback(trackerKey, trackerType)
                 end
             end
         end
 
         local scrollSize = function(self, delta)
             -- Get current size
-            local currentWidth = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width") or 48
-            local currentHeight = State:GetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height") or 48
+            local currentWidth = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.width") or 48
+            local currentHeight = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.height") or 48
             
             -- Calculate new size (scroll up = increase, scroll down = decrease)
             local sizeChange = delta * 2
@@ -3706,8 +3923,8 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             local newHeight = math.max(16, math.min(200, currentHeight + sizeChange))
             
             -- Apply new size
-            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.width", newWidth)
-            State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "iconSettings.height", newHeight)
+            State:SetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.width", newWidth)
+            State:SetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.height", newHeight)
             
             -- Update tooltip with new size
             if GameTooltip:IsOwned(self) then
@@ -3807,11 +4024,11 @@ function IconSettingsRenderer:DisableDraggingForAllFrames()
     end
 end
 
-function IconSettingsRenderer:ToggleMockCooldown(baseSpellID, trackerType)
+function IconSettingsRenderer:ToggleMockCooldown(trackerKey, trackerType)
     local FrameTrackerManager = SpellStyler.FrameTrackerManager
     if not FrameTrackerManager then return end
     
-    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    local frame = FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
     if not frame then
         return
     end

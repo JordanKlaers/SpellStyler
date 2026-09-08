@@ -97,45 +97,6 @@ local baseToOverride = {}
 local overrideToBase = {}
 
 
-function FrameTrackerManager:SetActiveSpellID(spellID, frame, source)
-    --[[
-        Only when a spell is able to match its baseSpellID to a spellStyler frame, will it then attempt to update the active spellID
-    ]]
-    local baseSpellID = C_Spell.GetBaseSpell(spellID)
-    local overrideSpellID = C_Spell.GetOverrideSpell(baseSpellID)
-    if not frame then
-        for trackerType, baseSpell in pairs(FrameTrackerManager.SpellStyler_frames) do
-            if baseSpell == baseSpellID then
-                frame = FrameTrackerManager.SpellStyler_frames[trackerType][baseSpell]
-            end
-        end
-        
-    end
-    if frame then
-        if overrideSpellID ~= frame.meta.activeSpellID then
-            local previousActiveSpellInfo = C_Spell.GetSpellInfo(frame.meta.activeSpellID)
-            --The spell that was cast, is not equal to the active spell (likely due to changing via its cast)
-            --Save the override spell onto the frame to be able to check future casts
-            FrameTrackerManager:SetMetaOnBaseAndVariant(frame, "activeSpellID", overrideSpellID)
-            
-            --[[
-                cache the spellID associations because some spells can breka their link between their override and base (like void shield on disc priest). This association later helps make the connection when needed.
-
-                baseToOverride is a 1 to many association
-                overrideToBase is a 1 to 1 association
-            ]]
-            baseToOverride[baseSpellID] = baseToOverride[baseSpellID] or {}
-            baseToOverride[baseSpellID][overrideSpellID] = true
-            if overrideSpellID ~= baseSpellID then
-                overrideToBase[overrideSpellID] = baseSpellID
-            end
-
-            local spellOverrideInfo = C_Spell.GetSpellInfo(overrideSpellID)
-            -- return
-        end
-    end
-end
-
 function FrameTrackerManager:SetMetaOnBaseAndVariant(frame, key, value)
     frame.meta[key] = value
     local otherFrame = (frame.variantFrame or frame.baseFrame)
@@ -172,10 +133,11 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
     for _, trackerType in ipairs({ "spells", "items" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
         if trackerValues then
-            for baseSpellID, trackerConfig in pairs(trackerValues) do
+            for trackerKey, trackerConfig in pairs(trackerValues) do
+                local baseSpellID = trackerConfig.baseSpellID
                 -- Skip orphan entries: real entries always have trackerType set by AddTrackerValue.
                 -- For items, skip the spell known check since items use itemID instead
-                local shouldCreate = not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+                local shouldCreate = not FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
                     and trackerConfig.trackerType ~= nil
                     and trackerConfig.isEnabled ~= false
                 
@@ -183,6 +145,7 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                 if shouldCreate then
                     if trackerConfig.isItem then
                         -- Item tracker - no spell check needed, items use itemID directly
+                        -- TODO: check if the item is 
                         shouldCreate = true
                     else
                         -- Spell tracker - verify spell is known
@@ -190,12 +153,12 @@ function FrameTrackerManager:CreateNonBuffTrackerFrames()
                     end
                 end
                 
-                if shouldCreate and not FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
+                if shouldCreate and not FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey] then
                     -- Wipe devNotes before creating frame (fresh start for error tracking)
-                    State:SetTrackerValueConfigProperty(baseSpellID, trackerType, "devNotes", {})
-                    FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, trackerType)
-                elseif not trackerConfig.isEnabled and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
-                    FrameTrackerManager:DestroyTrackerFrame(baseSpellID, trackerType)
+                    State:SetTrackerValueConfigProperty(trackerKey, trackerType, "devNotes", {})
+                    FrameTrackerManager:CreateCompleteFrame(trackerKey, trackerConfig, trackerType)
+                elseif not trackerConfig.isEnabled and FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey] then
+                    FrameTrackerManager:DestroyTrackerFrame(trackerKey, trackerType)
                 end
             end
         end
@@ -296,9 +259,7 @@ end
 --- @param frame table         The tracker frame to attach the status bar to
 --- @param key string          The field name on `frame` where the bar will be stored (e.g. "statusBar")
 --- @param trackerConfig table Tracker configuration block
---- @param baseSpellID number  Base spell ID (used for SetStatusBarContainerVisibility)
---- @param trackerType string  Tracker type (used for SetStatusBarContainerVisibility)
-function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, baseSpellID, trackerType, x, y, useBaseTexture, configKey)
+function FrameTrackerManager:CreateStatusBar(frame, key, trackerConfig, x, y, useBaseTexture, configKey)
     -- Default to statusBar if no configKey provided (for cooldown bar)
     configKey = configKey or "statusBar"
     
@@ -840,16 +801,16 @@ FrameTrackerManager.InvisibleAnchorController = {
         end
         return constructorValues, caseType
     end,
-    CreateBars = function(frame, constructorValues, baseSpellID)
+    CreateBars = function(frame, constructorValues, trackerKey)
         if not frame.chargeAnchorBarB then
             frame.chargeAnchorBarB = CreateSingleInvisibleChargeAnchorBar(
-                frame, "ChargeAnchorBar_" .. baseSpellID .. "_B", constructorValues.B.min, constructorValues.B.max
+                frame, "ChargeAnchorBar_" .. trackerKey .. "_B", constructorValues.B.min, constructorValues.B.max
             )
         end
         
         if not frame.chargeAnchorBarA then
             frame.chargeAnchorBarA = CreateSingleInvisibleChargeAnchorBar(
-                frame, "ChargeAnchorBar_" .. baseSpellID .. "_A", constructorValues.A.min, constructorValues.A.max
+                frame, "ChargeAnchorBar_" .. trackerKey .. "_A", constructorValues.A.min, constructorValues.A.max
             )
         end
     end,
@@ -967,10 +928,9 @@ FrameTrackerManager.InvisibleAnchorController = {
 --- - Frame visibility is controlled via dualFrameStatus and Hide/ShowFrameElements
 --- @param frame table The tracker frame
 --- @param trackerConfig table The tracker configuration
---- @param baseSpellID number The base spell ID
 --- @param isVariantFrame boolean Whether this is a variant frame
 --- @param skipVisibilityUpdate boolean Whether to skip visibility updates (used during drag)
-function FrameTrackerManager:CreateInvisibleAnchorControllerBars(frame, trackerConfig, baseSpellID, isVariantFrame, skipVisibilityUpdate)
+function FrameTrackerManager:CreateInvisibleAnchorControllerBars(frame, trackerConfig, trackerKey, isVariantFrame, skipVisibilityUpdate)
 
     -- Clear position cache to ensure SetFramePosition runs after anchor mode changes
     -- This is critical because toggling charge-based display changes anchor mode (none/barA/both)
@@ -981,27 +941,11 @@ function FrameTrackerManager:CreateInvisibleAnchorControllerBars(frame, trackerC
 
     local hasChargeBasedDisplay, hasChargeBasedConditionPropertyOverride, conditionalData = FrameTrackerManager.InvisibleAnchorController.GetRequiredBarsData(trackerConfig)
     local constructorValues, caseType = FrameTrackerManager.InvisibleAnchorController.CalculateRequiredBarProperties(hasChargeBasedDisplay, conditionalData, frame.meta.isVariantFrame, trackerConfig)
-    FrameTrackerManager.InvisibleAnchorController.CreateBars(frame, constructorValues, baseSpellID)
+    FrameTrackerManager.InvisibleAnchorController.CreateBars(frame, constructorValues, trackerKey)
     FrameTrackerManager.InvisibleAnchorController.SetBarPropertiesAndFrameAnchor(frame, constructorValues, trackerConfig)
     FrameTrackerManager.InvisibleAnchorController.FlagAndHideUnusedFrames(frame, isVariantFrame, caseType, conditionalData, hasChargeBasedDisplay)
 end
 
-
---[[
-    Minimal data structure for FrameBuilder methods:
-    {
-        frameName = string,          -- Frame name for CreateFrame
-        baseSpellID = number,         -- Base spell ID for registry and status bars
-        trackerType = string,         -- Type: "spells", "items"
-        isVariantFrame = boolean,     -- Whether this is a variant frame
-        trackerConfig = table,        -- Complete configuration (contains all settings)
-        frame = table|nil            -- Frame reference (nil until Base creates it)
-    }
-    
-    Meta (TrackerFrameMeta) is constructed inside Base() method from the above fields.
-    All other values (dimensions, colors, textures, etc.) are derived from 
-    trackerConfig or API calls within each FrameBuilder method.
-]]
 
 --- Helper function to convert cursor position to UIParent-relative coordinates
 --- @param anchorPoint string The anchor point to calculate offset from
@@ -1150,8 +1094,14 @@ function FrameTrackerManager:SetFramePosition(frame, trackerConfig)
                 elseif pos.relativeToFrame == "UIParent" then
                     relativeFrame = UIParent
                 else
-                    -- Try to resolve as frame name
-                    relativeFrame = _G[pos.relativeToFrame] or UIParent
+                    for _, tType in ipairs({ "spells", "items"}) do
+                        local targetFrame = FrameTrackerManager.SpellStyler_frames[tType] 
+                                        and FrameTrackerManager.SpellStyler_frames[tType][pos.relativeToFrame]
+                        if targetFrame then
+                            relativeFrame = targetFrame
+                            break
+                        end
+                    end
                 end
             elseif type(pos.relativeToFrame) == "table" then
                 if pos.relativeToFrame.GetObjectType then
@@ -1190,7 +1140,7 @@ FrameTrackerManager.FrameBuilder = {
         
         -- Only add base frames to the global registry; variant frames are stored on their base frame
         if not data.isVariantFrame then
-            FrameTrackerManager.SpellStyler_frames[data.trackerType][data.baseSpellID] = frame
+            FrameTrackerManager.SpellStyler_frames[data.trackerType][data.trackerKey] = frame
         end
         
         -- Construct frame metadata from data fields and API calls
@@ -1200,10 +1150,11 @@ FrameTrackerManager.FrameBuilder = {
         
         ---@type TrackerFrameMeta
         frame.meta = {
+            trackerKey = data.trackerKey,
             includeTotemDuration = data.trackerConfig.statusBar.includeTotemDuration,
             itemID = data.itemID or nil,
             isVariantFrame = data.isVariantFrame,
-            spellName = spellInfo.name,
+            spellName = spellInfo and spellInfo.name or 'N/A',
             baseSpellID = data.baseSpellID,
             trackerType = data.trackerType,
             activeSpellID = data.trackerConfig.overrideSpellID or data.baseSpellID,
@@ -1253,16 +1204,33 @@ FrameTrackerManager.FrameBuilder = {
         
         data.frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
         
+        -- Determine whether the active spell is currently overridden (stance/form changes)
+        local overrideSpellID = C_Spell.GetOverrideSpell(data.baseSpellID)
+        local iconOverrides = data.trackerConfig.iconSettingsOverrides
+        local isOverridden = (overrideSpellID ~= data.baseSpellID) and iconOverrides and iconOverrides.enabled
+
         -- Get icon texture
-        local iconTexture = data.frame.meta.customTexture or data.trackerConfig.defaultIconTexturePath
+        local iconTexture
+        if isOverridden then
+            local overridePath = iconOverrides.iconTexturePathOverride
+            if overridePath and overridePath ~= "" then
+                iconTexture = overridePath
+            else
+                local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
+                iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or data.trackerConfig.defaultIconTexturePath
+            end
+        else
+            iconTexture = data.frame.meta.customTexture or data.trackerConfig.defaultIconTexturePath
+        end
         
         -- For items, defaultIconTexturePath is already the resolved texture path (not itemID)
         -- No conversion needed
         
         data.frame.icon:SetTexture(iconTexture)
         
-        -- Apply color (RGB only, alpha goes on iconContainer)
-        local color = data.trackerConfig.iconColor or {}
+        -- Apply color (RGB only, alpha goes on iconContainer). Base vs override color depends
+        -- only on whether the spell is overridden, independent of the texture override.
+        local color = (isOverridden and iconOverrides.iconColorOverride) or data.trackerConfig.iconColor or {}
         data.frame.icon:SetVertexColor(
             color.r or 1,
             color.g or 1,
@@ -1359,7 +1327,7 @@ FrameTrackerManager.FrameBuilder = {
         end)
     end,
     CooldownBar = function(data)
-        FrameTrackerManager:CreateStatusBar(data.frame, "statusBar", data.trackerConfig, data.baseSpellID, data.trackerType, nil, nil, nil, "statusBar")
+        FrameTrackerManager:CreateStatusBar(data.frame, "statusBar", data.trackerConfig, nil, nil, nil, "statusBar")
     end,
     Count = function(data)
         data.frame.count = data.frame:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
@@ -1461,7 +1429,7 @@ FrameTrackerManager.FrameBuilder = {
     VisualChargeBar = function(data)
         -- Create visual charge bar if visualChargeBar config exists
         if data.trackerConfig.visualChargeBar then
-            FrameTrackerManager:CreateStatusBar(data.frame, "visualChargeBar", data.trackerConfig, data.baseSpellID, data.trackerType, nil, nil, nil, "visualChargeBar")
+            FrameTrackerManager:CreateStatusBar(data.frame, "visualChargeBar", data.trackerConfig, nil, nil, nil, "visualChargeBar")
         end
     end,
     DisplayCountTicker = function(data)
@@ -1509,7 +1477,7 @@ FrameTrackerManager.FrameUpdater = {
             }
         }
         FrameTrackerManager:SetFramePosition(data.frame, positionData)
-        local isDraggingDisabled = State:GetTrackerValueConfigProperty(data.frame.meta.baseSpellID, data.frame.meta.trackerType, "iconSettings.disableDragging")
+        local isDraggingDisabled = State:GetTrackerValueConfigProperty(data.trackerKey, data.frame.meta.trackerType, "iconSettings.disableDragging")
         if isDraggingDisabled then
             SpellStyler.IconSettingsRenderer:DisableDraggingForSpecificFrame(data.frame)
         elseif not isDraggingDisabled and SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown() then
@@ -1943,24 +1911,24 @@ FrameTrackerManager.FrameUpdater = {
 --- @param trackerType string The tracker type
 --- @param frame? table The frame to update
 --- @param skipConditionalEval? boolean Skip ConditionalEngine evaluation (for recursive calls)
-function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType, frame, skipConditionalEval)
+function FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType, frame, skipConditionalEval)
     
-    local frame = frame or FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
-    local trackerConfig = State:GetSpecificTrackerValue(baseSpellID, trackerType)
+    local frame = frame or FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
+    local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
     if not frame then
-        error("ApplyStaticFrameProperties called with nil frame for spell " .. tostring(baseSpellID))
+        error("ApplyStaticFrameProperties called with nil frame for spell " .. tostring(trackerKey))
     end
     
     
     -- Set up/Update charge anchor bars (this sets dualFrameStatus flag)
-    self:CreateInvisibleAnchorControllerBars(frame, trackerConfig, baseSpellID, frame.meta.isVariantFrame or false, false)
+    self:CreateInvisibleAnchorControllerBars(frame, trackerConfig, trackerKey, frame.meta.isVariantFrame or false, false)
     
     -- Early return if this frame should be hidden based on dualFrameStatus
     local isVariantFrame = frame.isVariantFrame or frame.meta.isVariantFrame
     if isVariantFrame and frame.meta.dualFrameStatus == 'hideVariant' then
         return
     elseif not isVariantFrame and frame.meta.dualFrameStatus == 'hideBase' then
-        self:ApplyStaticFrameProperties(baseSpellID, trackerType, frame.variantFrame)
+        self:ApplyStaticFrameProperties(trackerKey, trackerType, frame.variantFrame)
         return
     end
     -- Helper to get conditional override
@@ -1969,17 +1937,38 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
     end
 
     local shouldOverrideVisibility = State:GetShouldOverrideVisibility()
+
+    -- Determine whether the currently-active spell differs from the tracked
+    -- baseSpellID (e.g. stance/form-swapped spells), using frame.meta.baseSpellID
+    -- rather than trackerKey since the DB key can differ from the base spell.
+    -- Overrides are only applied when the user has explicitly enabled them.
+    local overrideBaseSpellID = frame.meta.baseSpellID
+    local overrideActiveSpellID = C_Spell.GetOverrideSpell(overrideBaseSpellID)
+    local iconOverrides = trackerConfig.iconSettingsOverrides
+    local isSpellOverridden = (overrideActiveSpellID ~= overrideBaseSpellID) and iconOverrides and iconOverrides.enabled
+    local overrideTexturePath = iconOverrides and iconOverrides.iconTexturePathOverride
+    local hasOverrideTexture = overrideTexturePath and overrideTexturePath ~= ""
+
     -- Build comprehensive data object with all pre-computed property values
     local data = {
+        trackerKey = trackerKey,
         frame = frame,
         trackerConfig = trackerConfig,  -- Keep for special checks
-        baseSpellID = baseSpellID,
+        baseSpellID = trackerConfig.baseSpellID,
         trackerType = trackerType,
         scale = trackerConfig.scale or 1,
         -- Icon properties
         icon = {
             displayState = shouldOverrideVisibility or trackerConfig.iconSettings.iconDisplayState,
             texture = (function()
+                if isSpellOverridden then
+                    if hasOverrideTexture then
+                        return overrideTexturePath
+                    end
+                    local overrideSpellInfo = C_Spell.GetSpellInfo(overrideActiveSpellID)
+                    return (overrideSpellInfo and overrideSpellInfo.iconID) or trackerConfig.defaultIconTexturePath
+                end
+
                 local override = getOverride("iconSettings.iconTexturePath")
                 local custom = override or (trackerConfig.iconSettings.iconTexturePath ~= "" and trackerConfig.iconSettings.iconTexturePath) or nil
                 local texture = custom or frame.updatedIconID or trackerConfig.defaultIconTexturePath
@@ -1992,7 +1981,8 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
             zoom = trackerConfig.iconSettings.zoom and (trackerConfig.iconSettings.zoom) or 0,
             width = getOverride("iconSettings.width") or trackerConfig.iconSettings.width or trackerConfig.iconSettings.size or 48,
             height = getOverride("iconSettings.height") or trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48,
-            color = getOverride("iconColor") or trackerConfig.iconColor or {r=1, g=1, b=1},
+            color = isSpellOverridden and (iconOverrides and iconOverrides.iconColorOverride)
+                or getOverride("iconColor") or trackerConfig.iconColor or {r=1, g=1, b=1},
             alpha = (shouldOverrideVisibility and 1) or getOverride("iconAlpha") or trackerConfig.iconAlpha or 1,
             desaturated = getOverride("iconSettings.desaturated") or trackerConfig.desaturated or false
         },
@@ -2129,21 +2119,20 @@ function FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType
     
     -- Recursively update variant frame if it exists (visibility is handled by early returns above)
     if not frame.isVariantFrame and frame.variantFrame then
-        self:ApplyStaticFrameProperties(baseSpellID, trackerType, frame.variantFrame)
+        self:ApplyStaticFrameProperties(trackerKey, trackerType, frame.variantFrame)
     end
 end
 
 
 --- Middleware for creating tracker frames with proper charge infrastructure.
 --- Use this instead of calling CreateTrackerFrame directly when creating new frames.
---- @param baseSpellID number The base spell ID
 --- @param trackerConfig table The tracker configuration
 --- @param trackerType string The tracker type
 --- @return table baseFrame The created base frame
-function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, trackerType)
+function FrameTrackerManager:CreateCompleteFrame(trackerKey, trackerConfig, trackerType)
     -- Guard: Don't create duplicate frames for the same baseSpellID
-    if FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] then
-        return FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+    if FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey] then
+        return FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
     end
     
     local BuildFrame = function(frameMeta)
@@ -2164,7 +2153,7 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
         FrameTrackerManager.FrameBuilder.DisplayCountTicker(frameMeta)
         -- Only register base frames in global registry; variant frames stored on their base frame
         if not frameMeta.isVariantFrame then
-            FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] = Frame
+            FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey] = Frame
         end
         return Frame
     end
@@ -2175,11 +2164,13 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
         }
     end
     if not entryInfo or not entryInfo.name or entryInfo.name == nil or entryInfo.name == '' then
-        entryInfo = C_Spell.GetSpellInfo(baseSpellID)
+        entryInfo = C_Spell.GetSpellInfo(trackerConfig.baseSpellID)
     end
+    if not entryInfo then entryInfo = { name = "N/A" } end
     local dataBaseFrame = {
-        frameName = "SpellStyler_" .. entryInfo.name .. "_" .. baseSpellID .. "_" .. trackerType,
-        baseSpellID = baseSpellID,
+        trackerKey = trackerKey,
+        frameName = "SpellStyler_" .. entryInfo.name .. "_" .. trackerConfig.baseSpellID .. "_" .. trackerType,
+        baseSpellID = trackerConfig.baseSpellID,
         trackerType = trackerType,
         isVariantFrame = false,
         trackerConfig = trackerConfig,
@@ -2189,8 +2180,9 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
     
     -- Create variant frame
     local dataVariantFrame = {
+        trackerKey = trackerKey,
         frameName = "SpellStyler_" .. entryInfo.name .. "_VariantFrame",
-        baseSpellID = baseSpellID,
+        baseSpellID = trackerConfig.baseSpellID,
         trackerType = trackerType,
         isVariantFrame = true,
         trackerConfig = trackerConfig,
@@ -2202,17 +2194,17 @@ function FrameTrackerManager:CreateCompleteFrame(baseSpellID, trackerConfig, tra
     variantFrame.baseFrame = baseFrame
 
 
-    self:CreateInvisibleAnchorControllerBars(baseFrame, trackerConfig, baseSpellID, false, false)
-    self:CreateInvisibleAnchorControllerBars(baseFrame.variantFrame, trackerConfig, baseSpellID, true, false)
+    self:CreateInvisibleAnchorControllerBars(baseFrame, trackerConfig, trackerKey, false, false)
+    self:CreateInvisibleAnchorControllerBars(baseFrame.variantFrame, trackerConfig, trackerKey, true, false)
     
     -- Apply initial properties to base and variant frames
-    self:ApplyStaticFrameProperties(baseSpellID, trackerType)
+    self:ApplyStaticFrameProperties(trackerKey, trackerType)
     return baseFrame
 end
 
 
-function FrameTrackerManager:GetTrackerFrame(baseSpellID, trackerType)
-    return FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID] or nil
+function FrameTrackerManager:GetTrackerFrame(trackerKey, trackerType)
+    return FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey] or nil
 end
 
 --- Fully destroys a live tracker frame so that no event handlers can ever
@@ -2225,10 +2217,10 @@ end
 ---      handler iterations skip it immediately.
 --- The DB entry is NOT touched; callers that want to also remove from the
 --- database should call State:RemoveTrackerValue separately.
-function FrameTrackerManager:DestroyTrackerFrame(baseSpellID, trackerType)
+function FrameTrackerManager:DestroyTrackerFrame(trackerKey, trackerType)
     local frames = FrameTrackerManager.SpellStyler_frames[trackerType]
     if not frames then return end
-    local frame = frames[baseSpellID]
+    local frame = frames[trackerKey]
     if not frame then return end
 
     -- Helper to destroy a single frame (base or variant)
@@ -2254,7 +2246,7 @@ function FrameTrackerManager:DestroyTrackerFrame(baseSpellID, trackerType)
     end
     
     -- 4. Remove from the event-handler lookup table.
-    frames[baseSpellID] = nil
+    frames[trackerKey] = nil
 end
 
 -- ============================================================================
@@ -2350,7 +2342,7 @@ local hasPlayerEnetedWorld = false
 function FrameTrackerManager:TeardownSpecFrames()
     for _, tType in ipairs({"spells", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
-            for donk, frame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+            for trackerKey, frame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 if frame and frame.Hide then
                     frame:Hide()
                     frame:ClearAllPoints()
@@ -2364,7 +2356,7 @@ function FrameTrackerManager:TeardownSpecFrames()
                         frame.variantFrame:SetSize(0, 0)
                         frame.variantFrame:SetParent(nil)
                     end
-                    FrameTrackerManager.SpellStyler_frames[tType][donk] = 'cleared  ' .. donk
+                    FrameTrackerManager.SpellStyler_frames[tType][trackerKey] = 'cleared  ' .. trackerKey
                 end
             end
         end
@@ -2383,7 +2375,7 @@ end
 --- @param sources string[]  All source labels collected during the window (for debugging)
 function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
     opts = opts or {}
-    local config, foundConfig = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
+    local config, foundConfig = State:GetSpecificTrackerValue(frame.meta.trackerKey, frame.meta.trackerType)
     if not config or not foundConfig then
         local spellName = C_Spell.GetSpellName(C_Spell.GetOverrideSpell(frame.meta.baseSpellID)) or "Unknown"
         local stateKey = frame.meta.baseSpellID
@@ -2462,7 +2454,7 @@ function FrameTrackerManager:_ExecuteDrive(frame, flags, opts, sources)
         if not alreadyExists then
             table.insert(devNotes, errorMsg)
         end
-        State:SetTrackerValueConfigProperty(frame.meta.baseSpellID, frame.meta.trackerType, "devNotes", devNotes)
+        State:SetTrackerValueConfigProperty(frame.meta.trackerKey, frame.meta.trackerType, "devNotes", devNotes)
         return
     end
     
@@ -2589,7 +2581,7 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     local trackerType = frame.meta.trackerType
     -- local currentSpell = C_Spell.GetOverrideSpell(frame.meta.baseSpellID)
     local activeSpellID = C_Spell.GetOverrideSpell(frame.meta.baseSpellID) --frame.meta.activeSpellID
-    local config = State:GetSpecificTrackerValue(frame.meta.baseSpellID, frame.meta.trackerType)
+    local config = State:GetSpecificTrackerValue(frame.meta.trackerKey, frame.meta.trackerType)
     
     -- Handle mock cooldown override
     if frame.meta.mockCooldownActive then
@@ -2844,9 +2836,16 @@ FrameTrackerManager.ApplyVisibility = {
             alpha = 0
         end
 
+        -- Icon color depends only on whether the active spell is currently overridden
+        -- (e.g. stance/form changes) and overrides are enabled - independent of texture.
+        local baseSpellID = context.customFrame.meta.baseSpellID
+        local overridesCfg = context.config and context.config.iconSettingsOverrides
+        local isSpellOverridden = (C_Spell.GetOverrideSpell(baseSpellID) ~= baseSpellID) and overridesCfg and overridesCfg.enabled
+        local overrideColorConfig = isSpellOverridden and overridesCfg.iconColorOverride
+
         -- Get color from override first, then state
         local iconColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "iconColor")
-        local color = iconColorOverride or (context.config and context.config.iconColor) or {}
+        local color = iconColorOverride or overrideColorConfig or (context.config and context.config.iconColor) or {}
         
         -- Apply RGB color to icon texture
         context.customFrame.icon:SetVertexColor(
@@ -3280,7 +3279,7 @@ function FrameTrackerManager:MatchTrackerFrame(targetSpell, trackerType)
 
     for _, tType in ipairs(lookThrough) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
-            for keySpellID, trackedFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+            for trackerKey, trackedFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 --match found, update the return data
 
                 --[[
@@ -3290,6 +3289,7 @@ function FrameTrackerManager:MatchTrackerFrame(targetSpell, trackerType)
                         Additionally, the cache stuff is require because sometimes the blizzard API breaks the association, like disc priest void shield changing back into power word: Shield
                             - the cache helps find the frame so that it can properly update the cooldown having swapped back to the original "power word: Shield" despite the override association being removed - meaning, if targetSpell was void shield from SPELL_UPDATE_COOLDOWN but it turned back into power word:Shield, we still need to match
                 ]]
+                local keySpellID = trackedFrame.meta.baseSpellID
                 local keyBaseSpellID = C_Spell.GetBaseSpell(keySpellID)
 
                 local keySpellID_Matches_TargetSpell = keySpellID == targetSpell
@@ -3348,8 +3348,8 @@ local function _ExecuteFreshCreateFrames(callers)
     for _, trackerType in ipairs({ "spells", "items" }) do
         local trackerValues = State:GetAllTrackerValues(trackerType)
         if trackerValues then
-            for baseSpellID, trackerConfig in pairs(trackerValues) do
-                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
+            for trackerKey, trackerConfig in pairs(trackerValues) do
+                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
                 if trackerConfig.isEnabled and frame then
                     -- reposition all frames so that they can be properly anchored now that all frames are created
                     SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
@@ -3467,9 +3467,9 @@ end
 local function forceUpdateAllFrames()
     for _, tType in ipairs({"essential", "utility", "spells", "items"}) do
         if FrameTrackerManager.SpellStyler_frames[tType] then
-            for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+            for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                 -- Update configuration changes first
-                FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, tType)
+                FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, tType)
                 FrameTrackerManager.lastTotemUpdate = nil
                 FrameTrackerManager.lastSpellCast = nil
                 FrameTrackerManager:SetMetaOnBaseAndVariant(customFrame, "totemDuration", nil)
@@ -3539,7 +3539,7 @@ function FrameTrackerManager:MatchTotemEvent(caller)
 end
 
 function FrameTrackerManager:UpdateActiveSpells()
-    for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
+    for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
         local isActive
         if customFrame.meta.isSpellWithCharges then
             isActive = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(customFrame.meta.baseSpellID)).isActive
@@ -3560,6 +3560,21 @@ function FrameTrackerManager:UpdateActiveSpells()
     end
 end
 
+local function GetDeadGroupType(unitGUID)
+    if not unitGUID or issecretvalue(unitGUIT) then
+        return nil
+    end
+    if not C_PlayerInfo.GUIDIsPlayer(unitGUID) then
+        return nil
+    end
+    if not C_PartyInfo.IsGUIDInGroup(unitGUID) then
+        return nil
+    end
+    -- if IsInRaid() then
+    --     return "raid"
+    -- end
+    return "party"
+end
 
 -- Event frame for UNIT_AURA and PLAYER_ENTERING_WORLD
 local eventFrame = CreateFrame("Frame")
@@ -3581,6 +3596,7 @@ eventFrame:RegisterEvent("PLAYER_FOCUS_CHANGED")
 eventFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 eventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
 eventFrame:RegisterEvent("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED")
+eventFrame:RegisterEvent("UNIT_DIED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
@@ -3594,16 +3610,37 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LEAVING_WORLD" then
         hasPlayerEnetedWorld = false
     end
-
+    if event == "UNIT_DIED" then
+        local unitGUID = ...
+        local groupType = GetDeadGroupType(unitGUID)
+        if groupType == 'party' then
+            for _, tType in ipairs({"items"}) do
+                if FrameTrackerManager.SpellStyler_frames[tType] then
+                    for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                        FrameTrackerManager:DriveFrameUpdate(
+                            customFrame,
+                            {
+                                resolveDuration = true,
+                                syncChargeText = true
+                            },
+                            nil,
+                            "allyDied"
+                        )
+                    end
+                end
+            end
+        end
+    end
     if event == "SPELL_DATA_LOAD_RESULT" then
         local spellID, success = ...
         for _, tType in ipairs({"essential", "utility", "spells"}) do
             if FrameTrackerManager.SpellStyler_frames[tType] then
-                for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
-                    if baseSpellID == spellID or C_Spell.GetBaseSpell(spellID) == baseSpellID then
+                for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                    -- if not customFrame.meta then DevTool:AddData(customFrame, "customFrame") end
+                    if customFrame.meta and (customFrame.meta.baseSpellID == spellID or C_Spell.GetBaseSpell(spellID) == customFrame.meta.baseSpellID) then
                         -- Stupid ass shit to make the frame cache the correct value of charges. Holy shock shows a max charge of 1, but then later provides 2. This delay should hopefully ensure it apply the correct value.
                         C_Timer.After(1, function()
-                            local config = State:GetSpecificTrackerValue(baseSpellID, tType)
+                            local config = State:GetSpecificTrackerValue(trackerKey, tType)
                             local spellChargesInfo
                             local spellInfo
                             if config and config.overrideSpellID then
@@ -3760,10 +3797,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "SPELL_UPDATE_CHARGES" then
         for _, tType in ipairs({"essential", "utility", "spells"}) do
             if FrameTrackerManager.SpellStyler_frames[tType] then
-                for baseSpellID, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
+                for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                     -- Skip if mock cooldown is active
                     if not customFrame.meta.mockCooldownActive then
-                        local match = FrameTrackerManager:MatchTrackerFrame(baseSpellID)
+                        local match = FrameTrackerManager:MatchTrackerFrame(trackerKey)
                         if match and match.customFrame.meta.isSpellWithCharges then
                             if match.customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("SPELL_UPDATE_CHARGES", match.customFrame, nil) end
                             if match.customFrame.variantFrame and match.customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("SPELL_UPDATE_CHARGES", match.customFrame.variantFrame, nil) end
@@ -3809,17 +3846,33 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpell)
         local match = FrameTrackerManager:MatchTrackerFrame(spellID)
         if match then
+            
             -- Skip if mock cooldown is active
             if match.customFrame.meta.mockCooldownActive then
                 return
             end
             
-            -- Use override spell for correct icon (handles stance/form changes)
-            local overrideSpellID = C_Spell.GetOverrideSpell(match.baseSpellID)
-            local spellInfo = C_Spell.GetSpellInfo(overrideSpellID) or C_Spell.GetSpellInfo(spellID)
-            if match.config.iconSettings.iconTexturePath == nil or match.config.iconSettings.iconTexturePath == '' then
-                match.customFrame.icon:SetTexture(spellInfo.iconID)
-                if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(spellInfo.iconID) end
+            -- Use frame.meta.baseSpellID (not the DB key) to determine whether the
+            -- active spell is currently overridden (e.g. stance/form changes).
+            -- Overrides only apply when the user has enabled them.
+            local baseSpellID = match.customFrame.meta.baseSpellID
+            local overrideSpellID = C_Spell.GetOverrideSpell(baseSpellID)
+            local overrides = match.config.iconSettingsOverrides
+            local isOverridden = (overrideSpellID ~= baseSpellID) and overrides and overrides.enabled
+
+            local textureToApply
+            if not isOverridden then
+                local basePath = match.config.iconSettings.iconTexturePath
+                textureToApply = (basePath and basePath ~= '') and basePath or match.config.defaultIconTexturePath
+            else
+                local overrideSpellInfoForIcon = C_Spell.GetSpellInfo(overrideSpellID)
+                local overridePath = overrides.iconTexturePathOverride
+                textureToApply = (overridePath and overridePath ~= '') and overridePath or (overrideSpellInfoForIcon and overrideSpellInfoForIcon.iconID)
+            end
+            
+            if textureToApply then
+                match.customFrame.icon:SetTexture(textureToApply)
+                if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(textureToApply) end
             end
             FrameTrackerManager:DriveFrameUpdate(
                 match.customFrame,

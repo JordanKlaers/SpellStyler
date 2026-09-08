@@ -301,3 +301,8 @@ Version 2.0.5
 Version 2.0.6
 	- Updates to prevent duplicate frames from being create for auras when "entering the world" which can happen more than just logging in or reloading.
 	- Updates aura creating when swapping specs
+
+Version 2.1.0
+	- Enabled tracking items by slot
+	- Adds a few preexisting game textures to use for custom texture selection. Can add more but there are 2.2 million so were starting small.
+	- Enabled settings a custom texture when the game registers an icon update for a spell - you can set one custom texture for the base and over when overwritten
