@@ -378,6 +378,7 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 		placeHolder._draggingEnabled = false
 		
 		placeHolder.meta = {
+			trackerKey = baseSpellID,
 			isVariantFrame = false,
 			spellName = buffConfig.name,
 			baseSpellID = baseSpellID,

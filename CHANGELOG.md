@@ -306,3 +306,7 @@ Version 2.1.0
 	- Enabled tracking items by slot
 	- Adds a few preexisting game textures to use for custom texture selection. Can add more but there are 2.2 million so were starting small.
 	- Enabled settings a custom texture when the game registers an icon update for a spell - you can set one custom texture for the base and over when overwritten
+
+Version 2.1.1
+	- Auras are draggable again
+	- Fixed a bug that prevented items from updating their cooldowns on death - specific for some trinkets

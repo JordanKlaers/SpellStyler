@@ -3561,7 +3561,7 @@ function FrameTrackerManager:UpdateActiveSpells()
 end
 
 local function GetDeadGroupType(unitGUID)
-    if not unitGUID or issecretvalue(unitGUIT) then
+    if not unitGUID or issecretvalue(unitGUID) then
         return nil
     end
     if not C_PlayerInfo.GUIDIsPlayer(unitGUID) then
@@ -3869,7 +3869,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
                 local overridePath = overrides.iconTexturePathOverride
                 textureToApply = (overridePath and overridePath ~= '') and overridePath or (overrideSpellInfoForIcon and overrideSpellInfoForIcon.iconID)
             end
-            
+
             if textureToApply then
                 match.customFrame.icon:SetTexture(textureToApply)
                 if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(textureToApply) end
