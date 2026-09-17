@@ -80,9 +80,9 @@ local function AddNewTrackerValueConfig(data)
         scale = 1,
         auraConfig = {
             filters = {
-
+                [AuraUtil.AuraFilters.Helpful] = true
             },
-            unit = nil
+            unit = 'player'
         },
         auraSpecs = data.auraSpecs or {
             -- table to indicate which specs the aura should be enabled for
@@ -540,7 +540,7 @@ function State:MigrateDatabase()
                         filters[AuraUtil.AuraFilters.Harmful] = true
                         unit = 'target'
                     else
-                        filters[AuraUtil.AuraFilters.Helpful] = false
+                        filters[AuraUtil.AuraFilters.Helpful] = true
                         unit = 'player'
                     end
                     if trackerValue.auraConfig == nil then
@@ -548,13 +548,13 @@ function State:MigrateDatabase()
                             filters = filters,
                             unit = unit
                         }
-                    -- else
-                    --     if not next(trackerValue.auraConfig.filters) then
-                    --         trackerValue.auraConfig.filters = filters
-                    --     end
-                    --     if not trackerValue.auraConfig.unit then
-                    --         trackerValue.auraConfig.unit = unit
-                    --     end
+                    else
+                        if not next(trackerValue.auraConfig.filters) then
+                            trackerValue.auraConfig.filters = filters
+                        end
+                        if trackerValue.auraConfig.unit == '' or trackerValue.auraConfig.unit == nil then
+                            trackerValue.auraConfig.unit = unit
+                        end
                     end
                 end
                 local defaults = AddNewTrackerValueConfig({

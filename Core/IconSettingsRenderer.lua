@@ -1433,16 +1433,6 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.disableDragging") == true end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.disableDragging", value) end,
             })
-            -- Is NPC Debuff checkbox (buffs only)
-            if config.trackerType == 'buffs' then
-                table.insert(sections, {
-                    type = "checkbox",
-                    label = "Is NPC debuff for target",
-                    tooltip = "Track as a debuff on your target instead of a buff on yourself",
-                    getValue = function(self) return config.getValue(self.uniqueID, "isNPCDebuff") == true end,
-                    setValue = function(self, value) config.setValue(self.uniqueID, "isNPCDebuff", value) end,
-                })
-            end
             if config.trackerType == 'buffs' then
                 table.insert(sections, {
                     type = "customRender",
@@ -4059,21 +4049,23 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
         local dragEnd = function(self)
             self:StopMovingOrSizing()
             
-            -- Calculate position using mouse cursor relative to UIParent CENTER
-            -- (similar to Mouse tracking in FrameTrackerManager)
-            local scale = UIParent:GetEffectiveScale()
-            local mouseX, mouseY = GetCursorPosition()
-            mouseX, mouseY = mouseX / scale, mouseY / scale
-            
-            -- Calculate offset from UIParent's center (using CENTER anchor point)
-            local uiX, uiY = UIParent:GetCenter()
-            local offsetX = mouseX - uiX
-            local offsetY = mouseY - uiY
-            
-            -- Account for frame's scale (positions are scaled by frame's scale)
+            -- Use the frame's actual resulting center (not the cursor position) since
+            -- StartMoving/StopMovingOrSizing keeps the grabbed point under the cursor,
+            -- not the frame's center. Using the cursor directly caused the icon to
+            -- snap so its center landed under the mouse regardless of grab point.
+            -- GetCenter() returns coordinates in the frame's own pre-scale local space,
+            -- so it must be multiplied by the frame's own scale to get a value in the
+            -- same screen-space basis as UIParent:GetCenter(). SetFramePosition divides
+            -- pos.x/pos.y by this same scale when reapplying the saved position, so the
+            -- stored value must be this multiplied (unscaled/"screen") offset.
             local frameScale = self:GetScale() or 1
-            offsetX = offsetX / frameScale
-            offsetY = offsetY / frameScale
+            local frameCenterX, frameCenterY = self:GetCenter()
+            local uiX, uiY = UIParent:GetCenter()
+            local offsetX = (frameCenterX * frameScale) - uiX
+            local offsetY = (frameCenterY * frameScale) - uiY
+            DevTool:AddData({
+                scale = self:GetScale()
+            }, "scale")
             
             -- offsetY needs adjustment for statusBar chain
             local adjustedOffsetY = offsetY

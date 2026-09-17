@@ -316,3 +316,7 @@ Version 2.2.0
 	- Updates the settigns menu for auras to have the aura specific config in its own section
 	- Updates spell tracking to account for specialization differences in baseSpellID - this should make base vs override identification better, including better application for the custom textures for base and override
 	- Items should track  regardless of which tier is used, like for health potiions
+
+Version 2.2.1
+	- Updates the database migration for the updates to auras to properly set the defaults for the new state management
+	- Update icon dragging to PORPERLY position even when scaled
