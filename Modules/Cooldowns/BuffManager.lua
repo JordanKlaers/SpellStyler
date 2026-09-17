@@ -89,6 +89,22 @@ function BuffManager:CreateBuffContainers()
     end
 end
 
+function BuffManager:BuildAuraFilterString(trackerValue)
+	local filterParts = {}
+	local filters = trackerValue.auraConfig and trackerValue.auraConfig.filters or {}
+
+	for filterValue, shouldInclude in pairs(filters) do
+		if shouldInclude == true then
+			table.insert(filterParts, filterValue)
+		elseif shouldInclude == false then
+			table.insert(filterParts, "!" .. filterValue)
+		end
+	end
+
+	table.sort(filterParts)
+	return table.concat(filterParts, "|")
+end
+
 function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 	if buffConfig.isEnabled ~= false then
 		if BuffManager.buffContainers[baseSpellID] then
@@ -344,12 +360,11 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 			end
 		end
 
-		-- Determine aura type and unit based on isNPCDebuff setting
-		local auraType = (buffConfig.isNPCDebuff == true) and AuraUtil.AuraFilters.Harmful or AuraUtil.AuraFilters.Helpful
-		local unitToTrack = (buffConfig.isNPCDebuff == true) and "target" or "player"
+		local auraType = BuffManager:BuildAuraFilterString(buffConfig)
+		local unitToTrack = buffConfig.auraConfig and buffConfig.auraConfig.unit
 		
 		-- Add slot and position the container
-		local slotFrame = auraContainer:AddAuraSlot(buffConfig.name, auraType .. "|" .. AuraUtil.AuraFilters.Player, options)
+		local slotFrame = auraContainer:AddAuraSlot(buffConfig.name, auraType, options)
 		
 		-- Position the slot frame using buffConfig position
 		local posX = buffConfig.position and buffConfig.position.x or 0
@@ -633,10 +648,12 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	end
 	aura.auraContainer:SetAuraSlotCandidateFilters(aura.slotName, candidateFilters)
 	
-	local auraType = (trackerValue.isNPCDebuff == true) and AuraUtil.AuraFilters.Harmful or AuraUtil.AuraFilters.Helpful
-	local unitToTrack = (trackerValue.isNPCDebuff == true) and "target" or "player"
-	aura.auraContainer:SetAuraSlotFilterString(aura.slotName, auraType .. "|" .. AuraUtil.AuraFilters.Player)
+	local auraType = BuffManager:BuildAuraFilterString(trackerValue)
+	local unitToTrack = trackerValue.auraConfig and trackerValue.auraConfig.unit
+	aura.auraContainer:SetAuraSlotFilterString(aura.slotName, auraType)
 	aura.auraContainer:SetUnit(unitToTrack)
+	aura.auraType = auraType
+	aura.unitToTrack = unitToTrack
 	aura.auraContainer:UpdateAllAuras()
 end
 -- ============================================================================

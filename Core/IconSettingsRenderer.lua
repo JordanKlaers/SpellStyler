@@ -1451,19 +1451,26 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     end
                 })
             end
-            -- Additional Spell IDs input (buffs only)
-            if config.trackerType == 'buffs' then
-                table.insert(sections, {
-                    type = "customRender",
-                    render = function(container, lastControl, uid, tType, rerender)
-                        return IconSettingsRenderer:RenderAdditionalSpellIDsInput(container, lastControl, uid, tType, rerender, config)
-                    end
-                })
-            end
             return sections
             
         end)()
     })
+
+    if config.trackerType == 'buffs' then
+        table.insert(configSections, {
+            type = "header",
+            text = "Aura configuration",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderAuraConfigurationSection(container, lastControl, uid, tType, rerender, config)
+                    end
+                }
+            }
+        })
+    end
     
     table.insert(configSections, {
         type = "header",
@@ -1839,6 +1846,82 @@ function IconSettingsRenderer:RenderAuraForSpecInput(container, lastControl, uni
     return currentAnchor
 end
 -- ============================================================================
+-- AURA FILTER DEFINITIONS
+-- Each entry maps a user-visible label to an AuraUtil.AuraFilters component.
+-- Stored per-tracker under auraConfig.filters as true / false / nil.
+-- ============================================================================
+local AURA_FILTER_DEFS = {
+    {
+        label = "Raid Player\nDispellable",
+        value = AuraUtil.AuraFilters.RaidPlayerDispellable,
+        tooltip = "with HELPFUL	Include only auras someone in the player's raid can purge/steal \n with HARMFUL	Include only auras someone in the player's raid can dispel"
+    },
+    {
+        label = "Raid In\nCombat",
+        value = AuraUtil.AuraFilters.RaidInCombat,
+        tooltip = "Include only auras flagged to show on raid frames in combat. Combine with HELPFUL & PLAYER to return self-cast HoTs"
+    },
+    {
+        label = "Raid",
+        value = AuraUtil.AuraFilters.Raid,
+        tooltip = "with HELPFUL	Include only auras the player can apply \n with HARMFUL	Include only auras the player can dispel"
+    },
+    {
+        label = "Player",
+        value = AuraUtil.AuraFilters.Player,
+        tooltip = "Include only auras that were cast by the player, or by the player's pet or vehicle"
+    },
+    {
+        label = "Include\nNameplate Only",
+        value = AuraUtil.AuraFilters.IncludeNameplateOnly,
+        tooltip = "When set, auras that are flagged as being nameplate-only will be included. When not set, nameplate-only auras will be filtered out."
+    },
+    {
+        label = "Important",
+        value = AuraUtil.AuraFilters.Important,
+        tooltip = "Include only auras that are flagged as important (helpful auras that show on enemy nameplates even if non-stealable)"
+    },
+    {
+        label = "Helpful",
+        value = AuraUtil.AuraFilters.Helpful,
+        tooltip = "Include only helpful auras (buffs)"
+    },
+    {
+        label = "Harmful",
+        value = AuraUtil.AuraFilters.Harmful,
+        tooltip = "Include only harmful auras (debuffs)"
+    },
+    {
+        label = "External\nDefensive",
+        value = AuraUtil.AuraFilters.ExternalDefensive,
+        tooltip = "Include only auras that are external defensives"
+    },
+    {
+        label = "Dispellable",
+        value = AuraUtil.AuraFilters.Dispellable,
+        tooltip = "Include only auras that are dispellable/purgeable/stealable, regardless of whether the player or someone in the player's raid can"
+    },
+    {
+        label = "Crowd\nControl",
+        value = AuraUtil.AuraFilters.CrowdControl,
+        tooltip = "Include only auras that have a crowd control effect (stun, fear, silence, slow, etc.)"
+    },
+    {
+        label = "Cancelable",
+        value = AuraUtil.AuraFilters.Cancelable,
+        tooltip = "Include only auras that can be canceled by the player"
+    },
+    {
+        label = "BigDefensive",
+        value = AuraUtil.AuraFilters.BigDefensive,
+        tooltip = "Include only auras that are big defensives"
+    }
+}
+
+local AURA_FILTER_CHECK_TEXTURE   = "Interface\\Buttons\\UI-CheckBox-Check"
+local AURA_FILTER_EXCLUDE_TEXTURE = "Interface\\RaidFrame\\ReadyCheck-NotReady"
+
+-- ============================================================================
 -- ADDITIONAL SPELL IDS INPUT RENDERER (Buffs only)
 -- Renders an input field for adding spell IDs to track alongside the main buff
 -- ============================================================================
@@ -1948,6 +2031,171 @@ function IconSettingsRenderer:RenderAdditionalSpellIDsInput(container, lastContr
     end
     
     return currentAnchor
+end
+
+-- ============================================================================
+-- AURA CONFIGURATION SECTION RENDERER (Buffs only)
+-- Renders the additional spell ID list, the tri-state aura filter checkboxes
+-- and the unit token input.
+-- ============================================================================
+function IconSettingsRenderer:RenderAuraConfigurationSection(container, lastControl, uniqueID, trackerType, rerender, config)
+    local currentAnchor = IconSettingsRenderer:RenderAdditionalSpellIDsInput(container, lastControl, uniqueID, trackerType, rerender, config)
+
+    -- ── Aura filters (tri-state) ─────────────────────────────────────────────
+    local filtersHeader = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filtersHeader:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -10)
+    filtersHeader:SetText("Aura Filters:")
+    filtersHeader:SetTextColor(0.8, 0.8, 0.8)
+
+    local filtersHint = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    filtersHint:SetPoint("TOPLEFT", filtersHeader, "BOTTOMLEFT", 0, -2)
+    filtersHint:SetWidth(280)
+    filtersHint:SetWordWrap(true)
+    filtersHint:SetJustifyH("LEFT")
+    filtersHint:SetText("Click once to include, twice to exclude, a third time to clear.")
+    filtersHint:SetTextColor(0.5, 0.5, 0.5)
+
+    local hintAnchor = CreateFrame("Frame", nil, container)
+    hintAnchor:SetSize(290, 1)
+    hintAnchor:SetPoint("TOPLEFT", filtersHint, "BOTTOMLEFT", 0, -4)
+    currentAnchor = hintAnchor
+
+    local function GetFilterState(filterValue)
+        local filters = config.getValue(uniqueID, "auraConfig.filters") or {}
+        return filters[filterValue]
+    end
+
+    local function SetFilterState(filterValue, state)
+        local filters = config.getValue(uniqueID, "auraConfig.filters") or {}
+        if state == nil then
+            filters[filterValue] = nil
+        else
+            filters[filterValue] = state
+        end
+        config.setValue(uniqueID, "auraConfig.filters", filters)
+    end
+
+    local function GetNextFilterState(state)
+        if state == nil then
+            return true
+        elseif state == true then
+            return false
+        end
+        return nil
+    end
+
+    local filtersPerRow = 3
+    local filterRowHeight = 25
+    local filterColumnOffsets = { 0, 96, 192 }
+    local filterRow
+
+    for index, def in ipairs(AURA_FILTER_DEFS) do
+        local zeroBasedIndex = index - 1
+        local rowIndex = math.floor(zeroBasedIndex / filtersPerRow)
+        local columnIndex = zeroBasedIndex % filtersPerRow
+
+        if columnIndex == 0 then
+            filterRow = CreateFrame("Frame", nil, container)
+            filterRow:SetSize(290, filterRowHeight)
+            filterRow:SetPoint("TOPLEFT", hintAnchor, "BOTTOMLEFT", 0, -(rowIndex * (filterRowHeight + 2) + 2))
+            currentAnchor = filterRow
+        end
+
+        local filterCell = CreateFrame("Frame", nil, filterRow)
+        filterCell:SetSize(96, filterRowHeight)
+        filterCell:SetPoint("TOPLEFT", filterRow, "TOPLEFT", filterColumnOffsets[columnIndex + 1], 0)
+
+        local checkbox = CreateFrame("CheckButton", nil, filterCell, "UICheckButtonTemplate")
+        checkbox:SetSize(20, 20)
+        checkbox:SetPoint("LEFT", filterCell, "LEFT", 0, 0)
+
+        local stateLabel = filterCell:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        stateLabel:SetPoint("LEFT", checkbox, "RIGHT", 4, 0)
+        stateLabel:SetWidth(70)
+        stateLabel:SetJustifyH("LEFT")
+
+        local function ApplyState(state)
+            if state == true then
+                checkbox:SetCheckedTexture(AURA_FILTER_CHECK_TEXTURE)
+                checkbox:SetChecked(true)
+                stateLabel:SetText(def.label)
+                stateLabel:SetTextColor(0.4, 1, 0.4)
+            elseif state == false then
+                checkbox:SetCheckedTexture(AURA_FILTER_EXCLUDE_TEXTURE)
+                checkbox:SetChecked(true)
+                stateLabel:SetText("!" .. def.label)
+                stateLabel:SetTextColor(1, 0.4, 0.4)
+            else
+                checkbox:SetChecked(false)
+                stateLabel:SetText(def.label)
+                stateLabel:SetTextColor(0.8, 0.8, 0.8)
+            end
+        end
+
+        ApplyState(GetFilterState(def.value))
+
+        checkbox:SetScript("OnClick", function()
+            local nextState = GetNextFilterState(GetFilterState(def.value))
+            SetFilterState(def.value, nextState)
+            ApplyState(nextState)
+        end)
+
+        if def.tooltip then
+            local function showTooltip(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:SetText(def.label, 1, 1, 1)
+                GameTooltip:AddLine(def.tooltip, 0.8, 0.8, 0.8, true)
+                GameTooltip:Show()
+            end
+            local function hideTooltip() GameTooltip:Hide() end
+            checkbox:SetScript("OnEnter", showTooltip)
+            checkbox:SetScript("OnLeave", hideTooltip)
+            filterCell:EnableMouse(true)
+            filterCell:SetScript("OnEnter", showTooltip)
+            filterCell:SetScript("OnLeave", hideTooltip)
+        end
+    end
+
+    -- ── Unit token input ─────────────────────────────────────────────────────
+    local unitRow = CreateFrame("Frame", nil, container)
+    unitRow:SetSize(290, 30)
+    unitRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -10)
+
+    local unitLabel = unitRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    unitLabel:SetText("Unit to apply to:")
+    unitLabel:SetTextColor(0.8, 0.8, 0.8)
+    unitLabel:SetPoint("LEFT", unitRow, "LEFT", 0, 0)
+
+    local unitInput = CreateFrame("EditBox", nil, unitRow, "InputBoxTemplate")
+    unitInput:SetSize(120, 18)
+    unitInput:SetPoint("RIGHT", unitRow, "RIGHT", 0, 0)
+    unitInput:SetAutoFocus(false)
+    unitInput:SetMaxLetters(32)
+    unitInput:SetText(config.getValue(uniqueID, "auraConfig.unit") or "")
+
+    local function showUnitTooltip(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Unit to apply to", 1, 1, 1)
+        GameTooltip:AddLine("To find available unit token values, check https://warcraft.wiki.gg/wiki/UnitToken", 0.8, 0.8, 0.8, true)
+        GameTooltip:Show()
+    end
+    local function hideUnitTooltip() GameTooltip:Hide() end
+    unitInput:SetScript("OnEnter", showUnitTooltip)
+    unitInput:SetScript("OnLeave", hideUnitTooltip)
+    unitLabel:SetScript("OnEnter", showUnitTooltip)
+    unitLabel:SetScript("OnLeave", hideUnitTooltip)
+
+    local function commitUnit(self)
+        config.setValue(uniqueID, "auraConfig.unit", self:GetText())
+    end
+    unitInput:SetScript("OnEnterPressed", function(self)
+        self:ClearFocus()
+        commitUnit(self)
+    end)
+    unitInput:SetScript("OnEditFocusLost", commitUnit)
+    unitInput:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+    return unitRow
 end
 
 -- ============================================================================

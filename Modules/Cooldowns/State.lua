@@ -78,6 +78,12 @@ local function AddNewTrackerValueConfig(data)
         defaultIconTexturePath = data.defaultIconTexturePath,
         isItem = data.isItem or false,  -- Flag to identify item trackers (for icon lookup)
         scale = 1,
+        auraConfig = {
+            filters = {
+
+            },
+            unit = nil
+        },
         auraSpecs = data.auraSpecs or {
             -- table to indicate which specs the aura should be enabled for
         },
@@ -500,6 +506,9 @@ function State:MigrateDatabase()
                     -- Clean up the old field
                     trackerValue.countText.renderAsStatusBar = nil
                 end
+                if trackerType == 'spells' then
+                    trackerValue.baseSpellID = C_Spell.GetBaseSpell(C_Spell.GetOverrideSpell(trackerValue.baseSpellID), GetSpecialization())
+                end
 
                 if trackerType == 'buffs' then
                     if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
@@ -522,6 +531,30 @@ function State:MigrateDatabase()
                     end
                     if not isEnabledForAnyAura and trackerValue.isEnabled then
                         trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
+                    end
+
+
+                    local filters = {}
+                    local unit
+                    if trackerValue.isNPCDebuff == true then
+                        filters[AuraUtil.AuraFilters.Harmful] = true
+                        unit = 'target'
+                    else
+                        filters[AuraUtil.AuraFilters.Helpful] = false
+                        unit = 'player'
+                    end
+                    if trackerValue.auraConfig == nil then
+                        trackerValue.auraConfig = {
+                            filters = filters,
+                            unit = unit
+                        }
+                    -- else
+                    --     if not next(trackerValue.auraConfig.filters) then
+                    --         trackerValue.auraConfig.filters = filters
+                    --     end
+                    --     if not trackerValue.auraConfig.unit then
+                    --         trackerValue.auraConfig.unit = unit
+                    --     end
                     end
                 end
                 local defaults = AddNewTrackerValueConfig({
@@ -546,7 +579,7 @@ function State:MigrateDatabase()
             local spellRemaps = {}
             for trackerKey, trackerValue in pairs(specDB.spells) do
                 local baseID = nil
-                baseID = C_Spell.GetBaseSpell(trackerValue.baseSpellID)
+                baseID = C_Spell.GetBaseSpell(C_Spell.GetOverrideSpell(trackerValue.baseSpellID), GetSpecialization())
                 if baseID and baseID ~= trackerValue.baseSpellID then
                     table.insert(spellRemaps, { oldID = trackerValue.baseSpellID, newID = baseID, entry = trackerValue })
                 end

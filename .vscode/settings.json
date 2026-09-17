@@ -91,7 +91,10 @@
 		"INVSLOT_TRINKET2",
 		"INVSLOT_BACK",
 		"INVSLOT_TABARD",
-		"WorldFrame"
+		"WorldFrame",
+		"FrameUtil",
+		"RAID",
+		"PLAYER"
 	],
 	"Lua.type.weakUnionCheck": true
 }

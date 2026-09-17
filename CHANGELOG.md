@@ -310,3 +310,9 @@ Version 2.1.0
 Version 2.1.1
 	- Auras are draggable again
 	- Fixed a bug that prevented items from updating their cooldowns on death - specific for some trinkets
+
+Version 2.2.0
+	- Adds full control over the aura filters and unit types to track
+	- Updates the settigns menu for auras to have the aura specific config in its own section
+	- Updates spell tracking to account for specialization differences in baseSpellID - this should make base vs override identification better, including better application for the custom textures for base and override
+	- Items should track  regardless of which tier is used, like for health potiions

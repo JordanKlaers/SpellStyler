@@ -3248,6 +3248,16 @@ function FrameTrackerManager:SetStatusBarContainerVisibility(data, key)
 end
 
 
+local function spellsMatch(targetSpells, trackedSpells)
+    for _, target in ipairs(targetSpells) do
+        for _, tracked in ipairs(trackedSpells) do
+            if target == tracked then
+                return true
+            end
+        end
+    end
+    return false
+end
 
 --- @param spellID number
 --- @return ApplyCooldownDurationData|nil
@@ -3263,9 +3273,8 @@ function FrameTrackerManager:MatchTrackerFrame(targetSpell, trackerType)
             config
         }
     ]]
-    local targetSpellBase = C_Spell.GetBaseSpell(targetSpell)
-    local cache = overrideToBase[targetSpell]
-    local cacheBase = overrideToBase[targetSpellBase]
+    local targetSpell_BaseSpec = C_Spell.GetBaseSpell(targetSpell, GetSpecialization())
+    local targetSpell_Base = C_Spell.GetBaseSpell(targetSpell)
 
 
     local lookThrough
@@ -3289,32 +3298,20 @@ function FrameTrackerManager:MatchTrackerFrame(targetSpell, trackerType)
                         Additionally, the cache stuff is require because sometimes the blizzard API breaks the association, like disc priest void shield changing back into power word: Shield
                             - the cache helps find the frame so that it can properly update the cooldown having swapped back to the original "power word: Shield" despite the override association being removed - meaning, if targetSpell was void shield from SPELL_UPDATE_COOLDOWN but it turned back into power word:Shield, we still need to match
                 ]]
-                local keySpellID = trackedFrame.meta.baseSpellID
-                local keyBaseSpellID = C_Spell.GetBaseSpell(keySpellID)
+                local trackedSpell_Base = C_Spell.GetBaseSpell(trackedFrame.meta.baseSpellID, GetSpecialization())
+                local trackedSpell_BaseSpec = C_Spell.GetBaseSpell(trackedFrame.meta.baseSpellID, GetSpecialization())
 
-                local keySpellID_Matches_TargetSpell = keySpellID == targetSpell
-                local keySpellID_Matches_TargetSpellBase = keySpellID == targetSpellBase
-                local keySpellID_Matches_CacheSpell = keySpellID == cache
-                local keySpellID_Matches_CacheSpellBase = keySpellID == cacheBase
+                local trackedSpellMatchesTargetSpell = targetSpell == trackedFrame.meta.baseSpellID
 
-                local keySpellIDBase_Matches_TargetSpell = keyBaseSpellID == targetSpell
-                local keySpellIDBase_Matches_TargetSpellBase = keyBaseSpellID == targetSpellBase
-                local keySpellIDBase_Matches_CacheSpell = keyBaseSpellID == cache
-                local keySpellIDBase_Matches_CacheSpellBase = keyBaseSpellID == cacheBase
-
-                if keySpellID_Matches_TargetSpell
-                    or keySpellID_Matches_TargetSpellBase
-                    or keySpellID_Matches_CacheSpell
-                    or keySpellID_Matches_CacheSpellBase
-                    or keySpellIDBase_Matches_TargetSpell
-                    or keySpellIDBase_Matches_TargetSpellBase
-                    or keySpellIDBase_Matches_CacheSpell
-                    or keySpellIDBase_Matches_CacheSpellBase
+                if spellsMatch(
+                    { targetSpell, targetSpell_BaseSpec, targetSpell_Base },
+                    { trackedFrame.meta.baseSpellID, trackedSpell_Base, trackedSpell_BaseSpec }
+                )
                     then
                     match = {
-                        config = State:GetSpecificTrackerValue(keySpellID, tType),
-                        baseSpellID = keyBaseSpellID,
-                        activeSpellID = C_Spell.GetOverrideSpell(keySpellID),
+                        config = State:GetSpecificTrackerValue(trackerKey, tType),
+                        baseSpellID = trackedSpell_BaseSpec,
+                        activeSpellID = C_Spell.GetOverrideSpell(trackedSpell_BaseSpec),
                         customFrame = trackedFrame,
                         trackerType = tType
                     }
@@ -3636,8 +3633,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         for _, tType in ipairs({"essential", "utility", "spells"}) do
             if FrameTrackerManager.SpellStyler_frames[tType] then
                 for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
-                    -- if not customFrame.meta then DevTool:AddData(customFrame, "customFrame") end
-                    if customFrame.meta and (customFrame.meta.baseSpellID == spellID or C_Spell.GetBaseSpell(spellID) == customFrame.meta.baseSpellID) then
+                    if customFrame.meta and (customFrame.meta.baseSpellID == spellID or C_Spell.GetBaseSpell(spellID, GetSpecialization()) == customFrame.meta.baseSpellID) then
                         -- Stupid ass shit to make the frame cache the correct value of charges. Holy shock shows a max charge of 1, but then later provides 2. This delay should hopefully ensure it apply the correct value.
                         C_Timer.After(1, function()
                             local config = State:GetSpecificTrackerValue(trackerKey, tType)
@@ -3839,11 +3835,10 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "SPELL_UPDATE_ICON" then
         local spellID = ...
         if not spellID then return end
-        local base = C_Spell.GetBaseSpell(spellID)
-        local baseSpellInfo = C_Spell.GetSpellInfo(base)
-        local spellInfo = C_Spell.GetSpellInfo(spellID)
-        local overrideSpell = C_Spell.GetOverrideSpell(spellID)
-        local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpell)
+        local spellBaseID = C_Spell.GetBaseSpell(spellID, GetSpecialization())
+        local spellBaseInfo = C_Spell.GetSpellInfo(spellBaseID)
+        local spellOverride = C_Spell.GetOverrideSpell(spellBaseID)
+        local spellOverrideInfo = C_Spell.GetSpellInfo(spellOverride)
         local match = FrameTrackerManager:MatchTrackerFrame(spellID)
         if match then
             
@@ -3855,25 +3850,26 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- Use frame.meta.baseSpellID (not the DB key) to determine whether the
             -- active spell is currently overridden (e.g. stance/form changes).
             -- Overrides only apply when the user has enabled them.
-            local baseSpellID = match.customFrame.meta.baseSpellID
-            local overrideSpellID = C_Spell.GetOverrideSpell(baseSpellID)
-            local overrides = match.config.iconSettingsOverrides
-            local isOverridden = (overrideSpellID ~= baseSpellID) and overrides and overrides.enabled
+            local trackedSpellID = match.customFrame.meta.baseSpellID
+            local baseCustomTexture = match.config.iconSettings.iconTexturePath ~= '' and match.config.iconSettings.iconTexturePath or nil
+            local overrideCustomTexture = match.config.iconSettingsOverrides.iconTexturePathOverride ~= '' and match.config.iconSettingsOverrides.iconTexturePathOverride or nil
 
-            local textureToApply
-            if not isOverridden then
-                local basePath = match.config.iconSettings.iconTexturePath
-                textureToApply = (basePath and basePath ~= '') and basePath or match.config.defaultIconTexturePath
+            local currentSpellState
+            if spellID == spellBaseID or spellID == trackedSpellID then
+                currentSpellState = 'base'
             else
-                local overrideSpellInfoForIcon = C_Spell.GetSpellInfo(overrideSpellID)
-                local overridePath = overrides.iconTexturePathOverride
-                textureToApply = (overridePath and overridePath ~= '') and overridePath or (overrideSpellInfoForIcon and overrideSpellInfoForIcon.iconID)
+                currentSpellState = 'override'
             end
 
-            if textureToApply then
-                match.customFrame.icon:SetTexture(textureToApply)
-                if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(textureToApply) end
+            local textureToApply = spellOverrideInfo.iconID
+            if currentSpellState == 'base' and baseCustomTexture ~= nil then
+                textureToApply = baseCustomTexture
+            elseif currentSpellState == 'override' and overrideCustomTexture ~= nil and match.config.iconSettingsOverrides.enabled then
+                textureToApply = overrideCustomTexture
             end
+
+            match.customFrame.icon:SetTexture(textureToApply)
+            if match.customFrame.variantFrame then match.customFrame.variantFrame.icon:SetTexture(textureToApply) end
             FrameTrackerManager:DriveFrameUpdate(
                 match.customFrame,
                 {
@@ -3889,7 +3885,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         local unit, _, spellID = ...
         if unit == 'player' and not issecretvalue(spellID) then
             local spellInfo = C_Spell.GetSpellInfo(spellID)
-            local baseInfo = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(spellID))
+            local baseInfo = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(spellID, GetSpecialization()))
             local match = FrameTrackerManager:MatchTrackerFrame(spellID)
             if match then
                 FrameTrackerManager:DriveFrameUpdate(
@@ -3914,8 +3910,8 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         if isSecretSpellID then
         else
             local spellInfo = C_Spell.GetSpellInfo(spellID)
-            local spellInfoBase = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(spellID))
-            local spellInfoOverride = C_Spell.GetSpellInfo(C_Spell.GetOverrideSpell(C_Spell.GetBaseSpell(spellID)))
+            local spellInfoBase = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(spellID, GetSpecialization()))
+            local spellInfoOverride = C_Spell.GetSpellInfo(C_Spell.GetOverrideSpell(C_Spell.GetBaseSpell(spellID, GetSpecialization())))
             local match = FrameTrackerManager:MatchTrackerFrame(spellID)
             if match then
                 FrameTrackerManager.lastSpellCast = {
