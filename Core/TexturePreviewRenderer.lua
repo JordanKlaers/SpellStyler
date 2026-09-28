@@ -163,16 +163,26 @@ function TexturePreviewRenderer:EnsureOverlay()
     return overlay
 end
 
---- (Re)builds the icon grid, wiring each button's OnClick to the provided
---- callback with the chosen texture's FileDataID.
-function TexturePreviewRenderer:BuildGrid(scrollChild, onSelect)
+--- (Re)builds the icon grid from exactly one texture collection.
+function TexturePreviewRenderer:BuildGrid(scrollChild, onSelect, customTextures)
     for _, child in ipairs({ scrollChild:GetChildren() }) do
         child:Hide()
         child:SetParent(nil)
     end
 
+    local entries = {}
+    if customTextures then
+        for _, texturePath in ipairs(customTextures) do
+            table.insert(entries, { id = texturePath, name = tostring(texturePath) })
+        end
+    else
+        for _, entry in ipairs(PREVIEW_TEXTURES) do
+            table.insert(entries, entry)
+        end
+    end
+
     local col, row = 0, 0
-    for _, entry in ipairs(PREVIEW_TEXTURES) do
+    for _, entry in ipairs(entries) do
         local btn = CreateFrame("Button", nil, scrollChild, "BackdropTemplate")
         btn:SetSize(ICON_SIZE, ICON_SIZE)
         btn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT",
@@ -194,7 +204,7 @@ function TexturePreviewRenderer:BuildGrid(scrollChild, onSelect)
         btn:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetText(entry.name, 1, 1, 1)
-            GameTooltip:AddLine("FileDataID: " .. entry.id, 0.7, 0.7, 0.7)
+            GameTooltip:AddLine("Texture: " .. tostring(entry.id), 0.7, 0.7, 0.7)
             GameTooltip:Show()
         end)
         btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -210,7 +220,7 @@ function TexturePreviewRenderer:BuildGrid(scrollChild, onSelect)
         end
     end
 
-    local totalRows = math.ceil(#PREVIEW_TEXTURES / ICONS_PER_ROW)
+    local totalRows = math.ceil(#entries / ICONS_PER_ROW)
     scrollChild:SetSize(
         ICONS_PER_ROW * (ICON_SIZE + ICON_PAD),
         math.max(totalRows * (ICON_SIZE + ICON_PAD), 1)
@@ -218,9 +228,9 @@ function TexturePreviewRenderer:BuildGrid(scrollChild, onSelect)
 end
 
 --- Shows the texture picker, sized/positioned over the current icon-settings
---- panel (if open) without touching that panel's own contents. `onSelect`
---- is called with the chosen texture's FileDataID when the user clicks an icon.
-function TexturePreviewRenderer:Show(onSelect)
+--- panel (if open) without touching that panel's own contents. With no custom
+--- list, the picker shows presets; when supplied, it shows only that list.
+function TexturePreviewRenderer:Show(onSelect, customTextures)
     local overlay = self:EnsureOverlay()
     local anchor = self:GetAnchorFrame()
 
@@ -239,7 +249,7 @@ function TexturePreviewRenderer:Show(onSelect)
         overlay:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
 
-    self:BuildGrid(overlay.scrollChild, onSelect)
+    self:BuildGrid(overlay.scrollChild, onSelect, customTextures)
     overlay:Show()
 end
 

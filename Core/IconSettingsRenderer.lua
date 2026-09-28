@@ -18,9 +18,18 @@ IconSettingsRenderer.keyboardFrame = nil
 -- References to position input fields so arrow keys can update them
 local _iconPositionInputs = { x = nil, y = nil }
 local _barPositionInputs = { x = nil, y = nil }
+local _selectedSpellVariations = {}
 
 -- Callback for when frames are clicked in layout mode
 local onFrameClickCallback = nil
+
+local function GetCurrentSpellDisplay(trackerConfig)
+    local baseSpellID = trackerConfig and trackerConfig.baseSpellID
+    local currentSpellID = baseSpellID and C_Spell.GetOverrideSpell(baseSpellID) or baseSpellID
+    local spellInfo = currentSpellID and C_Spell.GetSpellInfo(currentSpellID)
+    return (spellInfo and spellInfo.name) or (trackerConfig and trackerConfig.name),
+        (spellInfo and spellInfo.iconID) or (trackerConfig and trackerConfig.defaultIconTexturePath)
+end
 
 function IconSettingsRenderer:SetConsistentScrollingBehavior(scrollFrame)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
@@ -1073,229 +1082,178 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconDisplayState") or "always" end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconDisplayState", value) end,
             })
-            -- Custom texture/color overrides only apply to manually-tracked spells
-            -- (spec-override swaps don't apply to items or auras).
-            if config.trackerType == "spells" then
-                table.insert(sections, {
-                    type = "checkbox",
-                    label = "Enable custom override icon",
-                    getValue = function(self) return config.getValue(self.uniqueID, "iconSettingsOverrides.enabled") or false end,
-                    setValue = function(self, value)
-                        config.setValue(self.uniqueID, "iconSettingsOverrides.enabled", value)
-                        if SpellStyler.settingsContentFrame then
-                            IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
-                        end
-                    end,
-                })
-            end
             table.insert(sections, {
                 type = "customRender",
                 render = function(container, lastControl, uid, tType, rerender)
-                    local COLUMN_WIDTH = 138
-                    local showOverrideColumn = tType == "spells"
-                    local overridesEnabled = showOverrideColumn and (config.getValue(uid, "iconSettingsOverrides.enabled") or false)
-                    local labelColor = overridesEnabled and {0.8, 0.8, 0.8} or {0.45, 0.45, 0.45}
+                    local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(uid, tType)
+                    local associationIDs = {}
+                    local associationSeen = {}
+
+                    local function addAssociation(spellID)
+                        if spellID and not associationSeen[spellID] then
+                            associationSeen[spellID] = true
+                            table.insert(associationIDs, spellID)
+                        end
+                    end
+
+                    addAssociation(trackerConfig.rootSpellID)
+                    addAssociation(trackerConfig.baseSpellID)
+                    addAssociation(trackerConfig.overrideSpellID)
+                    if trackerConfig.baseSpellID then
+                        addAssociation(C_Spell.GetOverrideSpell(trackerConfig.baseSpellID))
+                    end
+                    for spellID in pairs(trackerConfig.spellVariations or {}) do
+                        addAssociation(tonumber(spellID) or spellID)
+                    end
+
+                    local selectionKey = tostring(uid) .. ":" .. tType
+                    local selectedSpellID = _selectedSpellVariations[selectionKey]
+                        or trackerConfig.rootSpellID
+
+                    local function getVariation(spellID)
+                        return SpellStyler.State:EnsureSpellVariation(trackerConfig, spellID)
+                    end
+
+                    local function spellName(spellID)
+                        local spellInfo = spellID and C_Spell.GetSpellInfo(spellID)
+                        return spellInfo and spellInfo.name or tostring(spellID)
+                    end
 
                     local block = CreateFrame("Frame", nil, container)
-                    if showOverrideColumn then
-                        block:SetSize(290, 95)
-                    else
-                        block:SetSize(290, 50)
-                    end
-                    block:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -4)
+                    block:SetSize(500, 115)
+                    block:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -12)
 
-                    -- ── Column A: base icon settings ──────────────────────
-                    local colA = CreateFrame("Frame", nil, block)
-                    colA:SetSize(showOverrideColumn and COLUMN_WIDTH or 290, 130)
-                    colA:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
+                    local associationLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    associationLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
+                    associationLabel:SetText("Choose associated spell:")
+                    associationLabel:SetTextColor(0.8, 0.8, 0.8)
 
-                    local pathLabelA = colA:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    pathLabelA:SetPoint("TOPLEFT", colA, "TOPLEFT", 0, 0)
-                    pathLabelA:SetJustifyH("LEFT")
-                    pathLabelA:SetText("Custom Texture Path:")
-                    pathLabelA:SetTextColor(0.8, 0.8, 0.8)
+                    local associationDropdown = CreateFrame("Frame", nil, block, "UIDropDownMenuTemplate")
+                    associationDropdown:SetPoint("LEFT", associationLabel, "RIGHT", 8, 0)
+                    UIDropDownMenu_SetWidth(associationDropdown, 120)
+                    UIDropDownMenu_Initialize(associationDropdown, function(self, level)
+                        for index, spellID in ipairs(associationIDs) do
+                            local info = UIDropDownMenu_CreateInfo()
+                            local spellInfo = spellID and C_Spell.GetSpellInfo(spellID)
+                            info.text = spellName(spellID)
+                            info.icon = spellInfo and (spellInfo.originalIconID or spellInfo.iconID)
+                            info.iconWidth = 32
+                            info.iconHeight = 32
+                            info.topPadding = 4
+                            info.padding = 10
+                            info.iconXOffset = -10
+                            info.value = spellID
+                            info.checked = selectedSpellID == spellID
+                            info.func = function(button)
+                                _selectedSpellVariations[selectionKey] = button.value
+                                UIDropDownMenu_SetText(associationDropdown, spellName(button.value))
+                                rerender()
+                            end
+                            UIDropDownMenu_AddButton(info)
+                        end
+                    end)
+                    UIDropDownMenu_SetText(associationDropdown, spellName(selectedSpellID))
+                    associationDropdown:SetScript("OnEnter", function(self)
+                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                        GameTooltip:AddLine("Choose an associated spell for this tracker to apply a custom icon texture and custom icon color. Upon being overwritten to a new spell, the value will be included.", 0.8, 0.8, 0.8, true)
+                        GameTooltip:Show()
+                    end)
+                    associationDropdown:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-                    local pathInputA = CreateFrame("EditBox", nil, colA, "InputBoxTemplate")
-                    if showOverrideColumn then
-                        pathInputA:SetSize(COLUMN_WIDTH - 10, 18)
-                        pathInputA:SetPoint("TOPLEFT", pathLabelA, "BOTTOMLEFT", 4, -4)
-                    else
-                        -- Right-align to the column's edge, like every other input row
-                        pathInputA:SetSize(160, 18)
-                        pathInputA:SetPoint("TOP", pathLabelA, "TOP", 0, 4)
-                        pathInputA:SetPoint("RIGHT", colA, "RIGHT", 0, 0)
-                    end
-                    pathInputA:SetAutoFocus(false)
-                    pathInputA:SetMaxLetters(1000)
-                    pathInputA:SetText(tostring(config.getValue(uid, "iconSettings.iconTexturePath") or ""))
-                    local function commitA(self)
-                        config.setValue(uid, "iconSettings.iconTexturePath", self:GetText())
-                    end
-                    pathInputA:SetScript("OnEnterPressed", function(self) self:ClearFocus() commitA(self) end)
-                    pathInputA:SetScript("OnEditFocusLost", commitA)
+                    local variation = getVariation(selectedSpellID)
+                    local pathLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    pathLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, -16)
+                    pathLabel:SetText("Custom Texture Path:")
+                    pathLabel:SetTextColor(0.8, 0.8, 0.8)
 
-                    local chooseLabelA = colA:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    if showOverrideColumn then
-                        chooseLabelA:SetPoint("TOPLEFT", pathInputA, "BOTTOMLEFT", -4, -6)
-                    else
-                        chooseLabelA:SetPoint("TOPLEFT", pathLabelA, "BOTTOMLEFT", 0, -16)
+                    local pathInput = CreateFrame("EditBox", nil, block, "InputBoxTemplate")
+                    pathInput:SetSize(190, 18)
+                    pathInput:SetPoint("TOPLEFT", pathLabel, "BOTTOMLEFT", 4, -4)
+                    pathInput:SetAutoFocus(false)
+                    pathInput:SetMaxLetters(1000)
+                    pathInput:SetText(tostring(variation.iconTexturePath or ""))
+                    local function commitTexturePath(self)
+                        variation.iconTexturePath = self:GetText()
+                        SpellStyler.State:AddCustomTexture(variation.iconTexturePath)
+                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
                     end
-                    
-                    chooseLabelA:SetText("or choose from:")
-                    chooseLabelA:SetTextColor(0.8, 0.8, 0.8)
+                    pathInput:SetScript("OnEnterPressed", function(self)
+                        self:ClearFocus()
+                        commitTexturePath(self)
+                    end)
+                    pathInput:SetScript("OnEditFocusLost", commitTexturePath)
 
-                    local viewBtnA = CreateFrame("Button", nil, colA, "UIPanelButtonTemplate")
-                    if showOverrideColumn then
-                        viewBtnA:SetSize(COLUMN_WIDTH, 20)
-                        viewBtnA:SetPoint("TOPLEFT", chooseLabelA, "BOTTOMLEFT", 0, -4)
-                    else
-                        -- Right-align to the column's edge, like every other input row
-                        viewBtnA:SetSize(130, 20)
-                        viewBtnA:SetPoint("TOP", chooseLabelA, "TOP", 0, 8)
-                        viewBtnA:SetPoint("RIGHT", colA, "RIGHT", 0, 0)
-                    end
-                    
-                    viewBtnA:SetText("View Textures")
-                    viewBtnA:SetScript("OnClick", function()
+                    local chooseLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    chooseLabel:SetPoint("TOPLEFT", pathInput, "BOTTOMLEFT", -4, -6)
+                    chooseLabel:SetText("or choose from:")
+                    chooseLabel:SetTextColor(0.8, 0.8, 0.8)
+
+                    local viewButton = CreateFrame("Button", nil, block, "UIPanelButtonTemplate")
+                    viewButton:SetSize(120, 20)
+                    viewButton:SetPoint("TOPLEFT", chooseLabel, "BOTTOMLEFT", 0, -4)
+                    viewButton:SetText("Preset Textures")
+                    viewButton:SetScript("OnClick", function()
                         SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
-                            config.setValue(uid, "iconSettings.iconTexturePath", texturePath)
+                            variation.iconTexturePath = texturePath
+                            SpellStyler.State:AddCustomTexture(texturePath)
+                            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
                             rerender()
                         end)
                     end)
 
-                    local colorLabelA = colA:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    if showOverrideColumn then
-                        colorLabelA:SetPoint("TOPLEFT", viewBtnA, "BOTTOMLEFT", 0, -8)
-                    else
-                        colorLabelA:SetPoint("TOPLEFT", chooseLabelA, "BOTTOMLEFT", 0, -12)
-                    end
-                    
-                    colorLabelA:SetText("Icon Color:")
-                    colorLabelA:SetTextColor(0.8, 0.8, 0.8)
+                    local customButton = CreateFrame("Button", nil, block, "UIPanelButtonTemplate")
+                    customButton:SetSize(120, 20)
+                    customButton:SetPoint("LEFT", viewButton, "RIGHT", 8, 0)
+                    customButton:SetText("Custom Textures")
+                    customButton:SetScript("OnClick", function()
+                        SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
+                            variation.iconTexturePath = texturePath
+                            SpellStyler.State:AddCustomTexture(texturePath)
+                            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                            rerender()
+                        end, SpellStyler.State:GetCustomTextures())
+                    end)
 
-                    local colorBtnA = CreateFrame("Button", nil, colA, "BackdropTemplate")
-                    colorBtnA:SetSize(24, 16)
-                    if showOverrideColumn then
-                        colorBtnA:SetPoint("TOPLEFT", colorLabelA, "BOTTOMLEFT", 0, -4)
-                    else
-                        -- Right-align to the column's edge, like every other input row
-                        colorBtnA:SetPoint("TOP", colorLabelA, "TOP", 0, 4)
-                        colorBtnA:SetPoint("RIGHT", colA, "RIGHT", 0, 0)
-                    end
-                    colorBtnA:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1})
-                    local colorA = config.getValue(uid, "iconColor") or {r=1, g=1, b=1, a=1}
-                    colorBtnA:SetBackdropColor(colorA.r, colorA.g, colorA.b, colorA.a or 1)
-                    colorBtnA:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-                    colorBtnA:SetScript("OnClick", function()
-                        local current = config.getValue(uid, "iconColor") or {r=1, g=1, b=1, a=1}
+                    local colorLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    colorLabel:SetPoint("TOPLEFT", viewButton, "BOTTOMLEFT", 0, -8)
+                    colorLabel:SetText("Icon Color:")
+                    colorLabel:SetTextColor(0.8, 0.8, 0.8)
+
+                    local colorButton = CreateFrame("Button", nil, block, "BackdropTemplate")
+                    colorButton:SetPoint("TOPLEFT", colorLabel, "BOTTOMLEFT", 0, -4)
+                    colorButton:SetSize(24, 16)
+                    colorButton:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1})
+                    local color = variation.iconColor or {r = 1, g = 1, b = 1, a = 1}
+                    colorButton:SetBackdropColor(color.r, color.g, color.b, color.a or 1)
+                    colorButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+                    colorButton:SetScript("OnClick", function()
+                        local current = variation.iconColor or {r = 1, g = 1, b = 1, a = 1}
                         local r, g, b, a = current.r or 1, current.g or 1, current.b or 1, current.a or 1
                         ColorPickerFrame:SetupColorPickerAndShow({
                             swatchFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
-                                colorBtnA:SetBackdropColor(nr, ng, nb, na)
-                                config.setValue(uid, "iconColor", {r = nr, g = ng, b = nb, a = na})
+                                colorButton:SetBackdropColor(nr, ng, nb, na)
+                                variation.iconColor = {r = nr, g = ng, b = nb, a = na}
+                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
                             end,
                             opacityFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
-                                colorBtnA:SetBackdropColor(nr, ng, nb, na)
-                                config.setValue(uid, "iconColor", {r = nr, g = ng, b = nb, a = na})
+                                colorButton:SetBackdropColor(nr, ng, nb, na)
+                                variation.iconColor = {r = nr, g = ng, b = nb, a = na}
+                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
                             end,
-                            cancelFunc = function(prev)
-                                colorBtnA:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
-                                config.setValue(uid, "iconColor", {r = prev.r, g = prev.g, b = prev.b, a = prev.a or 1})
+                            cancelFunc = function(previous)
+                                colorButton:SetBackdropColor(previous.r, previous.g, previous.b, previous.a or 1)
+                                variation.iconColor = {r = previous.r, g = previous.g, b = previous.b, a = previous.a or 1}
+                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
                             end,
                             hasOpacity = 1,
                             opacity = a,
                             r = r, g = g, b = b,
                         })
                     end)
-
-                    -- ── Column B: override icon settings (spells only) ────
-                    if showOverrideColumn then
-                    local colB = CreateFrame("Frame", nil, block)
-                    colB:SetSize(COLUMN_WIDTH, 130)
-                    colB:SetPoint("TOPLEFT", colA, "TOPRIGHT", 14, 0)
-
-                    local pathLabelB = colB:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    pathLabelB:SetPoint("TOPLEFT", colB, "TOPLEFT", 0, 0)
-                    pathLabelB:SetJustifyH("LEFT")
-                    pathLabelB:SetText("Override Texture Path:")
-                    pathLabelB:SetTextColor(unpack(labelColor))
-
-                    local pathInputB = CreateFrame("EditBox", nil, colB, "InputBoxTemplate")
-                    pathInputB:SetSize(COLUMN_WIDTH - 10, 18)
-                    pathInputB:SetPoint("TOPLEFT", pathLabelB, "BOTTOMLEFT", 4, -4)
-                    pathInputB:SetAutoFocus(false)
-                    pathInputB:SetMaxLetters(1000)
-                    pathInputB:SetText(tostring(config.getValue(uid, "iconSettingsOverrides.iconTexturePathOverride") or ""))
-                    local function commitB(self)
-                        config.setValue(uid, "iconSettingsOverrides.iconTexturePathOverride", self:GetText())
-                    end
-                    pathInputB:SetScript("OnEnterPressed", function(self) self:ClearFocus() commitB(self) end)
-                    pathInputB:SetScript("OnEditFocusLost", commitB)
-                    pathInputB:EnableMouse(overridesEnabled)
-                    if pathInputB.Disable then
-                        if overridesEnabled then pathInputB:Enable() else pathInputB:Disable() end
-                    end
-
-                    local chooseLabelB = colB:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    chooseLabelB:SetPoint("TOPLEFT", pathInputB, "BOTTOMLEFT", -4, -6)
-                    chooseLabelB:SetText("or choose from:")
-                    chooseLabelB:SetTextColor(unpack(labelColor))
-
-                    local viewBtnB = CreateFrame("Button", nil, colB, "UIPanelButtonTemplate")
-                    viewBtnB:SetSize(COLUMN_WIDTH, 20)
-                    viewBtnB:SetPoint("TOPLEFT", chooseLabelB, "BOTTOMLEFT", 0, -4)
-                    viewBtnB:SetText("View Textures")
-                    viewBtnB:SetScript("OnClick", function()
-                        SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
-                            config.setValue(uid, "iconSettingsOverrides.iconTexturePathOverride", texturePath)
-                            rerender()
-                        end)
-                    end)
-                    if overridesEnabled then viewBtnB:Enable() else viewBtnB:Disable() end
-
-                    local colorLabelB = colB:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    colorLabelB:SetPoint("TOPLEFT", viewBtnB, "BOTTOMLEFT", 0, -8)
-                    colorLabelB:SetText("Override Icon Color:")
-                    colorLabelB:SetTextColor(unpack(labelColor))
-
-                    local colorBtnB = CreateFrame("Button", nil, colB, "BackdropTemplate")
-                    colorBtnB:SetPoint("TOPLEFT", colorLabelB, "BOTTOMLEFT", 0, -4)
-                    colorBtnB:SetSize(24, 16)
-                    colorBtnB:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1})
-                    local colorB = config.getValue(uid, "iconSettingsOverrides.iconColorOverride") or {r=1, g=1, b=1, a=1}
-                    colorBtnB:SetBackdropColor(colorB.r, colorB.g, colorB.b, colorB.a or 1)
-                    colorBtnB:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-                    colorBtnB:SetScript("OnClick", function()
-                        local current = config.getValue(uid, "iconSettingsOverrides.iconColorOverride") or {r=1, g=1, b=1, a=1}
-                        local r, g, b, a = current.r or 1, current.g or 1, current.b or 1, current.a or 1
-                        ColorPickerFrame:SetupColorPickerAndShow({
-                            swatchFunc = function()
-                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
-                                local na = ColorPickerFrame:GetColorAlpha() or 1
-                                colorBtnB:SetBackdropColor(nr, ng, nb, na)
-                                config.setValue(uid, "iconSettingsOverrides.iconColorOverride", {r = nr, g = ng, b = nb, a = na})
-                            end,
-                            opacityFunc = function()
-                                local nr, ng, nb = ColorPickerFrame:GetColorRGB()
-                                local na = ColorPickerFrame:GetColorAlpha() or 1
-                                colorBtnB:SetBackdropColor(nr, ng, nb, na)
-                                config.setValue(uid, "iconSettingsOverrides.iconColorOverride", {r = nr, g = ng, b = nb, a = na})
-                            end,
-                            cancelFunc = function(prev)
-                                colorBtnB:SetBackdropColor(prev.r, prev.g, prev.b, prev.a or 1)
-                                config.setValue(uid, "iconSettingsOverrides.iconColorOverride", {r = prev.r, g = prev.g, b = prev.b, a = prev.a or 1})
-                            end,
-                            hasOpacity = 1,
-                            opacity = a,
-                            r = r, g = g, b = b,
-                        })
-                    end)
-                    if overridesEnabled then colorBtnB:Enable() else colorBtnB:Disable() end
-                    end
 
                     return block
                 end
@@ -2974,9 +2932,36 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     local config = {
         trackerType = trackerType,  -- Store to avoid repeated lookups
         getValue = function(trackerKey, path) 
+            if trackerType == "spells" and (
+                path == "iconColor"
+                or path == "iconSettings.iconTexturePath"
+            ) then
+                local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
+                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType]
+                    and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
+                local variationSpellID = frame and frame.meta.rootSpellID or trackerConfig.rootSpellID
+                local variation = SpellStyler.State:EnsureSpellVariation(trackerConfig, variationSpellID)
+                if path == "iconColor" then return variation.iconColor end
+                if path == "iconSettings.iconTexturePath" then return variation.iconTexturePath end
+                return variation.iconColor
+            end
             return SpellStyler.State:GetTrackerValueConfigProperty(trackerKey, trackerType, path) 
         end,
         setValue = function(trackerKey, path, value) 
+            if trackerType == "spells" and (
+                path == "iconColor"
+                or path == "iconSettings.iconTexturePath"
+            ) then
+                local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
+                local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType]
+                    and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
+                local variationSpellID = frame and frame.meta.rootSpellID or trackerConfig.rootSpellID
+                local variation = SpellStyler.State:EnsureSpellVariation(trackerConfig, variationSpellID)
+                if path == "iconColor" then variation.iconColor = value end
+                if path == "iconSettings.iconTexturePath" then variation.iconTexturePath = value end
+                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType)
+                return
+            end
             SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, path, value) 
         end
     }
@@ -3003,19 +2988,19 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     if trackedValue then
         -- Derive the current name: for items use stored name, for spells use spell info
         local displayName
+        local displayIcon
         if trackedValue.isItem then
             displayName = trackedValue.name or tostring(trackerKey)
+            displayIcon = trackedValue.defaultIconTexturePath
         else
-            local trackerFrame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType] and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
-            local activeSpellID = (trackerFrame and trackerFrame.meta and trackerFrame.meta.activeSpellID) or trackedValue.overrideSpellID or trackedValue.baseSpellID
-            local spellInfo = activeSpellID and C_Spell.GetSpellInfo(activeSpellID)
-            displayName = (spellInfo and spellInfo.name) or trackedValue.name or tostring(trackerKey)
+            displayName, displayIcon = GetCurrentSpellDisplay(trackedValue)
+            displayName = displayName or tostring(trackerKey)
         end
         local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
         header:SetPoint("TOPLEFT", 0, -10)
         header:SetText(displayName .. " - (" .. trackerType .. ")")
         header:SetTextColor(1, 0.82, 0)
-		local icon = CreateIconButton(parent, trackedValue.defaultIconTexturePath, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes)
+        local icon = CreateIconButton(parent, displayIcon, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes)
 		icon:SetPoint("LEFT", header, "RIGHT", 10, 0)
 
 		-- Reset to Defaults button
@@ -4021,7 +4006,7 @@ end
 
 function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
     if frame and not frame._inContainer then
-        local baseSpellID = frame.meta.baseSpellID
+        local rootSpellID = frame.meta.rootSpellID
         local trackerKey = frame.meta.trackerKey
         local trackerType = frame.meta.trackerType
         local isDraggingDisabled = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.disableDragging")
@@ -4063,9 +4048,6 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             local uiX, uiY = UIParent:GetCenter()
             local offsetX = (frameCenterX * frameScale) - uiX
             local offsetY = (frameCenterY * frameScale) - uiY
-            DevTool:AddData({
-                scale = self:GetScale()
-            }, "scale")
             
             -- offsetY needs adjustment for statusBar chain
             local adjustedOffsetY = offsetY
@@ -4311,7 +4293,7 @@ function IconSettingsRenderer:ToggleMockCooldown(trackerKey, trackerType)
         -- Create a proper DurationObject for Apply Cooldown Duration()
         local mockDurationObj = C_DurationUtil.CreateDuration()
         mockDurationObj:SetTimeFromStart(now, mockDuration)
-        local config = State:GetSpecificTrackerValue(baseSpellID, trackerType)
+        local config = State:GetSpecificTrackerValue(trackerKey, trackerType)
 
         FrameTrackerManager:DriveFrameUpdate(
             frame,

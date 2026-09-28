@@ -676,7 +676,7 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
     -- Note: Always use base frame for state lookups
     if SpellStyler.FrameTrackerManager then
         SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(
-            frame.meta.baseSpellID,
+            frame.meta.rootSpellID,
             frame.meta.trackerType
         )
     end
@@ -762,21 +762,17 @@ function ConditionalEngine:EvaluateAll()
     local specDatabase = State:GetDataBase_V2()
     if not specDatabase then return end
 
-    for _, trackerType in ipairs({ "spells", "buffs" }) do
+    for _, trackerType in ipairs({ "spells", "items" }) do
         local trackerTypeDatabase = specDatabase[trackerType]
         if trackerTypeDatabase then
             for baseSpellID, trackerValue in pairs(trackerTypeDatabase) do
                 -- check if the database for the spell/frame has any conditionas associated to it
                 local specialVisibilityConditions = trackerValue.specialVisibilityConditions
                 if specialVisibilityConditions and #specialVisibilityConditions > 0 then
-                    -- Get the actual frame to access activeSpellID - the activeSpellID is required when evaluating the conditional
                     local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType]
                         and FrameTrackerManager.SpellStyler_frames[trackerType][baseSpellID]
                     
-                    if customFrame then
-                        local activeSpellID = (customFrame.meta and customFrame.meta.activeSpellID) or baseSpellID
-                        local spellInfo = C_Spell.GetSpellInfo(activeSpellID)
-                        
+                    if customFrame then                        
                         -- Variant frame lifecycle is managed by RebuildChargeInfrastructure
                         -- Do NOT manage it here or it will get out of sync with charge bars
                         
@@ -791,7 +787,7 @@ function ConditionalEngine:EvaluateAll()
                                 -- IMPORTANT: This must match the key generation in State.lua
                                 local conditionalKey = self:GenerateConditionalKey(specialVisibilityCondition, conditionalIndex)
                                 
-                                local context = { spellID = activeSpellID, trackerType = trackerType }
+                                local context = { spellID = baseSpellID, trackerType = trackerType }
                                 local conditionalResult, requiresConstantUpdate = EvaluateConditional(conditionalName, self.liveValues, context)
                                 -- now that we have evaluated the conditional, save its state so we can see when it changed.
                                 if not self._conditionalStates[customFrame] then

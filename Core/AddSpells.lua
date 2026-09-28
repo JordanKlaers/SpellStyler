@@ -237,6 +237,7 @@ function AddSpells:RenderAddSpellsView(parent)
     local previewBtn = nil  -- forward-declared: single shared preview icon
     local previewTex = nil
     local addBtn     = nil  -- forward-declared: single shared add button
+    local addBtnTooltip = nil
 
     -- These are also needed by the slot-picker before the shared controls are built.
     local slotPreviewBtn = nil
@@ -249,6 +250,23 @@ function AddSpells:RenderAddSpellsView(parent)
     local FilterAndLayoutSafe
     local UpdatePreview
 
+    local function FindSharedSpellTracker(spellID)
+        local baseSpellID = C_Spell.GetBaseSpell(spellID, GetSpecialization())
+        local trackerKey, trackerConfig = SpellStyler.State:FindSpellTrackerByBaseSpellID(baseSpellID)
+        return trackerKey, trackerConfig, baseSpellID
+    end
+
+    local function UpdateAddButtonState(shouldEnable)
+        if not addBtn then return end
+        if shouldEnable then
+            addBtn:Enable()
+            if addBtnTooltip then addBtnTooltip:Hide() end
+        else
+            addBtn:Disable()
+            if addBtnTooltip then addBtnTooltip:Show() end
+        end
+    end
+
     local function Deselect()
         if selectedBtn and SpellStyler.GlowUtil then
             SpellStyler.GlowUtil:StopAnts(selectedBtn)
@@ -256,7 +274,7 @@ function AddSpells:RenderAddSpellsView(parent)
         selectedEntry = nil
         selectedType  = nil
         selectedBtn   = nil
-        if addBtn then addBtn:Disable() end
+        UpdateAddButtonState(false)
     end
 
     local function SelectEntry(entry, entryType, btn)
@@ -271,7 +289,18 @@ function AddSpells:RenderAddSpellsView(parent)
             SpellStyler.GlowUtil:SetupAnts(btn, { r = 1, g = 0.82, b = 0 })
             SpellStyler.GlowUtil:PlayAnts(btn)
         end
-        if addBtn then addBtn:Enable() end
+        if addBtn then
+            local trackerConfig
+            if entryType == "spell" then
+                local _, matchedConfig = FindSharedSpellTracker(entry.spellID)
+                trackerConfig = matchedConfig
+            end
+            if trackerConfig then
+                UpdateAddButtonState(false)
+            else
+                UpdateAddButtonState(true)
+            end
+        end
     end
     -- clicking empty space deselects
     container:SetScript("OnMouseDown", function() Deselect() end)
@@ -394,9 +423,9 @@ function AddSpells:RenderAddSpellsView(parent)
             end
 
             if itemID then
-                if addBtn then addBtn:Enable() end
+                UpdateAddButtonState(true)
             else
-                if addBtn then addBtn:Disable() end
+                UpdateAddButtonState(false)
             end
         end
 
@@ -498,6 +527,30 @@ function AddSpells:RenderAddSpellsView(parent)
     addBtn:SetPoint("LEFT", previewBtn, "RIGHT", 8, (PREVIEW_SIZE - 22) / 2)
     addBtn:SetText("Add")
     addBtn:Disable()
+    local function ShowDuplicateSpellTooltip(owner)
+        if selectedType == "spell" and selectedEntry then
+            local _, trackerConfig, baseSpellID = FindSharedSpellTracker(selectedEntry.spellID)
+            if trackerConfig then
+                local currentSpellID = C_Spell.GetOverrideSpell(baseSpellID)
+                local spellInfo = currentSpellID and C_Spell.GetSpellInfo(currentSpellID)
+                local spellName = (spellInfo and spellInfo.name) or tostring(currentSpellID or baseSpellID)
+                GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+                GameTooltip:SetText("This spell is already tracked. It may likely be overwritten or transformed into another spell. It currently appears to be " .. spellName, 1, 1, 1)
+                GameTooltip:Show()
+            end
+        end
+    end
+    addBtn:SetScript("OnEnter", function(self) ShowDuplicateSpellTooltip(self) end)
+    addBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    addBtnTooltip = CreateFrame("Frame", nil, container)
+    addBtnTooltip:SetAllPoints(addBtn)
+    addBtnTooltip:SetFrameStrata(addBtn:GetFrameStrata())
+    addBtnTooltip:SetFrameLevel(addBtn:GetFrameLevel() + 10)
+    addBtnTooltip:EnableMouse(true)
+    addBtnTooltip:SetScript("OnEnter", function(self) ShowDuplicateSpellTooltip(self) end)
+    addBtnTooltip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    addBtnTooltip:Hide()
     addBtn:SetScript("OnClick", function()
         if not selectedEntry or not selectedType then return end
         local FTM   = SpellStyler.FrameTrackerManager
@@ -509,21 +562,24 @@ function AddSpells:RenderAddSpellsView(parent)
 
         if selectedType == "spell" then
             trackerType = "spells"
-            trackingID = C_Spell.GetBaseSpell(selectedEntry.spellID)
-            local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "spells")
+            local existingKey, existingByBase, baseSpellID = FindSharedSpellTracker(selectedEntry.spellID)
+            trackingID = existingKey or selectedEntry.spellID
+            local existingTrackerConfig, foundConfig = existingByBase, existingByBase ~= nil
             if existingTrackerConfig and foundConfig then
                 trackerConfig = existingTrackerConfig
+                local previousRootSpellID = trackerConfig.rootSpellID
+                local rootSpellID = selectedEntry.rootSpellID or C_Spell.GetOverrideSpell(selectedEntry.spellID)
                 State:SetTrackerValueConfigProperty(trackingID, "spells", 'isEnabled', true)
+                State:SetTrackerValueConfigProperty(trackingID, "spells", 'baseSpellID', baseSpellID)
+                State:CopySpellIconVariation(trackerConfig, previousRootSpellID, rootSpellID)
+                State:SetTrackerValueConfigProperty(trackingID, "spells", 'rootSpellID', rootSpellID)
             else
-                -- Track spell by baseSpellID
-                local overrideSpellID = C_Spell.GetOverrideSpell(selectedEntry.spellID)
-                -- Get icon from override spell for correct initial appearance
-                local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
-                local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedEntry.iconID
+                local iconTexture = selectedEntry.iconID
                 trackerConfig = State:AddTrackerValue({
                     trackerKey              = trackingID,
-                    baseSpellID             = trackingID,
-                    overrideSpellID         = overrideSpellID,
+                    rootSpellID             = selectedEntry.rootSpellID or C_Spell.GetOverrideSpell(selectedEntry.spellID),
+                    baseSpellID             = baseSpellID,
+                    overrideSpellID         = C_Spell.GetOverrideSpell(baseSpellID),
                     trackerType             = "spells",
                     name                    = selectedEntry.name,
                     defaultIconTexturePath  = iconTexture,
@@ -711,7 +767,7 @@ function AddSpells:RenderAddSpellsView(parent)
         -- Skip spells that are already tracked AND enabled in any tracker type.
         -- DB entries are keyed by GetBaseSpell(), so the duplicate check must use
         -- the same key; using the raw spellbook ID would miss override spells.
-        local baseID = C_Spell.GetBaseSpell(spell.spellID)
+        local baseID = spell.spellID
         
         local alreadyTrackedAndEnabled = isTrackedAndEnabled(baseID, "buffs")
             or isTrackedAndEnabled(baseID, "essential")
@@ -869,8 +925,6 @@ function AddSpells:RenderAddSpellsView(parent)
         gridChild:SetHeight(math.max(GLOW_PAD + totalRows * (iconSize + GRID_GAP) + 20, 1))
     end
 
-    -- ── Lookup icon update (direct spell-ID/item-ID or name lookup) ──────
-    -- Shared by all three inputs; entryType selects which lookup API to use.
     UpdatePreview = function(entryType, text)
         if not text or text == "" then
             if previewBtn then previewBtn:Hide() end
@@ -902,13 +956,32 @@ function AddSpells:RenderAddSpellsView(parent)
             if id then
                 local si = C_Spell.GetSpellInfo(id)
                 if si then
-                    found = { spellID = id, name = si.name, iconID = si.iconID }
+                    local iconID = C_Spell.GetSpellTexture(id) or si.iconID
+                    found = { spellID = id, name = si.name, iconID = iconID }
                 end
             else
+                -- local spellID = ResolveSpellID(text)
+                -- local si = spellID and C_Spell.GetSpellInfo(spellID)
                 local si = C_Spell.GetSpellInfo(text)
-                if si then
-                    found = { spellID = si.spellID, name = si.name, iconID = si.iconID }
+                local potentialMatchBase = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(si.spellID))
+                local potentialMatchOverride = C_Spell.GetSpellInfo(C_Spell.GetOverrideSpell(C_Spell.GetBaseSpell(si.spellID)))
+                local finalMatch
+                if string.lower(si.name) == string.lower(text) then
+                    finalMatch = si
+                elseif string.lower(potentialMatchBase.name) == string.lower(text) then
+                    finalMatch = potentialMatchBase
+                elseif string.lower(potentialMatchOverride.name) == string.lower(text) then
+                    finalMatch = potentialMatchOverride
                 end
+                
+
+                local iconID = finalMatch.originalIconID or finalMatch.iconID
+                found = {
+                    spellID = finalMatch.spellID,
+                    rootSpellID = C_Spell.GetOverrideSpell(finalMatch.spellID),
+                    name = finalMatch.name,
+                    iconID = iconID
+                }
             end
         end
 

@@ -378,6 +378,7 @@ pcall(function()
                 
             end
             if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+
             end
         end)
         texScanFrame:SetScript("OnKeyUp", function(self, key) end)

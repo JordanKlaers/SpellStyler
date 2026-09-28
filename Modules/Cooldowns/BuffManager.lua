@@ -398,7 +398,6 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 			spellName = buffConfig.name,
 			baseSpellID = baseSpellID,
 			trackerType = 'buffs',
-			activeSpellID = buffConfig.activeSpellID or baseSpellID,
 			mockCooldownActive = false
 		}
 		

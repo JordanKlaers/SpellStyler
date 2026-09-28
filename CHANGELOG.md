@@ -320,3 +320,11 @@ Version 2.2.0
 Version 2.2.1
 	- Updates the database migration for the updates to auras to properly set the defaults for the new state management
 	- Update icon dragging to PORPERLY position even when scaled
+
+Version 2.3.0
+	- Add spells detect when the spell is already tracked by checking its baseSpellID. All spells that share the same baseSpellID are grouped and controlled by one settings object.
+	- The settings menu displays the current spells icon and name, which can change when the spell is overwritten or  becomes a different spell. This is just a visual update
+	- The custom icon texture settings have been updated. Instead of base and override, it now provides a dropdown list of the known spell ID's that share the same baseSpellID. Choosing a spell will allow you to set a specific icon texture and color when the active spells matches.
+	- The settigns menu has been updated so that when settings custom textures, a second preview page exists the contains any custom texture a user has added. The values are populated by scaning the entries for the current class and adding to a persistent database. To add more from other classes, simple log into those classes and the preexisting custom texture will be populated.
+	- Items are now enabled for conditional properties. The settings allowed for applying conditions but they previsouly did not take affect
+	- Warlock Healthstones not track correctly. The item can only be used once in combat. The cooldown beging after leaving combat. I reccomend pairing the healstones with a conditional that sets the icon desaturated when unable to use. Create a conditional, choose type "IsSpellUsable" and choose "unable". In the settings for the item, add a conditional, choose the condition you created. Add a property and choose "Set desaturdated" and click the checkbox.

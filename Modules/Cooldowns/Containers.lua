@@ -721,8 +721,8 @@ function Containers:UpdateContainerFrameVisibility(frame, containerConfig)
     if not frame._inContainer then return end
     
     local trackerType = frame.meta.trackerType
-    local baseSpellID = frame.meta.baseSpellID
-    local activeSpellID = frame.meta.activeSpellID
+    local rootSpellID = frame.meta.rootSpellID
+    local baseSpellID = C_Spell.GetBaseSpell(rootSpellID, GetSpecialization())
     local itemID = frame.meta.itemID
     
     local alphaValue = 0
@@ -747,7 +747,7 @@ function Containers:UpdateContainerFrameVisibility(frame, containerConfig)
         end
     else
         -- Spells: check for charges first
-        local chargeInfo = C_Spell.GetSpellCharges(activeSpellID)
+        local chargeInfo = C_Spell.GetSpellCharges(baseSpellID)
         
         if chargeInfo and chargeInfo.maxCharges > 1 then
             -- Spell with charges: use current charges
@@ -755,7 +755,7 @@ function Containers:UpdateContainerFrameVisibility(frame, containerConfig)
             barValue = chargeInfo.currentCharges
         else
             -- Spell without charges: use cooldown curve
-            local durationObj = C_Spell.GetSpellCooldownDuration(activeSpellID)
+            local durationObj = C_Spell.GetSpellCooldownDuration(baseSpellID)
             if durationObj then
                 -- Curve that returns 1 when available, 0 when on cooldown
                 local curve = SpellStyler.Util:IsValidCooldownCurve(false, 1)
