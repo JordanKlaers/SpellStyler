@@ -2742,6 +2742,7 @@ FrameTrackerManager.ApplyVisibility = {
         
         -- Apply RGB color to icon texture
         
+        context.customFrame.icon:SetAlpha(alpha)
         -- context.customFrame.icon:SetVertexColor(
         --     color.r or 1,
         --     color.g or 1,
