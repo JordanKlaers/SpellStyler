@@ -331,3 +331,6 @@ Version 2.3.0
 
 Version 2.3.1
 	- Ensures the database for textures is persistent across characters
+
+Version 2.3.2
+	- readdes icon alpha setting that wasnt being applied
