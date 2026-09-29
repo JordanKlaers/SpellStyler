@@ -87,6 +87,12 @@ local overrideToBase = {}
 local function GetCurrentBaseSpellID(rootSpellID)
     return C_Spell.GetBaseSpell(rootSpellID, GetSpecialization())
 end
+local function GetCurrentSpellID(frame, trackerConfig)
+    local baseSpellID = trackerConfig and trackerConfig.baseSpellID
+        or frame.meta.baseSpellID
+        or frame.meta.rootSpellID
+    return baseSpellID and C_Spell.GetOverrideSpell(baseSpellID)
+end
 
 
 function FrameTrackerManager:SetMetaOnBaseAndVariant(frame, key, value)
@@ -2546,7 +2552,6 @@ end
 --- @return number fullBar Alpha = 1 during GCD/available, 0 during real cooldown
 function FrameTrackerManager:GetFrameStateAlphas(frame)
     local trackerType = frame.meta.trackerType
-    local overrideSpellID = C_Spell.GetOverrideSpell(frame.meta.rootSpellID)
     local config = State:GetSpecificTrackerValue(frame.meta.trackerKey, frame.meta.trackerType)
     
     -- Handle mock cooldown override
@@ -2582,6 +2587,10 @@ function FrameTrackerManager:GetFrameStateAlphas(frame)
     end
 
     -- Spells: use secret-safe charge count or duration curves
+    local overrideSpellID = GetCurrentSpellID(frame, config)
+    if not overrideSpellID then
+        return 1, 0, 0, 0
+    end
     local cooldownInfo = C_Spell.GetSpellCooldown(overrideSpellID)
     local chargeInfo = C_Spell.GetSpellCharges(overrideSpellID)
     
@@ -2935,7 +2944,12 @@ FrameTrackerManager.ApplyVisibility = {
                 local durationEqualToGCD = SpellStyler.Util:IsValidCooldownCurve(true)
                 local durationObject
                 local maxSpellCharges = 1
-                local spellChargeInfo = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(context.customFrame.meta.rootSpellID))
+                local currentSpell = GetCurrentSpellID(context.customFrame, config)
+                if not currentSpell then
+                    context.customFrame.cooldown:SetAlpha(0)
+                    return
+                end
+                local spellChargeInfo = C_Spell.GetSpellCharges(currentSpell)
                 if spellChargeInfo and spellChargeInfo.maxCharges then
                     maxSpellCharges = spellChargeInfo.maxCharges
                 end
@@ -2944,9 +2958,9 @@ FrameTrackerManager.ApplyVisibility = {
                     durationObject = context.customFrame.meta.totemDuration
                 else
                     if maxSpellCharges > 1 then
-                        durationObject = C_Spell.GetSpellChargeDuration(C_Spell.GetOverrideSpell(context.customFrame.meta.rootSpellID), true)
+                        durationObject = C_Spell.GetSpellChargeDuration(currentSpell, true)
                     else
-                        durationObject = C_Spell.GetSpellCooldownDuration(C_Spell.GetOverrideSpell(context.customFrame.meta.rootSpellID), true)
+                        durationObject = C_Spell.GetSpellCooldownDuration(currentSpell, true)
                     end
                 end
                 
@@ -3048,7 +3062,10 @@ function FrameTrackerManager:ApplyCooldownDuration(data)
         else
             -- try to get spell charge duration first
             local maxSpellCharges = 1
-            local currentSpell = C_Spell.GetOverrideSpell(data.customFrame.meta.rootSpellID)
+            local currentSpell = GetCurrentSpellID(data.customFrame, data.config)
+            if not currentSpell then
+                return
+            end
             local spellChargeInfo = C_Spell.GetSpellCharges(currentSpell)
             if spellChargeInfo and spellChargeInfo.maxCharges then
                 maxSpellCharges = spellChargeInfo.maxCharges
@@ -3483,22 +3500,29 @@ end
 
 function FrameTrackerManager:UpdateActiveSpells()
     for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
-        local isActive
-        if customFrame.meta.isSpellWithCharges then
-            isActive = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(customFrame.meta.rootSpellID)).isActive
-        else
-            isActive = C_Spell.GetSpellCooldown(C_Spell.GetOverrideSpell(customFrame.meta.rootSpellID)).isActive
+        local trackerConfig = State:GetSpecificTrackerValue(trackerKey, "spells")
+        local rootSpellID = trackerConfig and trackerConfig.rootSpellID
+            or customFrame.meta.rootSpellID
+            or trackerKey
+        if customFrame.meta.rootSpellID ~= rootSpellID then
+            self:SetMetaOnBaseAndVariant(customFrame, "rootSpellID", rootSpellID)
         end
-        if isActive then
-            FrameTrackerManager:DriveFrameUpdate(
-                customFrame,
-                {
-                    resolveDuration = true,
-                    syncChargeText = true
-                },
-                nil,
-                "spellUpdateCooldown_updateOtherSpellsOnCooldown"
-            )
+
+        local currentSpellID = C_Spell.GetOverrideSpell(rootSpellID)
+        if currentSpellID then
+            local chargeInfo = C_Spell.GetSpellCharges(currentSpellID)
+            local cooldownInfo = chargeInfo or C_Spell.GetSpellCooldown(currentSpellID)
+            if cooldownInfo and cooldownInfo.isActive then
+                FrameTrackerManager:DriveFrameUpdate(
+                    customFrame,
+                    {
+                        resolveDuration = true,
+                        syncChargeText = true
+                    },
+                    nil,
+                    "spellUpdateCooldown_updateOtherSpellsOnCooldown"
+                )
+            end
         end
     end
 end
