@@ -328,3 +328,6 @@ Version 2.3.0
 	- The settigns menu has been updated so that when settings custom textures, a second preview page exists the contains any custom texture a user has added. The values are populated by scaning the entries for the current class and adding to a persistent database. To add more from other classes, simple log into those classes and the preexisting custom texture will be populated.
 	- Items are now enabled for conditional properties. The settings allowed for applying conditions but they previsouly did not take affect
 	- Warlock Healthstones not track correctly. The item can only be used once in combat. The cooldown beging after leaving combat. I reccomend pairing the healstones with a conditional that sets the icon desaturated when unable to use. Create a conditional, choose type "IsSpellUsable" and choose "unable". In the settings for the item, add a conditional, choose the condition you created. Add a property and choose "Set desaturdated" and click the checkbox.
+
+Version 2.3.1
+	- Ensures the database for textures is persistent across characters
