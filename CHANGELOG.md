@@ -334,3 +334,6 @@ Version 2.3.1
 
 Version 2.3.2
 	- readdes icon alpha setting that wasnt being applied
+
+Version 2.3.3
+	- Updates to always pull active spell from the base. This ensures changing talents will keep the spell functional (for spells that can transform into other spells)
