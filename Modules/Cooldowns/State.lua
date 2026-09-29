@@ -68,16 +68,31 @@ end
 
 local AddNewTrackerValueConfig
 
+local function NormalizeCustomTexturePath(texturePath)
+    if type(texturePath) ~= "string" then
+        return texturePath
+    end
+    return string.gsub(texturePath, "/", "\\")
+end
+
+local function GetCustomTextureKey(texturePath)
+    if type(texturePath) == "string" then
+        return string.lower(NormalizeCustomTexturePath(texturePath))
+    end
+    return type(texturePath) .. ":" .. tostring(texturePath)
+end
+
 function State:AddCustomTexture(texturePath)
     if (type(texturePath) ~= "string" and type(texturePath) ~= "number")
         or texturePath == ""
     then
         return
     end
+    texturePath = NormalizeCustomTexturePath(texturePath)
     SpellStyler_DB = SpellStyler_DB or {}
     SpellStyler_DB.customTextures = SpellStyler_DB.customTextures or {}
     for _, existingPath in ipairs(SpellStyler_DB.customTextures) do
-        if existingPath == texturePath then return end
+        if GetCustomTextureKey(existingPath) == GetCustomTextureKey(texturePath) then return end
     end
     table.insert(SpellStyler_DB.customTextures, texturePath)
 end
@@ -85,6 +100,22 @@ end
 function State:GetCustomTextures()
     SpellStyler_DB = SpellStyler_DB or {}
     SpellStyler_DB.customTextures = SpellStyler_DB.customTextures or {}
+
+    local uniqueTextures = {}
+    local writeIndex = 1
+    for _, texturePath in ipairs(SpellStyler_DB.customTextures) do
+        texturePath = NormalizeCustomTexturePath(texturePath)
+        local textureKey = GetCustomTextureKey(texturePath)
+        if uniqueTextures[textureKey] == nil then
+            uniqueTextures[textureKey] = true
+            SpellStyler_DB.customTextures[writeIndex] = texturePath
+            writeIndex = writeIndex + 1
+        end
+    end
+    for index = writeIndex, #SpellStyler_DB.customTextures do
+        SpellStyler_DB.customTextures[index] = nil
+    end
+
     return SpellStyler_DB.customTextures
 end
 

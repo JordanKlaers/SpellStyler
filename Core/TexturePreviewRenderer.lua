@@ -97,6 +97,50 @@ local PREVIEW_TEXTURES = {
 local ICON_SIZE   = 64
 local ICONS_PER_ROW = 4
 local ICON_PAD    = 10
+local textureValidationFrame
+
+local function NormalizeCustomTexturePath(texturePath)
+    if type(texturePath) ~= "string" then
+        return texturePath
+    end
+    return string.gsub(texturePath, "/", "\\")
+end
+
+local function GetCustomTextureKey(texturePath)
+    if type(texturePath) == "string" then
+        return string.lower(NormalizeCustomTexturePath(texturePath))
+    end
+    return type(texturePath) .. ":" .. tostring(texturePath)
+end
+
+local function IsPresetTexture(texturePath)
+    local textureKey = GetCustomTextureKey(texturePath)
+    for _, presetTexture in ipairs(PREVIEW_TEXTURES) do
+        if textureKey == GetCustomTextureKey(presetTexture.id)
+            or textureKey == GetCustomTextureKey(tostring(presetTexture.id))
+        then
+            return true
+        end
+    end
+    return false
+end
+
+local function IsTextureAvailable(texturePath)
+    if type(texturePath) ~= "string" and type(texturePath) ~= "number" then
+        return false
+    end
+
+    if not textureValidationFrame then
+        textureValidationFrame = CreateFrame("Frame")
+        textureValidationFrame:Hide()
+        textureValidationFrame.texture = textureValidationFrame:CreateTexture()
+    end
+
+    local texture = textureValidationFrame.texture
+    texture:SetTexture(nil)
+    texture:SetTexture(texturePath)
+    return texture:GetTextureFilePath() ~= nil
+end
 
 --- Resolves the frame that the icon-settings scroll panel currently occupies,
 --- so the texture picker can be sized/positioned to match it.
@@ -172,8 +216,17 @@ function TexturePreviewRenderer:BuildGrid(scrollChild, onSelect, customTextures)
 
     local entries = {}
     if customTextures then
+        local seenTextures = {}
         for _, texturePath in ipairs(customTextures) do
-            table.insert(entries, { id = texturePath, name = tostring(texturePath) })
+            local normalizedPath = NormalizeCustomTexturePath(texturePath)
+            local textureKey = GetCustomTextureKey(normalizedPath)
+            if IsTextureAvailable(normalizedPath)
+                and not IsPresetTexture(normalizedPath)
+                and seenTextures[textureKey] == nil
+            then
+                seenTextures[textureKey] = true
+                table.insert(entries, { id = normalizedPath, name = tostring(normalizedPath) })
+            end
         end
     else
         for _, entry in ipairs(PREVIEW_TEXTURES) do
