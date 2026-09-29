@@ -443,7 +443,6 @@ function BuffManager:UpdateAura(aura, trackerValue)
 	else
 		aura.auraContainer:SetEnabled(false)
 	end
-
 	local inputs = {
 		frameStrata = trackerValue.iconSettings.frameStrataLevel or "MEDIUM",
 		frameStrataLevel = trackerValue.iconSettings.frameStrataValue or 100,

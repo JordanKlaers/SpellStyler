@@ -3004,13 +3004,8 @@ function FrameTrackerManager:GetItemDurationObject(itemID)
     
     local durationObject = nil
     local startTimeSeconds, durationSeconds, enableCooldownTimer = C_Item.GetItemCooldown(itemID)
-    local spellCooldown = C_Spell.GetSpellCooldownDuration(6262)
     if startTimeSeconds and durationSeconds and durationSeconds > 0.01 then
         durationObject = C_DurationUtil.CreateDuration()
-        DevTool:AddData({
-            spellCooldown = spellCooldown and spellCooldown.GetTotalDuration and spellCooldown:GetTotalDuration() or "unable to get duration",
-            durationSeconds = durationSeconds
-        }, "got duration")
         durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
     end
     
@@ -3555,9 +3550,6 @@ local function updateItemCounts()
         for trackerKey, customFrame in pairs(itemFrames) do
             local config = State:GetSpecificTrackerValue(trackerKey, "items")
             if config and customFrame then
-                DevTool:AddData({
-                    count = C_Item.GetItemCount(customFrame.meta.itemID, true, true)
-                }, "bag update delyaed")
                 FrameTrackerManager:renderUpdateChargesText({
                     customFrame = customFrame,
                     config = config,

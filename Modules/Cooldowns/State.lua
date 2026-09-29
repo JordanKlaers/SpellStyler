@@ -684,7 +684,7 @@ function State:MigrateDatabase()
         -- Safe on all specs: only reads existing values and fills missing keys.
         for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
             for trackerKey, trackerValue in pairs(specDB[trackerType]) do
-                if trackerType ~= "buffs" then
+                -- if trackerType ~= "buffs" then
                     if tonumber(trackerKey) ~= nil and tonumber(trackerKey) then
                         local currentRoot = C_Spell.GetOverrideSpell(C_Spell.GetBaseSpell(trackerKey))
                         trackerValue.rootSpellID = currentRoot
@@ -694,9 +694,7 @@ function State:MigrateDatabase()
                     end
                     trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID)
                     trackerValue.overrideSpellID = C_Spell.GetOverrideSpell(trackerValue.baseSpellID)
-
-
-                end
+                -- end
                 -- Legacy: barFillDirection -> fillOrEmpty
                 if trackerValue.statusBar
                     and trackerValue.statusBar.barFillDirection ~= nil
@@ -787,19 +785,6 @@ function State:MigrateDatabase()
 
                 if trackerType == "spells" then
                     State:EnsureSpellVariation(trackerValue, trackerValue.rootSpellID)
-                end
-
-                if trackerType == "spells" and trackerValue.rootSpellID == 432459 then
-                    DevTool:AddData({
-                        rootSpellID = trackerValue.rootSpellID,
-                        baseSpellID = trackerValue.baseSpellID,
-                        overrideSpellID = trackerValue.overrideSpellID,
-                        rootSpellID_name = C_Spell.GetSpellInfo(trackerValue.rootSpellID).name,
-                        baseSpellID_name = C_Spell.GetSpellInfo(trackerValue.baseSpellID).name,
-                        overrideSpellID_name = C_Spell.GetSpellInfo(trackerValue.overrideSpellID).name,
-                        spells = specDB[trackerType],
-                        currentDBSpell = specDB[trackerType][trackerKey]
-                    }, "NEW VALUES " .. trackerKey .. " root: " .. trackerValue.rootSpellID)
                 end
             end
         end
