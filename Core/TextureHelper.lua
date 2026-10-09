@@ -366,9 +366,8 @@ pcall(function()
     local texScanFrame = CreateFrame("Frame")
     texScanFrame:SetPropagateKeyboardInput(true)
     texScanFrame:RegisterEvent("PLAYER_LOGIN")
-    -- Persistent test frame (created once, reused on each Shift+Ctrl+X press)
-    local donkFrame
-    texScanFrame:SetScript("OnEvent", function()
+
+    texScanFrame:SetScript("OnEvent", function(self, event, ...)
         texScanFrame:SetScript("OnKeyDown", function(self, key)
             -- Shift+Ctrl+X: Test AuraContainer with spell ID filtering
             if key == "1" and IsShiftKeyDown() and IsControlKeyDown() then
@@ -378,7 +377,16 @@ pcall(function()
                 
             end
             if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-
+                local modifiedWings = 1279187
+                local corruptedCS = 35395
+                local isUsable, insufficientPower = C_Spell.IsSpellUsable(335467)
+                DevTool:AddData({
+                    aura = C_UnitAuras.GetAuraDataBySpellName("player", "Infusion of Light"),
+                    infusion = C_Spell.GetSpellInfo("Infusion of Light"),
+                    isUsable = isUsable,
+                    insufficientPower = insufficientPower,
+                    _framePropertyOverrides = SpellStyler.ConditionalEngine._framePropertyOverrides
+                }, "aaa")
             end
         end)
         texScanFrame:SetScript("OnKeyUp", function(self, key) end)

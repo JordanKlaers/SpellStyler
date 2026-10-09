@@ -34,6 +34,7 @@ function AddSpells:GetCurrentSpecSpells()
 					local donk = C_SpellBook.GetSpellBookItemLevelLearned(j, Enum.SpellBookSpellBank.Player)
                     if info
                         and not info.isOffSpec
+                        and not info.isPassive
                         and info.itemType == Enum.SpellBookItemType.Spell then
                         local sid = info.spellID or info.actionID
                         if sid and not seen[sid] then
@@ -177,6 +178,355 @@ function AddSpells:CreatePlusButton(parent)
     return btn
 end
 
+local DISABLED_ICON_PATH = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\HiddenIcon"
+
+function AddSpells:RenderDisabledValuesView(parent)
+    if not parent then return end
+    SpellStyler.IconSettingsRenderer:HideSelectedIconHeader()
+
+    local parentScrollFrame = parent:GetParent()
+    if parentScrollFrame and parentScrollFrame.GetHeight then
+        parent:SetHeight(parentScrollFrame:GetHeight())
+        parentScrollFrame:SetVerticalScroll(0)
+    end
+
+    local childrenToRemove = {}
+    for _, child in ipairs({ parent:GetChildren() }) do
+        table.insert(childrenToRemove, child)
+    end
+    for _, child in ipairs(childrenToRemove) do
+        child:Hide()
+        child:SetParent(nil)
+    end
+
+    local regionsToRemove = {}
+    for _, region in ipairs({ parent:GetRegions() }) do
+        if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
+            table.insert(regionsToRemove, region)
+        end
+    end
+    for _, region in ipairs(regionsToRemove) do
+        region:Hide()
+        if region:IsObjectType("FontString") then
+            region:SetText("")
+        end
+    end
+
+    parent.currentControlsContainer = nil
+
+    local container = CreateFrame("Frame", nil, parent)
+    container:SetAllPoints()
+    container:EnableMouse(true)
+    parent.currentControlsContainer = container
+
+    local selectedEntry
+    local selectedButton
+
+    local title = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", container, "TOPLEFT", 12, -4)
+    title:SetText("|cFFFFD700Disabled Values|r")
+
+    local note = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    note:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
+    note:SetText("Select a preexisting value to reenable")
+    note:SetTextColor(0.8, 0.8, 0.8)
+    local subNote = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    subNote:SetPoint("TOPLEFT", note, "BOTTOMLEFT", 0, -10)
+    subNote:SetPoint("RIGHT", container, "RIGHT", -10, 0)
+    subNote:SetJustifyH("LEFT")
+    subNote:SetText("IDs may overlap between entries. Ensure you have the correct entry enabled before considering deletion.")
+    subNote:SetTextColor(0.8, 0.8, 0.8)
+
+    local reenableButton = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+    reenableButton:SetSize(100, 24)
+    reenableButton:SetPoint("TOPLEFT", subNote, "BOTTOMLEFT", 0, -12)
+    reenableButton:SetText("reenable")
+    reenableButton:Disable()
+
+    local deleteButton = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
+    deleteButton:SetSize(150, 24)
+    deleteButton:SetPoint("LEFT", reenableButton, "RIGHT", 8, 0)
+    deleteButton:SetText("permenantly delete")
+    deleteButton:Disable()
+
+    local confirmPopup = CreateFrame("Frame", nil, container, "BackdropTemplate")
+    confirmPopup:SetSize(230, 82)
+    confirmPopup:SetPoint("TOPLEFT", reenableButton, "BOTTOMLEFT", 0, -6)
+    confirmPopup:SetFrameLevel(container:GetFrameLevel() + 10)
+    confirmPopup:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        edgeSize = 12,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    confirmPopup:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+    confirmPopup:SetBackdropBorderColor(0.8, 0.2, 0.2, 1)
+    confirmPopup:Hide()
+
+    local confirmText = confirmPopup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    confirmText:SetPoint("TOP", confirmPopup, "TOP", 0, -10)
+    confirmText:SetText("Permanently delete this value?")
+    confirmText:SetTextColor(1, 0.4, 0.4)
+
+    local confirmButton = CreateFrame("Button", nil, confirmPopup, "UIPanelButtonTemplate")
+    confirmButton:SetSize(80, 22)
+    confirmButton:SetPoint("BOTTOMLEFT", confirmPopup, "BOTTOMLEFT", 14, 10)
+    confirmButton:SetText("confirm")
+
+    local cancelButton = CreateFrame("Button", nil, confirmPopup, "UIPanelButtonTemplate")
+    cancelButton:SetSize(80, 22)
+    cancelButton:SetPoint("BOTTOMRIGHT", confirmPopup, "BOTTOMRIGHT", -14, 10)
+    cancelButton:SetText("cancel")
+    cancelButton:SetScript("OnClick", function()
+        confirmPopup:Hide()
+    end)
+
+    local gridSF = CreateFrame("ScrollFrame", nil, container, "UIPanelScrollFrameTemplate")
+    gridSF:SetPoint("TOPLEFT", reenableButton, "BOTTOMLEFT", 0, -18)
+    gridSF:SetPoint("TOPRIGHT", container, "TOPRIGHT", -12, 0)
+    gridSF:SetPoint("BOTTOM", container, "BOTTOM", 0, 10)
+
+    local gridChild = CreateFrame("Frame", nil, gridSF)
+    gridSF:SetScrollChild(gridChild)
+    gridSF:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll()
+        local maximum = self:GetVerticalScrollRange()
+        self:SetVerticalScroll(math.max(0, math.min(maximum, current - delta * self:GetHeight() * 0.25)))
+    end)
+
+    local disabledValues = SpellStyler.State:GetDisabledTrackerValuesForSettings()
+    local iconSize, iconPadding, iconsPerRow = 40, 5, 6
+    local categoryGroups = {
+        { trackerType = "buffs", label = "Auras", entries = {} },
+        { trackerType = "items", label = "Items", entries = {} },
+        { trackerType = "spells", label = "Spells", entries = {} },
+    }
+    local groupsByTrackerType = {}
+    for _, group in ipairs(categoryGroups) do
+        groupsByTrackerType[group.trackerType] = group
+    end
+    for _, entry in ipairs(disabledValues) do
+        local group = groupsByTrackerType[entry.trackerType]
+        if group then
+            table.insert(group.entries, entry)
+        end
+    end
+
+    local function getSpellInfo(spellID)
+        return spellID and C_Spell.GetSpellInfo(tonumber(spellID) or spellID)
+    end
+
+    local function getEntryIcon(entry)
+        local config = entry.config
+        local baseSpellID = entry.baseSpellID
+        local variation = SpellStyler.State:GetAssociatedSpellID(config, baseSpellID)
+        if variation and variation.iconTexturePath and variation.iconTexturePath ~= "" then
+            return variation.iconTexturePath
+        end
+        local spellInfo = getSpellInfo(baseSpellID)
+        return (spellInfo and spellInfo.iconID) or config.defaultIconTexturePath or DISABLED_ICON_PATH
+    end
+
+    local function sameSpellID(left, right)
+        return left ~= nil and right ~= nil and tostring(left) == tostring(right)
+    end
+
+    local function getTrackerStatus(trackerType, trackerConfig)
+        if trackerType == "spells" then
+            return SpellStyler.State:IsSpellTrackerEnabled(trackerConfig) and "enabled" or "disabled"
+        end
+        return trackerConfig.isEnabled == false and "disabled" or "enabled"
+    end
+
+    local function findStateMatches(entry, baseSpellID, overrideSpellID)
+        local targetIDs = {
+            [tostring(baseSpellID)] = baseSpellID,
+        }
+        if overrideSpellID then
+            targetIDs[tostring(overrideSpellID)] = overrideSpellID
+        end
+
+        local matches = {}
+        local seenMatchKeys = {}
+        local trackerTypes = { "buffs", "items", "spells" }
+        for _, trackerType in ipairs(trackerTypes) do
+            for trackerKey, trackerConfig in pairs(SpellStyler.State:GetAllTrackerValues(trackerType) or {}) do
+                if not (trackerType == entry.trackerType and sameSpellID(trackerKey, entry.trackerKey)) then
+                    local matchedKind
+                    local matchedValue
+                    local otherBaseSpellID = trackerConfig.baseSpellID
+
+                    for targetID in pairs(targetIDs) do
+                        if sameSpellID(targetID, otherBaseSpellID) then
+                            matchedKind = "base"
+                            matchedValue = otherBaseSpellID
+                            break
+                        end
+                    end
+
+                    if not matchedKind then
+                        for _, additionalSpellID in ipairs(trackerConfig.additionalBuffIDs or {}) do
+                            if targetIDs[tostring(additionalSpellID)] then
+                                matchedKind = "additional aura"
+                                matchedValue = additionalSpellID
+                                break
+                            end
+                        end
+                    end
+
+                    if not matchedKind then
+                        local associatedSpellIDs = {
+                            trackerConfig.overrideSpellID,
+                        }
+                        for spellID in pairs(SpellStyler.State:GetAssociatedSpellIDs(trackerConfig)) do
+                            table.insert(associatedSpellIDs, spellID)
+                        end
+                        for _, associatedSpellID in ipairs(associatedSpellIDs) do
+                            if targetIDs[tostring(associatedSpellID)] then
+                                matchedKind = "associated"
+                                matchedValue = associatedSpellID
+                                break
+                            end
+                        end
+                    end
+
+                    local matchKey = tostring(trackerKey)
+                    if matchedKind and not seenMatchKeys[matchKey] then
+                        seenMatchKeys[matchKey] = true
+                        table.insert(matches, {
+                            kind = matchedKind,
+                            value = matchedValue,
+                            trackerKey = trackerKey,
+                            trackerType = trackerType,
+                            status = getTrackerStatus(trackerType, trackerConfig),
+                        })
+                    end
+                end
+            end
+        end
+        return matches
+    end
+
+    local function selectEntry(entry, button)
+        if selectedButton then
+            selectedButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        end
+        selectedEntry = entry
+        selectedButton = button
+        selectedButton:SetBackdropBorderColor(1, 0.82, 0, 1)
+        reenableButton:Enable()
+        deleteButton:Enable()
+    end
+
+    local function refreshSettingsView()
+        if SpellStyler.IconSettingsRenderer and SpellStyler.settingsContentFrame then
+            SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+        end
+    end
+
+    reenableButton:SetScript("OnClick", function()
+        if not selectedEntry then return end
+        SpellStyler.State:ReenableTrackerValue(selectedEntry.trackerKey, selectedEntry.trackerType)
+        refreshSettingsView()
+    end)
+
+    deleteButton:SetScript("OnClick", function()
+        if selectedEntry then
+            confirmPopup:Show()
+        end
+    end)
+
+    confirmButton:SetScript("OnClick", function()
+        if not selectedEntry then return end
+        confirmPopup:Hide()
+        if SpellStyler.State:IsTrackerValueDisabled(
+            selectedEntry.trackerKey,
+            selectedEntry.trackerType
+        ) then
+            SpellStyler.State:RemoveTrackerValue(selectedEntry.trackerKey, selectedEntry.trackerType)
+        end
+        refreshSettingsView()
+    end)
+
+    local currentYOffset = 0
+    local categoryLabelHeight = 18
+    for _, group in ipairs(categoryGroups) do
+        if #group.entries > 0 then
+            local categoryLabel = gridChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            categoryLabel:SetPoint("TOPLEFT", gridChild, "TOPLEFT", 0, -currentYOffset)
+            categoryLabel:SetText(group.label)
+            categoryLabel:SetTextColor(1, 0.82, 0, 1)
+            currentYOffset = currentYOffset + categoryLabelHeight
+
+            for index, entry in ipairs(group.entries) do
+                local button = CreateFrame("Button", nil, gridChild, "BackdropTemplate")
+                button:SetSize(iconSize, iconSize)
+                button:SetPoint(
+                    "TOPLEFT",
+                    gridChild,
+                    "TOPLEFT",
+                    ((index - 1) % iconsPerRow) * (iconSize + iconPadding),
+                    -currentYOffset - math.floor((index - 1) / iconsPerRow) * (iconSize + iconPadding)
+                )
+                button:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+                button:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+
+                local texture = button:CreateTexture(nil, "ARTWORK")
+                texture:SetAllPoints(button)
+                texture:SetTexture(getEntryIcon(entry))
+
+                button:SetScript("OnClick", function()
+                    selectEntry(entry, button)
+                end)
+                button:SetScript("OnEnter", function(self)
+                    local baseSpellID = entry.baseSpellID
+                    local baseInfo = getSpellInfo(baseSpellID)
+                    local overrideID = baseSpellID and C_Spell.GetOverrideSpell(baseSpellID)
+                    local overrideInfo = getSpellInfo(overrideID)
+                    local stateMatches = findStateMatches(entry, baseSpellID, overrideID)
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    GameTooltip:SetText(overrideInfo and overrideInfo.name or "Unknown", 1, 1, 1)
+                    GameTooltip:AddLine("Base spell: " .. (baseInfo and baseInfo.name or "Unknown") .. " - " .. tostring(baseSpellID), 0.8, 0.8, 0.8, true)
+                    GameTooltip:AddLine("State Key: " .. entry.trackerKey, 0.8, 0.8, 0.8, true)
+                    for _, match in ipairs(stateMatches) do
+                        local matchText
+                        if match.kind == "base" then
+                            matchText = "This entry's base spell ID currently exists in another entry as that entry's base spell ID"
+                        elseif match.kind == "associated" then
+                            matchText = "An associated spell ID " .. tostring(match.value) .. ", from this entry currently exists in another entry as one of its associated spells"
+                        else
+                            matchText = "An additional aura spell ID from this entry currently exists in another entry as one of its additional aura spell IDs"
+                        end
+                        GameTooltip:AddLine(matchText, 1, 0.7, 0.3, true)
+                        GameTooltip:AddLine(
+                            "The entry it matched with is stored with the key " .. tostring(match.trackerKey)
+                                .. " and is currently " .. match.status,
+                            0.8, 0.8, 0.8, true
+                        )
+                    end
+                    GameTooltip:Show()
+                end)
+                button:SetScript("OnLeave", function()
+                    GameTooltip:Hide()
+                end)
+            end
+
+            currentYOffset = currentYOffset
+                + math.ceil(#group.entries / iconsPerRow) * (iconSize + iconPadding)
+                + iconPadding
+        end
+    end
+
+    gridChild:SetSize(math.max(gridSF:GetWidth(), 1), math.max(currentYOffset, 1))
+
+    if #disabledValues == 0 then
+        local emptyLabel = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        emptyLabel:SetPoint("TOPLEFT", gridSF, "TOPLEFT", 0, -8)
+        emptyLabel:SetText("No disabled values")
+        emptyLabel:SetTextColor(0.5, 0.5, 0.5)
+    end
+end
+
 -- ============================================================================
 -- Add Spells view (right panel)
 -- ============================================================================
@@ -189,6 +539,13 @@ local ICONS_PER_ROW = 6
 --- Follows the same clear-and-rebuild pattern as RenderConfigControlsForSpecificIcon.
 function AddSpells:RenderAddSpellsView(parent)
     if not parent then return end
+    SpellStyler.IconSettingsRenderer:HideSelectedIconHeader()
+
+    local parentScrollFrame = parent:GetParent()
+    if parentScrollFrame and parentScrollFrame.GetHeight then
+        parent:SetHeight(parentScrollFrame:GetHeight())
+        parentScrollFrame:SetVerticalScroll(0)
+    end
 
     -- Clear all old controls from scroll child
     -- Collect all children and regions first to avoid iteration issues during removal
@@ -238,6 +595,8 @@ function AddSpells:RenderAddSpellsView(parent)
     local previewTex = nil
     local addBtn     = nil  -- forward-declared: single shared add button
     local addBtnTooltip = nil
+    local activeAddType = nil
+    local addDisabledReason = nil
 
     -- These are also needed by the slot-picker before the shared controls are built.
     local slotPreviewBtn = nil
@@ -250,21 +609,186 @@ function AddSpells:RenderAddSpellsView(parent)
     local FilterAndLayoutSafe
     local UpdatePreview
 
+    local function AddSpellIdentityIDs(ids, spellID)
+        if not spellID then return end
+        ids[tostring(spellID)] = spellID
+
+        local baseSpellID = C_Spell.GetBaseSpell(spellID, GetSpecialization())
+        if baseSpellID then
+            ids[tostring(baseSpellID)] = baseSpellID
+        end
+
+        local overrideSpellID = C_Spell.GetOverrideSpell(spellID, GetSpecialization())
+        if overrideSpellID then
+            ids[tostring(overrideSpellID)] = overrideSpellID
+        end
+    end
+
+    local function GetTrackerIdentityIDs(trackerConfig, trackerType)
+        local ids = {}
+        AddSpellIdentityIDs(ids, trackerConfig and trackerConfig.baseSpellID)
+        AddSpellIdentityIDs(ids, trackerConfig and trackerConfig.overrideSpellID)
+
+        if trackerType == "spells" then
+            for spellID in pairs(SpellStyler.State:GetAssociatedSpellIDs(trackerConfig)) do
+                AddSpellIdentityIDs(ids, spellID)
+            end
+        end
+
+        return ids
+    end
+
+    local function FindMatchingTracker(spellID, trackerType)
+        if not spellID then return end
+
+        local targetIDs = {}
+        AddSpellIdentityIDs(targetIDs, spellID)
+        for trackerKey, trackerConfig in pairs(
+            SpellStyler.State:GetAllTrackerValues(trackerType) or {}
+        ) do
+            for targetID in pairs(targetIDs) do
+                if GetTrackerIdentityIDs(trackerConfig, trackerType)[targetID] then
+                    return trackerKey, trackerConfig
+                end
+            end
+        end
+    end
+
     local function FindSharedSpellTracker(spellID)
         local baseSpellID = C_Spell.GetBaseSpell(spellID, GetSpecialization())
-        local trackerKey, trackerConfig = SpellStyler.State:FindSpellTrackerByBaseSpellID(baseSpellID)
-        return trackerKey, trackerConfig, baseSpellID
+        local trackerKey, trackerConfig = FindMatchingTracker(spellID, "spells")
+        local matchedByOverride = false
+        local overrideSpellID = C_Spell.GetOverrideSpell(spellID, GetSpecialization())
+        if trackerConfig and overrideSpellID and tostring(overrideSpellID) ~= tostring(spellID) then
+            local trackerIDs = GetTrackerIdentityIDs(trackerConfig, "spells")
+            matchedByOverride = trackerIDs[tostring(overrideSpellID)] ~= nil
+        end
+        return trackerKey, trackerConfig, baseSpellID, matchedByOverride
+    end
+
+    local function GetSpellDuplicateReason(spellID, trackerConfig, matchedByOverride)
+        if matchedByOverride then
+            local overrideSpellID = C_Spell.GetOverrideSpell(spellID, GetSpecialization())
+            local overrideInfo = overrideSpellID and C_Spell.GetSpellInfo(overrideSpellID)
+            local overrideName = (overrideInfo and overrideInfo.name)
+                or tostring(overrideSpellID)
+            return "This spell's override is currently "
+                .. overrideName .. ", which is already tracked."
+        end
+        return "This spell is already tracked."
+    end
+
+    local function FindMatchingItemTracker(itemID)
+        local _, spellID = C_Item.GetItemSpell(itemID)
+        return spellID and FindMatchingTracker(spellID, "items")
+    end
+
+    local function IsTrackerEnabled(trackerConfig, spellID)
+        if not trackerConfig then return false end
+        if spellID then
+            local association = SpellStyler.State:GetAssociatedSpellID(trackerConfig, spellID)
+            return association ~= nil and association.enabled == true
+        end
+        for _, association in pairs(SpellStyler.State:GetAssociatedSpellIDs(trackerConfig)) do
+            if association.enabled == true then
+                return true
+            end
+        end
+
+        return trackerConfig.isEnabled ~= false
+    end
+
+    local function AddSearchableSpell(spellsByID, spellID)
+        if spellID and not spellsByID[spellID] and not C_Spell.IsSpellPassive(spellID)
+        then
+            local spellInfo = C_Spell.GetSpellInfo(spellID)
+            if spellInfo and spellInfo.name then
+                spellsByID[spellID] = spellInfo
+            end
+        end
+    end
+
+    local function GetSearchableSpellInfos()
+        local spellsByID = {}
+        local currentSpecID = SpellStyler.State and SpellStyler.State.GetCurrentSpecID
+            and SpellStyler.State:GetCurrentSpecID()
+
+        -- Only General and the current specialization's spellbook are searchable.
+        local numLines = C_SpellBook.GetNumSpellBookSkillLines()
+        for lineIndex = 1, numLines do
+            local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(lineIndex)
+            local isGeneral = lineInfo and lineInfo.specID == nil
+            local isCurrentSpec = lineInfo and currentSpecID
+                and lineInfo.specID == currentSpecID
+            if lineInfo and not lineInfo.isGuild and (isGeneral or isCurrentSpec) then
+                local firstItem = lineInfo.itemIndexOffset + 1
+                local lastItem = firstItem + lineInfo.numSpellBookItems - 1
+                for itemIndex = firstItem, lastItem do
+                    local spellBookInfo = C_SpellBook.GetSpellBookItemInfo(
+                        itemIndex,
+                        Enum.SpellBookSpellBank.Player
+                    )
+                    if spellBookInfo and spellBookInfo.itemType == Enum.SpellBookItemType.Spell then
+                        local spellID = spellBookInfo.spellID or spellBookInfo.actionID
+                        AddSearchableSpell(spellsByID, spellID)
+                    end
+                end
+            end
+        end
+
+        -- Talent definitions expose spell IDs even when their nodes are unselected.
+        if C_ClassTalents and C_Traits then
+            local configID = C_ClassTalents.GetActiveConfigID()
+            local configInfo = configID and C_Traits.GetConfigInfo(configID)
+            for _, treeID in ipairs((configInfo and configInfo.treeIDs) or {}) do
+                for _, nodeID in ipairs(C_Traits.GetTreeNodes(treeID) or {}) do
+                    local nodeInfo = C_Traits.GetNodeInfo(configID, nodeID)
+                    for _, entryID in ipairs((nodeInfo and nodeInfo.entryIDs) or {}) do
+                        local entryInfo = C_Traits.GetEntryInfo(configID, entryID)
+                        local definitionInfo = entryInfo and entryInfo.definitionID
+                            and C_Traits.GetDefinitionInfo(entryInfo.definitionID)
+                        if definitionInfo then
+                            AddSearchableSpell(spellsByID, definitionInfo.spellID)
+                            AddSearchableSpell(spellsByID, definitionInfo.overriddenSpellID)
+                        end
+                    end
+                end
+            end
+        end
+
+        return spellsByID
+    end
+
+    local function FindExactSpellByText(text)
+        local searchText = string.lower(text)
+        for _, spellInfo in pairs(GetSearchableSpellInfos()) do
+            if string.lower(spellInfo.name) == searchText then
+                return spellInfo
+            end
+        end
     end
 
     local function UpdateAddButtonState(shouldEnable)
         if not addBtn then return end
         if shouldEnable then
+            addDisabledReason = nil
             addBtn:Enable()
             if addBtnTooltip then addBtnTooltip:Hide() end
         else
             addBtn:Disable()
             if addBtnTooltip then addBtnTooltip:Show() end
         end
+    end
+
+    local function UpdateAddButtonLabel(entryType)
+        activeAddType = entryType
+        if not addBtn then return end
+        local labels = {
+            spell = "Spell",
+            item = "Item",
+            aura = "Aura",
+        }
+        addBtn:SetText(entryType and ("Add " .. labels[entryType]) or "Add")
     end
 
     local function Deselect()
@@ -274,7 +798,20 @@ function AddSpells:RenderAddSpellsView(parent)
         selectedEntry = nil
         selectedType  = nil
         selectedBtn   = nil
+        addDisabledReason = nil
+        UpdateAddButtonLabel(nil)
         UpdateAddButtonState(false)
+    end
+
+    local function IsAuraBaseSpellTracked(spellID)
+        local baseSpellID = C_Spell.GetBaseSpell(spellID) or spellID
+        for _, trackerConfig in pairs(SpellStyler.State:GetAllTrackerValues("buffs") or {}) do
+            if trackerConfig.baseSpellID
+                and tostring(trackerConfig.baseSpellID) == tostring(baseSpellID) then
+                return true
+            end
+        end
+        return false
     end
 
     local function SelectEntry(entry, entryType, btn)
@@ -285,19 +822,37 @@ function AddSpells:RenderAddSpellsView(parent)
         selectedEntry = entry
         selectedType  = entryType
         selectedBtn   = btn
+        UpdateAddButtonLabel(entryType)
         if SpellStyler.GlowUtil then
             SpellStyler.GlowUtil:SetupAnts(btn, { r = 1, g = 0.82, b = 0 })
             SpellStyler.GlowUtil:PlayAnts(btn)
         end
         if addBtn then
             local trackerConfig
+            local isAlreadyTracked = false
+            local matchedByOverride = false
             if entryType == "spell" then
-                local _, matchedConfig = FindSharedSpellTracker(entry.spellID)
+                local _, matchedConfig, _, overrideMatch = FindSharedSpellTracker(entry.spellID)
                 trackerConfig = matchedConfig
+                isAlreadyTracked = trackerConfig ~= nil
+                matchedByOverride = overrideMatch
+            elseif entryType == "item" and entry.itemID then
+                local _, matchedConfig = FindMatchingItemTracker(entry.itemID)
+                trackerConfig = matchedConfig
+                isAlreadyTracked = trackerConfig ~= nil
             end
-            if trackerConfig then
+            local isAuraAlreadyTracked = entryType == "aura"
+                and IsAuraBaseSpellTracked(entry.spellID)
+            if isAlreadyTracked
+                or isAuraAlreadyTracked then
+                addDisabledReason = isAuraAlreadyTracked
+                    and "This aura is already tracked."
+                    or entryType == "item"
+                        and "This item is already tracked."
+                        or GetSpellDuplicateReason(entry.spellID, trackerConfig, matchedByOverride)
                 UpdateAddButtonState(false)
             else
+                addDisabledReason = nil
                 UpdateAddButtonState(true)
             end
         end
@@ -330,12 +885,21 @@ function AddSpells:RenderAddSpellsView(parent)
 
         -- Clicking into this field makes it the active source for the shared preview/add controls
         editBox:SetScript("OnEditFocusGained", function(self)
+            UpdateAddButtonLabel(entryType)
+            if entryType == "aura" then
+                FilterAndLayoutSafe("", gridSF:GetWidth())
+            end
             UpdatePreview(entryType, self:GetText())
         end)
 
         editBox:SetScript("OnTextChanged", function(self)
+            UpdateAddButtonLabel(entryType)
             UpdatePreview(entryType, self:GetText())
-            FilterAndLayoutSafe(self:GetText(), gridSF:GetWidth())
+            if entryType == "aura" then
+                FilterAndLayoutSafe("", gridSF:GetWidth())
+            else
+                FilterAndLayoutSafe(self:GetText(), gridSF:GetWidth())
+            end
         end)
 
         -- ESC: clear search text first, then deselect on second press
@@ -523,14 +1087,30 @@ function AddSpells:RenderAddSpellsView(parent)
     end)
 
     addBtn = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
-    addBtn:SetSize(60, 22)
+    addBtn:SetSize(82, 22)
     addBtn:SetPoint("LEFT", previewBtn, "RIGHT", 8, (PREVIEW_SIZE - 22) / 2)
     addBtn:SetText("Add")
     addBtn:Disable()
-    local function ShowDuplicateSpellTooltip(owner)
-        if selectedType == "spell" and selectedEntry then
-            local _, trackerConfig, baseSpellID = FindSharedSpellTracker(selectedEntry.spellID)
-            if trackerConfig then
+    local function ShowAddDisabledTooltip(owner)
+        if addDisabledReason then
+            GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+            GameTooltip:SetText(addDisabledReason, 1, 1, 1, 1, true)
+            GameTooltip:Show()
+        elseif selectedType == "spell" and selectedEntry then
+            local _, trackerConfig, baseSpellID, matchedByOverride =
+                FindSharedSpellTracker(selectedEntry.spellID)
+            if IsTrackerEnabled(trackerConfig, selectedEntry.spellID) then
+                if matchedByOverride then
+                    addDisabledReason = GetSpellDuplicateReason(
+                        selectedEntry.spellID,
+                        trackerConfig,
+                        matchedByOverride
+                    )
+                    GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+                    GameTooltip:SetText(addDisabledReason, 1, 1, 1, 1, true)
+                    GameTooltip:Show()
+                    return
+                end
                 local currentSpellID = C_Spell.GetOverrideSpell(baseSpellID)
                 local spellInfo = currentSpellID and C_Spell.GetSpellInfo(currentSpellID)
                 local spellName = (spellInfo and spellInfo.name) or tostring(currentSpellID or baseSpellID)
@@ -540,7 +1120,7 @@ function AddSpells:RenderAddSpellsView(parent)
             end
         end
     end
-    addBtn:SetScript("OnEnter", function(self) ShowDuplicateSpellTooltip(self) end)
+    addBtn:SetScript("OnEnter", function(self) ShowAddDisabledTooltip(self) end)
     addBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     addBtnTooltip = CreateFrame("Frame", nil, container)
@@ -548,11 +1128,18 @@ function AddSpells:RenderAddSpellsView(parent)
     addBtnTooltip:SetFrameStrata(addBtn:GetFrameStrata())
     addBtnTooltip:SetFrameLevel(addBtn:GetFrameLevel() + 10)
     addBtnTooltip:EnableMouse(true)
-    addBtnTooltip:SetScript("OnEnter", function(self) ShowDuplicateSpellTooltip(self) end)
+    addBtnTooltip:SetScript("OnEnter", function(self) ShowAddDisabledTooltip(self) end)
     addBtnTooltip:SetScript("OnLeave", function() GameTooltip:Hide() end)
     addBtnTooltip:Hide()
     addBtn:SetScript("OnClick", function()
         if not selectedEntry or not selectedType then return end
+        if selectedType == "spell" then
+            local existingKey = FindSharedSpellTracker(selectedEntry.spellID)
+            if existingKey then return end
+        elseif selectedType == "item" and selectedEntry.itemID then
+            local existingKey = FindMatchingItemTracker(selectedEntry.itemID)
+            if existingKey then return end
+        end
         local FTM   = SpellStyler.FrameTrackerManager
         local State = SpellStyler.State
 
@@ -563,27 +1150,40 @@ function AddSpells:RenderAddSpellsView(parent)
         if selectedType == "spell" then
             trackerType = "spells"
             local existingKey, existingByBase, baseSpellID = FindSharedSpellTracker(selectedEntry.spellID)
+
+            DevTool:AddData({
+                spellID = selectedEntry.spellID,
+                existingKey = existingKey,
+                existingByBase = existingByBase,
+                baseSpellID = baseSpellID
+            }, "adding button")
             trackingID = existingKey or selectedEntry.spellID
             local existingTrackerConfig, foundConfig = existingByBase, existingByBase ~= nil
             if existingTrackerConfig and foundConfig then
                 trackerConfig = existingTrackerConfig
-                local previousRootSpellID = trackerConfig.rootSpellID
-                local rootSpellID = selectedEntry.rootSpellID or C_Spell.GetOverrideSpell(selectedEntry.spellID)
-                State:SetTrackerValueConfigProperty(trackingID, "spells", 'isEnabled', true)
-                State:SetTrackerValueConfigProperty(trackingID, "spells", 'baseSpellID', baseSpellID)
-                State:CopySpellIconVariation(trackerConfig, previousRootSpellID, rootSpellID)
-                State:SetTrackerValueConfigProperty(trackingID, "spells", 'rootSpellID', rootSpellID)
+                if not State:IsSpellTrackerEnabled(trackerConfig) then
+                    for spellID in pairs(State:GetAssociatedSpellIDs(trackerConfig)) do
+                        State:UpdateAssociatedSpells(trackerConfig, spellID, { enabled = true })
+                    end
+                end
+                State:UpdateAssociatedSpells(trackerConfig, selectedEntry.spellID, { enabled = true })
             else
                 local iconTexture = selectedEntry.iconID
                 trackerConfig = State:AddTrackerValue({
                     trackerKey              = trackingID,
-                    rootSpellID             = selectedEntry.rootSpellID or C_Spell.GetOverrideSpell(selectedEntry.spellID),
                     baseSpellID             = baseSpellID,
                     overrideSpellID         = C_Spell.GetOverrideSpell(baseSpellID),
                     trackerType             = "spells",
                     name                    = selectedEntry.name,
                     defaultIconTexturePath  = iconTexture,
                 })
+                local function enableSpellID(spellID)
+                    if spellID and (C_SpellBook.IsSpellKnown(spellID) or C_SpellBook.IsSpellInSpellBook(spellID)) then
+                        State:UpdateAssociatedSpells(trackerConfig, spellID, { enabled = true })
+                    end
+                end
+                enableSpellID(baseSpellID)
+                enableSpellID(C_Spell.GetOverrideSpell(baseSpellID, GetSpecialization(), true))
             end
         elseif selectedType == "item" then
             trackerType = "items"
@@ -685,11 +1285,16 @@ function AddSpells:RenderAddSpellsView(parent)
             local BuffManager = SpellStyler.BuffManager
             if BuffManager and BuffManager.CreateSingleAuraContainer then
                 BuffManager:CreateSingleAuraContainer(trackingID, trackerConfig)
+                if SpellStyler.settingsMenu
+                    and SpellStyler.settingsMenu:IsShown()
+                    and BuffManager.EnablePlaceholderDragging then
+                    BuffManager:EnablePlaceholderDragging(true)
+                end
             end
         else
             -- CreateFrameMiddleware creates base frame, variant frame (if needed),
             -- sets up charge infrastructure, and drives updates
-            FTM:CreateCompleteFrame(trackingID, trackerConfig, trackerType)
+            FTM.FrameBuilder.CreateCompleteFrame(trackingID, trackerConfig, trackerType)
 
             -- Remove from the grid so it can't be added twice (auras aren't in the grid)
             local addedID = selectedType == "item" and selectedEntry.itemID or selectedEntry.spellID
@@ -734,12 +1339,18 @@ function AddSpells:RenderAddSpellsView(parent)
 
     gridSF = CreateFrame("ScrollFrame", nil, container)
     -- Extend left and up by GLOW_PAD; icons are offset to compensate below
-    gridSF:SetPoint("TOPLEFT",  sep, "BOTTOMLEFT",  -GLOW_PAD,  -(8 + GLOW_PAD))
-    gridSF:SetPoint("TOPRIGHT", sep, "BOTTOMRIGHT",  4,          -(8 + GLOW_PAD))
+    gridSF:SetPoint("TOPLEFT",  sep, "BOTTOMLEFT",  -GLOW_PAD,  -4)
+    gridSF:SetPoint("TOPRIGHT", sep, "BOTTOMRIGHT",  4,          -4)
     gridSF:SetPoint("BOTTOM",   container, "BOTTOM",  0,           8)
 
     local gridChild = CreateFrame("Frame", nil, gridSF)
     gridSF:SetScrollChild(gridChild)
+    local spellsLabel = gridChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    spellsLabel:SetText("Spells")
+    spellsLabel:SetTextColor(1, 0.82, 0)
+    local itemsLabel = gridChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    itemsLabel:SetText("Items")
+    itemsLabel:SetTextColor(1, 0.82, 0)
     
     -- Reset scroll position and enable scrolling
     gridSF:SetVerticalScroll(0)
@@ -747,6 +1358,19 @@ function AddSpells:RenderAddSpellsView(parent)
 
     -- ── Build buttons for every spell and item ────────────────────────
     local spells = AddSpells:GetCurrentSpecSpells()
+    local knownSpellIDs = {}
+    for _, spell in ipairs(spells) do
+        knownSpellIDs[spell.spellID] = true
+    end
+    for spellID, spellInfo in pairs(GetSearchableSpellInfos()) do
+        if not knownSpellIDs[spellID] then
+            table.insert(spells, {
+                spellID = spellID,
+                name = spellInfo.name,
+                iconID = spellInfo.originalIconID or spellInfo.iconID,
+            })
+        end
+    end
     local items = AddSpells:GetPlayerItems()
     -- Each entry: { btn = Frame, data = spellEntry or itemEntry, type = "spell" or "item" }
     gridButtons = {}
@@ -761,46 +1385,34 @@ function AddSpells:RenderAddSpellsView(parent)
         local config = State:GetSpecificTrackerValue(spellID, trackerType)
         return config and config.isEnabled ~= false
     end
-    
+
     -- Add spells
     for _, spell in ipairs(spells) do
-        -- Skip spells that are already tracked AND enabled in any tracker type.
-        -- DB entries are keyed by GetBaseSpell(), so the duplicate check must use
-        -- the same key; using the raw spellbook ID would miss override spells.
-        local baseID = spell.spellID
-        
-        local alreadyTrackedAndEnabled = isTrackedAndEnabled(baseID, "buffs")
-            or isTrackedAndEnabled(baseID, "essential")
-            or isTrackedAndEnabled(baseID, "utility")
-            or isTrackedAndEnabled(baseID, "spells")
-        
-        if not alreadyTrackedAndEnabled then
-            local capturedSpell = spell
-            local btn = CreateFrame("Button", nil, gridChild)
-            btn:EnableMouse(true)
-            btn:RegisterForClicks("LeftButtonUp")
+        local capturedSpell = spell
+        local btn = CreateFrame("Button", nil, gridChild)
+        btn:EnableMouse(true)
+        btn:RegisterForClicks("LeftButtonUp")
 
-            local tex = btn:CreateTexture(nil, "ARTWORK")
-            tex:SetAllPoints()
-            tex:SetTexture(spell.iconID)
-            tex:SetTexCoord(0, 1, 0, 1)
+        local tex = btn:CreateTexture(nil, "ARTWORK")
+        tex:SetAllPoints()
+        tex:SetTexture(spell.iconID)
+        tex:SetTexCoord(0, 1, 0, 1)
 
-            local hl = btn:CreateTexture(nil, "HIGHLIGHT")
-            hl:SetAllPoints()
-            hl:SetColorTexture(1, 1, 1, 0.25)
+        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints()
+        hl:SetColorTexture(1, 1, 1, 0.25)
 
-            btn:SetScript("OnEnter", function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetSpellByID(capturedSpell.spellID)
-                GameTooltip:Show()
-            end)
-            btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-            btn:SetScript("OnClick", function(self)
-                SelectEntry(capturedSpell, "spell", self)
-            end)
+        btn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetSpellByID(capturedSpell.spellID)
+            GameTooltip:Show()
+        end)
+        btn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        btn:SetScript("OnClick", function(self)
+            SelectEntry(capturedSpell, "spell", self)
+        end)
 
-            table.insert(gridButtons, { btn = btn, data = capturedSpell, type = "spell" })
-        end
+        table.insert(gridButtons, { btn = btn, data = capturedSpell, type = "spell" })
     end
     
     -- Add items
@@ -860,6 +1472,9 @@ function AddSpells:RenderAddSpellsView(parent)
         if iconSize < 1 then return end
         currentIconSize = iconSize
         gridChild:SetWidth(availableWidth)
+        local rowHeight = iconSize + GRID_GAP
+        spellsLabel:Show()
+        spellsLabel:SetPoint("TOPLEFT", gridChild, "TOPLEFT", GLOW_PAD, -4)
 
         local spellCount = 0
         local itemCount = 0
@@ -875,7 +1490,7 @@ function AddSpells:RenderAddSpellsView(parent)
                     btn:ClearAllPoints()
                     btn:SetPoint("TOPLEFT", gridChild, "TOPLEFT",
                         GLOW_PAD + col * (iconSize + GRID_GAP),
-                        -(GLOW_PAD + row * (iconSize + GRID_GAP))
+                        -(GLOW_PAD + row * rowHeight + 8)
                     )
                     btn:Show()
                     col = col + 1
@@ -890,12 +1505,20 @@ function AddSpells:RenderAddSpellsView(parent)
         -- Add gap between spells and items (skip to next row + add extra spacing)
         if spellCount > 0 and col > 0 then
             col = 0
-            row = row + 1
+            row = row + 1.5
+        else
+            col = 0
+            row = row + 0.5
         end
-        local gapRows = 0.5  -- Half row gap
-        if spellCount > 0 then
-            row = row + gapRows
-        end
+        itemsLabel:Show()
+        itemsLabel:SetPoint(
+            "TOPLEFT",
+            gridChild,
+            "TOPLEFT",
+            GLOW_PAD,
+            -(GLOW_PAD + row * rowHeight)
+        )
+        row = row + 0.5
         
         -- Second pass: layout items
         for _, entry in ipairs(gridButtons) do
@@ -908,7 +1531,7 @@ function AddSpells:RenderAddSpellsView(parent)
                     btn:ClearAllPoints()
                     btn:SetPoint("TOPLEFT", gridChild, "TOPLEFT",
                         GLOW_PAD + col * (iconSize + GRID_GAP),
-                        -(GLOW_PAD + row * (iconSize + GRID_GAP))
+                        -(GLOW_PAD + row * rowHeight)
                     )
                     btn:Show()
                     col = col + 1
@@ -955,40 +1578,73 @@ function AddSpells:RenderAddSpellsView(parent)
             -- "spell" and "aura" both resolve against the spell APIs
             if id then
                 local si = C_Spell.GetSpellInfo(id)
-                if si then
+                if si and (not C_Spell.IsSpellPassive(id) or entryType == "buffs") then
                     local iconID = C_Spell.GetSpellTexture(id) or si.iconID
                     found = { spellID = id, name = si.name, iconID = iconID }
                 end
             else
-                -- local spellID = ResolveSpellID(text)
-                -- local si = spellID and C_Spell.GetSpellInfo(spellID)
-                local si = C_Spell.GetSpellInfo(text)
-                local potentialMatchBase = C_Spell.GetSpellInfo(C_Spell.GetBaseSpell(si.spellID))
-                local potentialMatchOverride = C_Spell.GetSpellInfo(C_Spell.GetOverrideSpell(C_Spell.GetBaseSpell(si.spellID)))
-                local finalMatch
-                if string.lower(si.name) == string.lower(text) then
-                    finalMatch = si
-                elseif string.lower(potentialMatchBase.name) == string.lower(text) then
-                    finalMatch = potentialMatchBase
-                elseif string.lower(potentialMatchOverride.name) == string.lower(text) then
-                    finalMatch = potentialMatchOverride
+                local finalMatch = FindExactSpellByText(text)
+                if not finalMatch and entryType == "aura" then
+                    local spellInfo = C_Spell.GetSpellInfo(text)
+                    local spellID = spellInfo and (spellInfo.spellID
+                        or C_Spell.GetSpellIDForSpellIdentifier(text))
+                    if spellInfo and spellID then
+                        finalMatch = {
+                            spellID = spellID,
+                            name = spellInfo.name,
+                            iconID = spellInfo.iconID,
+                        }
+                    end
                 end
-                
-
-                local iconID = finalMatch.originalIconID or finalMatch.iconID
-                found = {
-                    spellID = finalMatch.spellID,
-                    rootSpellID = C_Spell.GetOverrideSpell(finalMatch.spellID),
-                    name = finalMatch.name,
-                    iconID = iconID
-                }
+                if finalMatch then
+                    local iconID = finalMatch.originalIconID or finalMatch.iconID
+                    found = {
+                        spellID = finalMatch.spellID,
+                        name = finalMatch.name,
+                        iconID = iconID
+                    }
+                end
             end
         end
 
         if found then
             previewEntry, previewType = found, entryType
+            UpdateAddButtonLabel(entryType)
             previewTex:SetTexture(found.iconID)
             previewBtn:Show()
+
+            local isAlreadyTracked = false
+            local matchedByOverride = false
+            if entryType == "aura" then
+                isAlreadyTracked = IsAuraBaseSpellTracked(found.spellID)
+            elseif entryType == "spell" then
+                local _, trackerConfig, _, overrideMatch = FindSharedSpellTracker(found.spellID)
+                isAlreadyTracked = trackerConfig ~= nil
+                matchedByOverride = overrideMatch
+                if matchedByOverride then
+                    addDisabledReason = GetSpellDuplicateReason(
+                        found.spellID,
+                        trackerConfig,
+                        matchedByOverride
+                    )
+                end
+            elseif entryType == "item" then
+                local _, trackerConfig = FindMatchingItemTracker(found.itemID)
+                isAlreadyTracked = trackerConfig ~= nil
+            end
+            if isAlreadyTracked then
+                if entryType ~= "spell" or not matchedByOverride then
+                    addDisabledReason = entryType == "aura"
+                        and "This aura is already tracked."
+                        or entryType == "item"
+                            and "This item is already tracked."
+                        or "This spell is already tracked."
+                end
+                UpdateAddButtonState(false)
+            else
+                addDisabledReason = nil
+                UpdateAddButtonState(true)
+            end
 
             -- If the previously glow-selected btn was this preview icon,
             -- re-apply glow since SetupAnts was called on it before Show
@@ -998,6 +1654,8 @@ function AddSpells:RenderAddSpellsView(parent)
             end
         else
             previewEntry, previewType = nil, nil
+            addDisabledReason = nil
+            UpdateAddButtonState(false)
             if previewBtn then previewBtn:Hide() end
             if selectedBtn == previewBtn then Deselect() end
         end

@@ -4,6 +4,7 @@ local IconSettingsRenderer = SpellStyler.IconSettingsRenderer
 local State = SpellStyler.State
 
 local settingsScrollChild  -- Reference to the scroll child so we can update its height
+local selectedIconHeader
 local settingsMenuIconList = {}
 local _lastSelectedIcon = nil  -- { uniqueID, trackerType } persists across menu open/close
 -- Persisted expand/collapse state for individual Special Visibility Condition entries
@@ -29,6 +30,37 @@ local function GetCurrentSpellDisplay(trackerConfig)
     local spellInfo = currentSpellID and C_Spell.GetSpellInfo(currentSpellID)
     return (spellInfo and spellInfo.name) or (trackerConfig and trackerConfig.name),
         (spellInfo and spellInfo.iconID) or (trackerConfig and trackerConfig.defaultIconTexturePath)
+end
+
+local function GetSortedAssociatedSpellIDs(trackerConfig)
+    local spellIDs = {}
+    for spellID in pairs(State:GetAssociatedSpellIDs(trackerConfig)) do
+        table.insert(spellIDs, spellID)
+    end
+    local baseSpellID = trackerConfig and (tonumber(trackerConfig.baseSpellID) or trackerConfig.baseSpellID)
+    table.sort(spellIDs, function(left, right)
+        if left == baseSpellID then return right ~= baseSpellID end
+        if right == baseSpellID then return false end
+        if type(left) == "number" and type(right) == "number" then return left < right end
+        return tostring(left) < tostring(right)
+    end)
+    return spellIDs
+end
+
+local function RefreshTrackerVisuals(trackerKey, trackerType)
+    if trackerType == "buffs" then
+        local buffManager = SpellStyler.BuffManager
+        local containerData = buffManager and buffManager.buffContainers[trackerKey]
+        local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
+        if containerData and trackerConfig then
+            buffManager:UpdateAura(containerData, trackerConfig)
+        end
+        return
+    end
+
+    if SpellStyler.FrameTrackerManager then
+        SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(trackerKey, trackerType)
+    end
 end
 
 function IconSettingsRenderer:SetConsistentScrollingBehavior(scrollFrame)
@@ -118,7 +150,9 @@ local function CreateIconButton(parent, iconPath, spellName, trackerKey, tracker
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:SetText((spellName or ("ID: "..tostring(trackerKey))) .. " - " .. (trackerType or "?"), 1, 1, 1)
 		GameTooltip:AddLine("ID: "..tostring(trackerKey), 0.7, 0.7, 0.7)
-		
+		local keyInfo = C_Spell.GetSpellInfo(trackerKey)
+        local keyName = keyInfo and keyInfo.name or nil
+        GameTooltip:AddLine("State Key: " .. trackerKey .. (keyName and (" - " .. keyName) or ""), 0.8, 0.8, 0.8, true)
 		-- Add devNotes if they exist
 		if devNotes and type(devNotes) == "table" and #devNotes > 0 then
 			GameTooltip:AddLine(" ", 1, 1, 1)
@@ -942,7 +976,7 @@ function IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl,
                 UIDropDownMenu_SetText(dropdown, "UIParent")
                 -- Apply the change immediately to cancel mouse ticker and reposition
                 if uniqueID and trackerType then
-                    SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                    RefreshTrackerVisuals(uniqueID, trackerType)
                 end
             end
             UIDropDownMenu_AddButton(info, level)
@@ -960,7 +994,7 @@ function IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl,
                 UIDropDownMenu_SetText(dropdown, "Mouse")
                 -- Apply the change immediately to start mouse ticker
                 if uniqueID and trackerType then
-                    SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                    RefreshTrackerVisuals(uniqueID, trackerType)
                 end
             end
             UIDropDownMenu_AddButton(info, level)
@@ -1000,7 +1034,7 @@ function IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl,
                             UIDropDownMenu_SetText(dropdown, entry.name or tostring(entry.uniqueID))
                             -- Apply the change immediately to cancel mouse ticker and reposition
                             if uniqueID and trackerType then
-                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                                RefreshTrackerVisuals(uniqueID, trackerType)
                             end
                         end
                         UIDropDownMenu_AddButton(info, level)
@@ -1084,34 +1118,69 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             })
             table.insert(sections, {
                 type = "customRender",
+                render = function(container, lastControl, uid, tType)
+                    if tType ~= "spells" then
+                        return nil
+                    end
+
+                    local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(uid, tType)
+                    local associatedIDs = GetSortedAssociatedSpellIDs(trackerConfig)
+                    local block = CreateFrame("Frame", nil, container)
+                    block:SetSize(420, 14 + (#associatedIDs * 24))
+                    block:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -8)
+
+                    local versionLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                    versionLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
+                    versionLabel:SetText("Enabled for:")
+                    versionLabel:SetTextColor(0.8, 0.8, 0.8)
+
+                    for index, spellID in ipairs(associatedIDs) do
+                        local checkbox = CreateFrame("CheckButton", nil, block, "UICheckButtonTemplate")
+                        checkbox:SetSize(24, 24)
+                        checkbox:SetPoint("TOPLEFT", block, "TOPLEFT", 0, -14 - ((index - 1) * 24))
+                        local association = State:GetAssociatedSpellID(trackerConfig, spellID)
+                        checkbox:SetChecked(association ~= nil and association.enabled == true)
+
+                        local spellInfo = spellID and C_Spell.GetSpellInfo(spellID)
+                        local label = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                        label:SetPoint("LEFT", checkbox, "RIGHT", 4, 0)
+                        label:SetText((spellInfo and spellInfo.name or tostring(spellID)) .. " (" .. tostring(spellID) .. ")")
+                        label:SetTextColor(0.8, 0.8, 0.8)
+
+                        checkbox:SetScript("OnClick", function(self)
+                            State:SetTrackerSpellEnabled(uid, tType, spellID, self:GetChecked() == true)
+                            local hasEnabledVersion = State:IsSpellTrackerEnabled(trackerConfig)
+                            local frame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uid, tType)
+                            if hasEnabledVersion and frame then
+                                RefreshTrackerVisuals(uid, tType)
+                            elseif frame then
+                                SpellStyler.FrameTrackerManager.utils.ApplyTrackerAlpha(
+                                    frame,
+                                    trackerConfig,
+                                    trackerConfig.iconSettings and trackerConfig.iconSettings.opacity or 1
+                                )
+                            end
+                        end)
+                    end
+
+                    return block
+                end,
+            })
+            table.insert(sections, {
+                type = "customRender",
                 render = function(container, lastControl, uid, tType, rerender)
                     local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(uid, tType)
-                    local associationIDs = {}
-                    local associationSeen = {}
-
-                    local function addAssociation(spellID)
-                        if spellID and not associationSeen[spellID] then
-                            associationSeen[spellID] = true
-                            table.insert(associationIDs, spellID)
-                        end
-                    end
-
-                    addAssociation(trackerConfig.rootSpellID)
-                    addAssociation(trackerConfig.baseSpellID)
-                    addAssociation(trackerConfig.overrideSpellID)
-                    if trackerConfig.baseSpellID then
-                        addAssociation(C_Spell.GetOverrideSpell(trackerConfig.baseSpellID))
-                    end
-                    for spellID in pairs(trackerConfig.spellVariations or {}) do
-                        addAssociation(tonumber(spellID) or spellID)
-                    end
+                    local isAura = tType == "buffs"
+                    local isItem = tType == "items" or trackerConfig.isItem
+                    local usesTrackerConfig = isAura or isItem
+                    local associationIDs = usesTrackerConfig and {} or GetSortedAssociatedSpellIDs(trackerConfig)
 
                     local selectionKey = tostring(uid) .. ":" .. tType
                     local selectedSpellID = _selectedSpellVariations[selectionKey]
-                        or trackerConfig.rootSpellID
+                        or trackerConfig.baseSpellID
 
                     local function getVariation(spellID)
-                        return SpellStyler.State:EnsureSpellVariation(trackerConfig, spellID)
+                        return SpellStyler.State:GetAssociatedSpellID(trackerConfig, spellID, true)
                     end
 
                     local function spellName(spellID)
@@ -1123,46 +1192,73 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     block:SetSize(500, 115)
                     block:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -12)
 
-                    local associationLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    associationLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
-                    associationLabel:SetText("Choose associated spell:")
-                    associationLabel:SetTextColor(0.8, 0.8, 0.8)
+                    if not usesTrackerConfig then
+                        local associationLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+                        associationLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, 0)
+                        associationLabel:SetText("Choose associated spell:")
+                        associationLabel:SetTextColor(0.8, 0.8, 0.8)
 
-                    local associationDropdown = CreateFrame("Frame", nil, block, "UIDropDownMenuTemplate")
-                    associationDropdown:SetPoint("LEFT", associationLabel, "RIGHT", 8, 0)
-                    UIDropDownMenu_SetWidth(associationDropdown, 120)
-                    UIDropDownMenu_Initialize(associationDropdown, function(self, level)
-                        for index, spellID in ipairs(associationIDs) do
-                            local info = UIDropDownMenu_CreateInfo()
-                            local spellInfo = spellID and C_Spell.GetSpellInfo(spellID)
-                            info.text = spellName(spellID)
-                            info.icon = spellInfo and (spellInfo.originalIconID or spellInfo.iconID)
-                            info.iconWidth = 32
-                            info.iconHeight = 32
-                            info.topPadding = 4
-                            info.padding = 10
-                            info.iconXOffset = -10
-                            info.value = spellID
-                            info.checked = selectedSpellID == spellID
-                            info.func = function(button)
-                                _selectedSpellVariations[selectionKey] = button.value
-                                UIDropDownMenu_SetText(associationDropdown, spellName(button.value))
-                                rerender()
+                        local associationDropdown = CreateFrame("Frame", nil, block, "UIDropDownMenuTemplate")
+                        associationDropdown:SetPoint("LEFT", associationLabel, "RIGHT", 8, 0)
+                        UIDropDownMenu_SetWidth(associationDropdown, 120)
+                        UIDropDownMenu_Initialize(associationDropdown, function(self, level)
+                            for index, spellID in ipairs(associationIDs) do
+                                local info = UIDropDownMenu_CreateInfo()
+                                local spellInfo = spellID and C_Spell.GetSpellInfo(spellID)
+                                info.text = spellName(spellID)
+                                info.icon = spellInfo and (spellInfo.originalIconID or spellInfo.iconID)
+                                info.iconWidth = 32
+                                info.iconHeight = 32
+                                info.topPadding = 4
+                                info.padding = 10
+                                info.iconXOffset = -10
+                                info.value = spellID
+                                info.checked = selectedSpellID == spellID
+                                info.func = function(button)
+                                    _selectedSpellVariations[selectionKey] = button.value
+                                    UIDropDownMenu_SetText(associationDropdown, spellName(button.value))
+                                    rerender()
+                                end
+                                UIDropDownMenu_AddButton(info)
                             end
-                            UIDropDownMenu_AddButton(info)
-                        end
-                    end)
-                    UIDropDownMenu_SetText(associationDropdown, spellName(selectedSpellID))
-                    associationDropdown:SetScript("OnEnter", function(self)
-                        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                        GameTooltip:AddLine("Choose an associated spell for this tracker to apply a custom icon texture and custom icon color. Upon being overwritten to a new spell, the value will be included.", 0.8, 0.8, 0.8, true)
-                        GameTooltip:Show()
-                    end)
-                    associationDropdown:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                        end)
+                        UIDropDownMenu_SetText(associationDropdown, spellName(selectedSpellID))
+                        associationDropdown:SetScript("OnEnter", function(self)
+                            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                            GameTooltip:AddLine("Choose an associated spell for this tracker to apply a custom icon texture and custom icon color. Upon being overwritten to a new spell, the value will be included.", 0.8, 0.8, 0.8, true)
+                            GameTooltip:Show()
+                        end)
+                        associationDropdown:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                    end
 
-                    local variation = getVariation(selectedSpellID)
+                    local variation = usesTrackerConfig and trackerConfig or getVariation(selectedSpellID)
+                    local function getTexturePath()
+                        if usesTrackerConfig then
+                            return trackerConfig.iconSettings
+                                and trackerConfig.iconSettings.iconTexturePath
+                        end
+                        return variation.iconTexturePath
+                    end
+                    local function setTexturePath(texturePath)
+                        if usesTrackerConfig then
+                            trackerConfig.iconSettings = trackerConfig.iconSettings or {}
+                            trackerConfig.iconSettings.iconTexturePath = texturePath
+                        else
+                            variation.iconTexturePath = texturePath
+                        end
+                    end
+                    local function getIconColor()
+                        return usesTrackerConfig and trackerConfig.iconColor or variation.iconColor
+                    end
+                    local function setIconColor(color)
+                        if usesTrackerConfig then
+                            trackerConfig.iconColor = color
+                        else
+                            variation.iconColor = color
+                        end
+                    end
                     local pathLabel = block:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                    pathLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, -16)
+                    pathLabel:SetPoint("TOPLEFT", block, "TOPLEFT", 0, usesTrackerConfig and 0 or -16)
                     pathLabel:SetText("Custom Texture Path:")
                     pathLabel:SetTextColor(0.8, 0.8, 0.8)
 
@@ -1171,11 +1267,11 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     pathInput:SetPoint("TOPLEFT", pathLabel, "BOTTOMLEFT", 4, -4)
                     pathInput:SetAutoFocus(false)
                     pathInput:SetMaxLetters(1000)
-                    pathInput:SetText(tostring(variation.iconTexturePath or ""))
+                    pathInput:SetText(tostring(getTexturePath() or ""))
                     local function commitTexturePath(self)
-                        variation.iconTexturePath = self:GetText()
-                        SpellStyler.State:AddCustomTexture(variation.iconTexturePath)
-                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                        setTexturePath(self:GetText())
+                        SpellStyler.State:AddCustomTexture(self:GetText())
+                        RefreshTrackerVisuals(uid, tType)
                     end
                     pathInput:SetScript("OnEnterPressed", function(self)
                         self:ClearFocus()
@@ -1194,9 +1290,9 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     viewButton:SetText("Preset Textures")
                     viewButton:SetScript("OnClick", function()
                         SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
-                            variation.iconTexturePath = texturePath
+                            setTexturePath(texturePath)
                             SpellStyler.State:AddCustomTexture(texturePath)
-                            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                            RefreshTrackerVisuals(uid, tType)
                             rerender()
                         end)
                     end)
@@ -1207,9 +1303,9 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     customButton:SetText("Custom Textures")
                     customButton:SetScript("OnClick", function()
                         SpellStyler.TexturePreviewRenderer:Show(function(texturePath)
-                            variation.iconTexturePath = texturePath
+                            setTexturePath(texturePath)
                             SpellStyler.State:AddCustomTexture(texturePath)
-                            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                            RefreshTrackerVisuals(uid, tType)
                             rerender()
                         end, SpellStyler.State:GetCustomTextures())
                     end)
@@ -1223,31 +1319,31 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     colorButton:SetPoint("TOPLEFT", colorLabel, "BOTTOMLEFT", 0, -4)
                     colorButton:SetSize(24, 16)
                     colorButton:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1})
-                    local color = variation.iconColor or {r = 1, g = 1, b = 1, a = 1}
+                    local color = getIconColor() or {r = 1, g = 1, b = 1, a = 1}
                     colorButton:SetBackdropColor(color.r, color.g, color.b, color.a or 1)
                     colorButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
                     colorButton:SetScript("OnClick", function()
-                        local current = variation.iconColor or {r = 1, g = 1, b = 1, a = 1}
+                        local current = getIconColor() or {r = 1, g = 1, b = 1, a = 1}
                         local r, g, b, a = current.r or 1, current.g or 1, current.b or 1, current.a or 1
                         ColorPickerFrame:SetupColorPickerAndShow({
                             swatchFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorButton:SetBackdropColor(nr, ng, nb, na)
-                                variation.iconColor = {r = nr, g = ng, b = nb, a = na}
-                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                                setIconColor({r = nr, g = ng, b = nb, a = na})
+                                RefreshTrackerVisuals(uid, tType)
                             end,
                             opacityFunc = function()
                                 local nr, ng, nb = ColorPickerFrame:GetColorRGB()
                                 local na = ColorPickerFrame:GetColorAlpha() or 1
                                 colorButton:SetBackdropColor(nr, ng, nb, na)
-                                variation.iconColor = {r = nr, g = ng, b = nb, a = na}
-                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                                setIconColor({r = nr, g = ng, b = nb, a = na})
+                                RefreshTrackerVisuals(uid, tType)
                             end,
                             cancelFunc = function(previous)
                                 colorButton:SetBackdropColor(previous.r, previous.g, previous.b, previous.a or 1)
-                                variation.iconColor = {r = previous.r, g = previous.g, b = previous.b, a = previous.a or 1}
-                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uid, tType)
+                                setIconColor({r = previous.r, g = previous.g, b = previous.b, a = previous.a or 1})
+                                RefreshTrackerVisuals(uid, tType)
                             end,
                             hasOpacity = 1,
                             opacity = a,
@@ -1422,7 +1518,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     
     table.insert(configSections, {
         type = "header",
-        text = config.trackerType == 'buffs' and "Buff/Totem Duration" or "Spell/Item Cooldown Duration",
+        text = config.trackerType == 'buffs' and "Aura Duration" or "Cooldown Duration",
         state = 'collapsed',
         section = (function()
             local section = {
@@ -1517,7 +1613,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     if config.trackerType ~= 'buffs' then
         table.insert(configSections, {
             type = "header",
-            text = "Charge/Count based display",
+            text = "Charge based display",
             state = 'collapsed',
             section = {
                 {
@@ -1592,7 +1688,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     end
     table.insert(configSections, {
         type = "header",
-        text = "Spell Charges / Buff Stacks",
+        text = config.trackerType == 'buffs' and "Aura stacks" or "Charges",
         state = 'collapsed',
         section = {
             {
@@ -2447,7 +2543,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
             if customFrame and SpellStyler.ConditionalEngine then
                 SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
                 if SpellStyler.FrameTrackerManager then
-                    SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                    RefreshTrackerVisuals(uniqueID, trackerType)
                 end
             end
             
@@ -2509,7 +2605,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     if customFrame and SpellStyler.ConditionalEngine then
                         SpellStyler.ConditionalEngine:ClearFramePropertyOverrides(customFrame, conditionalKey)
                         SpellStyler.ConditionalEngine:EvaluateAll()
-                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(uniqueID, trackerType)
+                        RefreshTrackerVisuals(uniqueID, trackerType)
                     end
                     
                     -- Now rerender the UI to show the deletion
@@ -2844,10 +2940,34 @@ end
 		trackerType
 	}
 ]]
+function IconSettingsRenderer:HideSelectedIconHeader()
+    if selectedIconHeader then
+        selectedIconHeader:Hide()
+        selectedIconHeader:SetParent(nil)
+        selectedIconHeader = nil
+    end
+    if self._selectedIconHeaderHost then
+        self._selectedIconHeaderHost:Hide()
+    end
+    if self._selectedIconActionsHost then
+        self._selectedIconActionsHost:Hide()
+        for _, child in ipairs({ self._selectedIconActionsHost:GetChildren() }) do
+            child:Hide()
+            child:SetParent(nil)
+        end
+    end
+    if self._selectedDisableConfirmPopup then
+        self._selectedDisableConfirmPopup:Hide()
+        self._selectedDisableConfirmPopup:SetParent(nil)
+        self._selectedDisableConfirmPopup = nil
+    end
+end
+
 function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     -- Render directly into scrollChild (YELLOW) instead of nested containers
     local parent = options.parentFrame or settingsScrollChild
 	if not parent then return end
+    self:HideSelectedIconHeader()
 	local trackerKey = options.trackerKey
 	local trackerType = options.trackerType or IconSettingsRenderer:getTrackerTypeForID(trackerKey)
     local PANEL_WIDTH = options.panelWidth or 400
@@ -2876,7 +2996,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 end
             end
         else
-            SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType)
+            RefreshTrackerVisuals(trackerKey, trackerType)
         end
     end
     _shiftBarPosition = function(axis, delta)
@@ -2939,8 +3059,8 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
                 local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType]
                     and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
-                local variationSpellID = frame and frame.meta.rootSpellID or trackerConfig.rootSpellID
-                local variation = SpellStyler.State:EnsureSpellVariation(trackerConfig, variationSpellID)
+                local variationSpellID = frame and frame.meta.baseSpellID or trackerConfig.baseSpellID
+                local variation = SpellStyler.State:GetAssociatedSpellID(trackerConfig, variationSpellID, true)
                 if path == "iconColor" then return variation.iconColor end
                 if path == "iconSettings.iconTexturePath" then return variation.iconTexturePath end
                 return variation.iconColor
@@ -2955,11 +3075,11 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
                 local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType]
                     and SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey]
-                local variationSpellID = frame and frame.meta.rootSpellID or trackerConfig.rootSpellID
-                local variation = SpellStyler.State:EnsureSpellVariation(trackerConfig, variationSpellID)
+                local variationSpellID = frame and frame.meta.baseSpellID or trackerConfig.baseSpellID
+                local variation = SpellStyler.State:GetAssociatedSpellID(trackerConfig, variationSpellID, true)
                 if path == "iconColor" then variation.iconColor = value end
                 if path == "iconSettings.iconTexturePath" then variation.iconTexturePath = value end
-                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType)
+                RefreshTrackerVisuals(trackerKey, trackerType)
                 return
             end
             SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, path, value) 
@@ -2982,6 +3102,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
     
     -- Build controls directly into parent
     local lastControl = nil
+    local headerHost = self._selectedIconHeaderHost
     
     -- Render main header with icon name
     local trackedValue = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
@@ -2996,95 +3117,130 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             displayName, displayIcon = GetCurrentSpellDisplay(trackedValue)
             displayName = displayName or tostring(trackerKey)
         end
-        local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        header:SetPoint("TOPLEFT", 0, -10)
-        header:SetText(displayName .. " - (" .. trackerType .. ")")
-        header:SetTextColor(1, 0.82, 0)
-        local icon = CreateIconButton(parent, displayIcon, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes)
-		icon:SetPoint("LEFT", header, "RIGHT", 10, 0)
+        selectedIconHeader = CreateFrame("Frame", nil, headerHost or parent)
+        selectedIconHeader:SetAllPoints(headerHost or parent)
+        local header = selectedIconHeader:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        header:SetPoint("TOPLEFT", selectedIconHeader, "TOPLEFT", 48, 2)
+        header:SetSize(164, 44)
+        header:SetJustifyH("CENTER")
+        header:SetJustifyV("MIDDLE")
+        header:SetWordWrap(true)
+        header:SetText(displayName)
+        header:SetTextColor(1, 1, 1)
+        local icon = CreateIconButton(selectedIconHeader, displayIcon, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes)
+		icon:SetPoint("LEFT", selectedIconHeader, "LEFT", 10, 0)
 
-		-- Reset to Defaults button
-		local resetBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-		resetBtn:SetSize(120, 22)
-		resetBtn:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -10)
-		resetBtn:SetText("Reset to Defaults")
+        local actionsHost = self._selectedIconActionsHost or selectedIconHeader
+        local confirmPopup
+        local confirmText
+        local pendingAction
+		local resetBtn = CreateFrame("Button", nil, actionsHost, "UIPanelButtonTemplate")
+		resetBtn:SetSize(70, 22)
+		resetBtn:SetPoint("RIGHT", actionsHost, "RIGHT", -2, 0)
+		resetBtn:SetText("Reset")
 		resetBtn:SetScript("OnClick", function()
-			SpellStyler.State:ResetTrackerValueConfig(trackerKey, trackerType)
-			IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
+            pendingAction = "reset"
+            confirmText:SetText("Confirm that you would like to reset this entry")
+            confirmPopup:Show()
 		end)
 
-        local disableBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-        disableBtn:SetSize(80, 22)
-        disableBtn:SetPoint("LEFT", resetBtn, "RIGHT", 8, 0)
+        local disableBtn = CreateFrame("Button", nil, actionsHost, "UIPanelButtonTemplate")
+        disableBtn:SetSize(70, 22)
+        disableBtn:SetPoint("RIGHT", resetBtn, "LEFT", -8, 0)
         disableBtn:SetText("Disable")
         disableBtn:SetScript("OnEnter", function(self)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText(
-                "This will remove the spell from being tracked. The settings will be saved in the database if you want to re-add the spell",
-                nil, nil, nil, nil, true
-            )
+            GameTooltip:SetText("Fully disable this entry", 1, 1, 1)
             GameTooltip:Show()
         end)
         disableBtn:SetScript("OnLeave", function()
             GameTooltip:Hide()
         end)
-        disableBtn:SetScript("OnClick", function()
-            -- Mark as disabled in the DB
-            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, "isEnabled", false)
-            -- Completely destroy the live frame (clears cooldown, detaches from
-            -- UIParent, nils the SpellStyler_frames entry so no event handler
-            -- can ever reach it again). DB entry is preserved.
+
+        confirmPopup = CreateFrame("Frame", nil, SpellStyler.settingsMenu, "BackdropTemplate")
+        confirmPopup:SetSize(300, 82)
+        confirmPopup:SetPoint("BOTTOMRIGHT", actionsHost, "TOPRIGHT", 0, 6)
+        confirmPopup:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 10)
+        confirmPopup:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8x8",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            edgeSize = 12,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        confirmPopup:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+        confirmPopup:SetBackdropBorderColor(0.8, 0.2, 0.2, 1)
+        confirmPopup:Hide()
+        self._selectedDisableConfirmPopup = confirmPopup
+
+        confirmText = confirmPopup:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        confirmText:SetPoint("TOP", confirmPopup, "TOP", 0, -10)
+        confirmText:SetSize(280, 24)
+        confirmText:SetJustifyH("CENTER")
+        confirmText:SetWordWrap(true)
+        confirmText:SetText("Confirm that you would like to fully disable this entry")
+        confirmText:SetTextColor(1, 0.4, 0.4)
+
+        local confirmButton = CreateFrame("Button", nil, confirmPopup, "UIPanelButtonTemplate")
+        confirmButton:SetSize(80, 22)
+        confirmButton:SetPoint("BOTTOMLEFT", confirmPopup, "BOTTOMLEFT", 52, 10)
+        confirmButton:SetText("Confirm")
+
+        local cancelButton = CreateFrame("Button", nil, confirmPopup, "UIPanelButtonTemplate")
+        cancelButton:SetSize(80, 22)
+        cancelButton:SetPoint("BOTTOMRIGHT", confirmPopup, "BOTTOMRIGHT", -52, 10)
+        cancelButton:SetText("Cancel")
+        cancelButton:SetScript("OnClick", function()
+            pendingAction = nil
+            confirmPopup:Hide()
+        end)
+
+        confirmButton:SetScript("OnClick", function()
+            confirmPopup:Hide()
+            if pendingAction == "reset" then
+                pendingAction = nil
+                SpellStyler.State:ResetTrackerValueConfig(trackerKey, trackerType)
+                IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
+                return
+            end
+
+            pendingAction = nil
+            local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
+            if not trackerConfig then return end
+
+            if trackerType == "spells" then
+                trackerConfig.isEnabled = false
+                for _, association in pairs(State:GetAssociatedSpellIDs(trackerConfig)) do
+                    association.enabled = false
+                end
+            else
+                State:SetTrackerValueConfigProperty(trackerKey, trackerType, "isEnabled", false)
+            end
+
             if SpellStyler.FrameTrackerManager then
-                SpellStyler.FrameTrackerManager:DestroyTrackerFrame(trackerKey, trackerType)
-                for _, trackerType in ipairs({ "spells", "items" }) do
-                    local trackerValues = State:GetAllTrackerValues(trackerType)
-                    if trackerValues then
-                        for loop_trackerKey, trackerConfig in pairs(trackerValues) do
-                            local frame = SpellStyler.FrameTrackerManager.SpellStyler_frames[trackerType][loop_trackerKey]
-                            if trackerConfig.isEnabled and frame then
-                                -- reposition all frames so that they can be properly anchored now that all frames are created
-                                SpellStyler.FrameTrackerManager:SetFramePosition(frame, trackerConfig)
-                            end
-                        end
-                    end
+                local frame = SpellStyler.FrameTrackerManager:GetTrackerFrame(trackerKey, trackerType)
+                if frame then
+                    SpellStyler.FrameTrackerManager.frameController.DestroyTrackerFrame(trackerKey, trackerType)
                 end
             end
-            
-            -- Clear the selected icon state
             _lastSelectedIcon = nil
-            
-            -- Clear the settings panel and show default message
-            if settingsScrollChild then
-                -- Clear all controls
-                for _, child in ipairs({settingsScrollChild:GetChildren()}) do
-                    child:Hide()
-                    child:SetParent(nil)
-                end
-                for _, region in ipairs({settingsScrollChild:GetRegions()}) do
-                    if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
-                        region:Hide()
-                        if region:IsObjectType("FontString") then
-                            region:SetText("")
-                        end
-                    end
-                end
-                
-                -- Show the default "Select an icon to configure" message
-                local noSelectionLabel = settingsScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-                noSelectionLabel:SetPoint("CENTER", settingsScrollChild, "CENTER", 0, 0)
-                noSelectionLabel:SetText("Select an icon to configure")
-                noSelectionLabel:SetTextColor(0.5, 0.5, 0.5)
-                settingsScrollChild.currentControlsContainer = noSelectionLabel
-            end
-            
-            -- Re-render the icon list so the entry disappears
             if SpellStyler.settingsContentFrame then
                 IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
             end
         end)
 
-        lastControl = resetBtn
+        disableBtn:SetScript("OnClick", function()
+            pendingAction = "disable"
+            confirmText:SetText("Confirm that you would like to fully disable this entry")
+            confirmPopup:Show()
+        end)
+
     end
+        if headerHost then
+            headerHost:Show()
+        end
+        if self._selectedIconActionsHost then
+            self._selectedIconActionsHost:Show()
+        end
     
     -- Validate config inputs
     if not config.configInputs then
@@ -3108,11 +3264,11 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             -- Create header background frame with texture
             local headerFrameBg = CreateFrame("Frame", nil, parent, "BackdropTemplate")
             if lastControl then
-                headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -20)
+                headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -10)
             else
-                headerFrameBg:SetPoint("TOPLEFT", 10, -10)
+                headerFrameBg:SetPoint("TOPLEFT", 0, 0)
             end
-            headerFrameBg:SetSize(290, 25)
+            headerFrameBg:SetSize(300, 25)
             
             -- Create texture for header background
             local headerTexture = headerFrameBg:CreateTexture(nil, "BACKGROUND")
@@ -3137,7 +3293,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 options.sectionStates[capturedSectionIndex] = (options.sectionStates[capturedSectionIndex] == "expanded") and "collapsed" or "expanded"
                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             end)
-            
+
             -- Hover effects
             headerBtn:SetScript("OnEnter", function()
                 headerText:SetTextColor(1, 1, 0.5)
@@ -3366,6 +3522,7 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(options)
     -- Render directly into scrollChild (YELLOW) instead of nested containers
     local parent = options.parentFrame or settingsScrollChild
     if not parent then return end
+    self:HideSelectedIconHeader()
     
     -- Initialize section states if not already present
     options.sectionStates = options.sectionStates or _multiSectionStates
@@ -3588,7 +3745,7 @@ function IconSettingsRenderer:RenderMultiIconSettingsView(options)
 
             local headerFrameBg = CreateFrame("Frame", nil, parent, "BackdropTemplate")
             headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -20)
-            headerFrameBg:SetSize(290, 25)
+            headerFrameBg:SetSize(300, 25)
             local headerTexture = headerFrameBg:CreateTexture(nil, "BACKGROUND")
             headerTexture:SetAllPoints(headerFrameBg)
             headerTexture:SetTexture(isExpanded
@@ -3762,6 +3919,38 @@ end
 
 function IconSettingsRenderer:RenderIconControlView(containerFrame)
 	local iconSize, minPadding = 40, 4
+    self:HideSelectedIconHeader()
+    if self._selectedIconHeaderHost then
+        self._selectedIconHeaderHost:Hide()
+        self._selectedIconHeaderHost:SetParent(nil)
+    end
+    if self._selectedIconActionsHost then
+        self._selectedIconActionsHost:Hide()
+        self._selectedIconActionsHost:SetParent(nil)
+    end
+    local headerHost = CreateFrame("Frame", nil, containerFrame, "BackdropTemplate")
+    headerHost:SetSize(304, 48)
+    headerHost:SetPoint("TOPLEFT", SpellStyler.settingsMenu, "TOPLEFT", 90, -33)
+    headerHost:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
+    headerHost:SetBackdrop({
+        bgFile = 374154,
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true,
+        tileSize = 16,
+        edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    headerHost:SetBackdropColor(0, 0, 0, 1)
+    headerHost:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    headerHost:Hide()
+    self._selectedIconHeaderHost = headerHost
+
+    local actionsHost = CreateFrame("Frame", nil, SpellStyler.settingsMenu)
+    actionsHost:SetSize(148, 22)
+    actionsHost:SetPoint("BOTTOMRIGHT", SpellStyler.settingsMenu, "BOTTOMRIGHT", -10, 5)
+    actionsHost:SetFrameLevel(SpellStyler.settingsMenu:GetFrameLevel() + 3)
+    actionsHost:Hide()
+    self._selectedIconActionsHost = actionsHost
 
 	-- Clean up previous render (so this function can be called again after an Update)
 	if containerFrame._ssIconScrollFrame then
@@ -3837,8 +4026,8 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
         local headerPaddingBottom = 4
         local separatorGap = 6  -- space above and below the separator line
 
-        -- Calculate total scroll child height: plus button + multi button + separator + entries
-        local totalHeight = iconPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap
+        -- Calculate total scroll child height: toolbar buttons + separator + entries
+        local totalHeight = iconPadding + iconSize + minPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap
         for _, entry in ipairs(trackerList) do
             if entry.isHeader then
                 totalHeight = totalHeight + headerHeight + headerPaddingBottom
@@ -3885,15 +4074,36 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
             })
         end)
 
+        -- Disabled values button (below the multi-icon settings button)
+        local disabledBtn = CreateFrame("Button", nil, iconScrollChild)
+        disabledBtn:SetSize(iconSize, iconSize)
+        disabledBtn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, -(iconPadding + iconSize + minPadding + iconSize + minPadding))
+        local disabledTex = disabledBtn:CreateTexture(nil, "ARTWORK")
+        disabledTex:SetAllPoints(disabledBtn)
+        disabledTex:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\HiddenIcon")
+        disabledBtn:SetScript("OnEnter", function(self)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText("Disabled Values", 1, 1, 1)
+            GameTooltip:AddLine("Re-enable or permanently delete saved values", 0.7, 0.7, 0.7)
+            GameTooltip:Show()
+        end)
+        disabledBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        disabledBtn:SetScript("OnClick", function()
+            _lastSelectedIcon = nil
+            if SpellStyler.AddSpells then
+                SpellStyler.AddSpells:RenderDisabledValuesView(settingsScrollChild)
+            end
+        end)
+
         -- Separator line between toolbar buttons and spell list
         local sep = iconScrollChild:CreateTexture(nil, "ARTWORK")
         sep:SetColorTexture(0.4, 0.4, 0.4, 0.5)
         sep:SetHeight(1)
-        local sepY = -(iconPadding + iconSize + minPadding + iconSize + separatorGap)
+        local sepY = -(iconPadding + iconSize + minPadding + iconSize + minPadding + iconSize + separatorGap)
         sep:SetPoint("TOPLEFT",  iconScrollChild, "TOPLEFT",  2, sepY)
         sep:SetPoint("TOPRIGHT", iconScrollChild, "TOPRIGHT", -2, sepY)
 
-        local yOffset = -(iconPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap)
+        local yOffset = -(iconPadding + iconSize + minPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap)
         for _, entry in ipairs(trackerList) do
             if entry.isHeader then
                 local lbl = iconScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -4006,7 +4216,6 @@ end
 
 function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
     if frame and not frame._inContainer then
-        local rootSpellID = frame.meta.rootSpellID
         local trackerKey = frame.meta.trackerKey
         local trackerType = frame.meta.trackerType
         local isDraggingDisabled = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.disableDragging")
@@ -4096,11 +4305,7 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.anchorPoint", "CENTER")
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.relativeAnchorPoint", "CENTER")
             
-            if SpellStyler.FrameTrackerManager and SpellStyler.FrameTrackerManager.ApplyStaticFrameProperties and trackerType ~= 'buffs' then
-                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(trackerKey, trackerType)
-            elseif SpellStyler.BuffManager.buffContainers then
-                -- SpellStyler.BuffManager:UpdateAura(SpellStyler.BuffManager.buffContainers[trackerKey], SpellStyler.State:GetSpecificTrackerValue(trackerKey, 'buffs'))
-            end
+            RefreshTrackerVisuals(trackerKey, trackerType)
         end
         
         local mouseHoverTooltip = function(self)
@@ -4274,7 +4479,7 @@ function IconSettingsRenderer:ToggleMockCooldown(trackerKey, trackerType)
         end
         frame.meta.buffStatus = 'absent'
 
-        FrameTrackerManager:DriveFrameUpdate(
+        FrameTrackerManager.lifecycleController.DriveFrameUpdate(
             frame,
             {
                 resolveDuration = false,
@@ -4295,7 +4500,7 @@ function IconSettingsRenderer:ToggleMockCooldown(trackerKey, trackerType)
         mockDurationObj:SetTimeFromStart(now, mockDuration)
         local config = State:GetSpecificTrackerValue(trackerKey, trackerType)
 
-        FrameTrackerManager:DriveFrameUpdate(
+        FrameTrackerManager.lifecycleController.DriveFrameUpdate(
             frame,
             {
                 resolveDuration = true,

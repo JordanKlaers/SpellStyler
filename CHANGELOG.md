@@ -337,3 +337,10 @@ Version 2.3.2
 
 Version 2.3.3
 	- Updates to always pull active spell from the base. This ensures changing talents will keep the spell functional (for spells that can transform into other spells)
+
+Version 3.0.0
+	- Adds a view to show existing disabled tracker values. This view allows you to premenantly delete from the database or, reenable. There are notifications when the disabled entry finds a match with another entry. These matches compare any of the associated spells between the two entries. Its a notification to help you determine which entry is the correct to keep, and which you may choose to delete.
+	- The Add spells menu now suggested more spells, BUT givens a warning if you are already tracking a variation for a given spell. One tracker should handle all variations/associations for a given spell. Some of the tooltip messages are update as well when trying to add entries that are already tracked in some manner.
+	- Updates in the settings menu. Some sub menu header titles have changed to be a bit more semantic. The entry icon and title are moved into a separate container at the top of the menu. The list of "enabled for" spell entries has been moved into the icon settings sub menu. The reset and disable button have been moved to the bottom of the settings menu. Both buttons now include a confirmation popup so you dont accidentally click them.
+	- For spells, any known spell ID's that share the same base spell ID are permenantly added into the settings. A list displays in the icon settings for the spell, which allows you to flag if the spell should be tracked when its currently value IS one of the spell IDs in that list. Unchecking all leaves the entry in the settings menu, but you can click the disable button at the bottom if you want to fully remove it (it still exists in the database to reenable later if you want).
+	- 

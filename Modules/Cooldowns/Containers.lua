@@ -165,7 +165,7 @@ function Containers:DetachIconsFromContainer(uniqueIDs)
                 
                 f:SetAlpha(1)
                 
-                FTM:ApplyStaticFrameProperties(uniqueID, tType)
+                FTM.frameController.ApplyStaticFrameProperties(uniqueID, tType)
                 break
             end
         end
@@ -721,8 +721,7 @@ function Containers:UpdateContainerFrameVisibility(frame, containerConfig)
     if not frame._inContainer then return end
     
     local trackerType = frame.meta.trackerType
-    local rootSpellID = frame.meta.rootSpellID
-    local baseSpellID = C_Spell.GetBaseSpell(rootSpellID, GetSpecialization())
+    local baseSpellID = frame.meta.baseSpellID
     local itemID = frame.meta.itemID
     
     local alphaValue = 0

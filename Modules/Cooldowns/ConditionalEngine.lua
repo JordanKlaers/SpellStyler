@@ -675,8 +675,8 @@ function ConditionalEngine:ApplyFramePropertyOverrides(frame, conditionalKey, pr
     -- Trigger the unified update path via FrameTrackerManager
     -- Note: Always use base frame for state lookups
     if SpellStyler.FrameTrackerManager then
-        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(
-            frame.meta.rootSpellID,
+        SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(
+            frame.meta.trackerKey,
             frame.meta.trackerType
         )
     end
@@ -767,6 +767,7 @@ function ConditionalEngine:EvaluateAll()
         if trackerTypeDatabase then
             for baseSpellID, trackerValue in pairs(trackerTypeDatabase) do
                 -- check if the database for the spell/frame has any conditionas associated to it
+
                 local specialVisibilityConditions = trackerValue.specialVisibilityConditions
                 if specialVisibilityConditions and #specialVisibilityConditions > 0 then
                     local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType]
@@ -824,7 +825,7 @@ function ConditionalEngine:EvaluateAll()
                                                         -- Still true, safe to remove this property
                                                         self._framePropertyOverrides[customFrame][conditionalKey][override.property] = nil
                                                         -- Trigger update
-                                                        FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                                                        FrameTrackerManager.frameController.ApplyStaticFrameProperties(baseSpellID, trackerType)
                                                     end
                                                     -- Otherwise conditional went false already, cache was cleared, do nothing
                                                 end)
@@ -836,7 +837,7 @@ function ConditionalEngine:EvaluateAll()
                                     self:ClearFramePropertyOverrides(customFrame, conditionalKey)
                                     -- Trigger unified update path to revert to state values
                                     if SpellStyler.FrameTrackerManager then
-                                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(
+                                        SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(
                                             baseSpellID,
                                             trackerType
                                         )

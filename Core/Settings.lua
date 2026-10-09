@@ -427,7 +427,7 @@ local function ShowBorderDemo()
                     if SpellStyler.FrameTrackerManager then
                         for trackerType, frames in pairs(SpellStyler.FrameTrackerManager.SpellStyler_frames) do
                             for baseSpellID, _ in pairs(frames) do
-                                SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                                SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(baseSpellID, trackerType)
                             end
                         end
                     end
@@ -475,7 +475,7 @@ local function ShowBorderDemo()
                             if SpellStyler.FrameTrackerManager then
                                 for trackerType, frames in pairs(SpellStyler.FrameTrackerManager.SpellStyler_frames) do
                                     for baseSpellID, _ in pairs(frames) do
-                                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                                        SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(baseSpellID, trackerType)
                                     end
                                 end
                             end
@@ -563,7 +563,7 @@ local function ShowBorderDemo()
                             if SpellStyler.FrameTrackerManager then
                                 for trackerType, frames in pairs(SpellStyler.FrameTrackerManager.SpellStyler_frames) do
                                     for baseSpellID, _ in pairs(frames) do
-                                        SpellStyler.FrameTrackerManager:ApplyStaticFrameProperties(baseSpellID, trackerType)
+                                        SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(baseSpellID, trackerType)
                                     end
                                 end
                             end
@@ -709,7 +709,7 @@ combatDelayFrame:SetScript("OnEvent", function(self, event, ...)
             if FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat then
                 FrameTrackerManager.AttemptToScanBuffsAfterLeavingCombat = false
                 -- FrameTrackerManager:HookAllBuffCooldownFrames("buffs")
-                FrameTrackerManager:FreshCreateFrames("AttemptToScanBuffsAfterLeavingCombat")
+                FrameTrackerManager.lifecycleController.FreshCreateFrames("AttemptToScanBuffsAfterLeavingCombat")
             end
         end
     end
