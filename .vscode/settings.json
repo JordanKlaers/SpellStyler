@@ -94,7 +94,8 @@
 		"WorldFrame",
 		"FrameUtil",
 		"RAID",
-		"PLAYER"
+		"PLAYER",
+		"UIDropDownMenu_EnableDropDown"
 	],
 	"Lua.type.weakUnionCheck": true
 }

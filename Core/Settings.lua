@@ -220,6 +220,11 @@ local function ShowBorderDemo()
         utilityContentFrame:SetAllPoints(insetSettingsContainer)
         utilityContentFrame:SetFrameLevel(insetSettingsContainer:GetFrameLevel() + 1)
 
+        -- ---- Profiles view ----
+        local profileContentFrame = CreateFrame("Frame", nil, insetSettingsContainer)
+        profileContentFrame:SetAllPoints(insetSettingsContainer)
+        profileContentFrame:SetFrameLevel(insetSettingsContainer:GetFrameLevel() + 1)
+
         -- Blizzard frame visibility section
         local visLabel = utilityContentFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         visLabel:SetPoint("TOPLEFT", utilityContentFrame, "TOPLEFT", 12, -16)
@@ -585,12 +590,14 @@ local function ShowBorderDemo()
         SpellStyler.IconSettingsRenderer:RenderIconControlView(settingsContentFrame)
         SpellStyler.ContainerSettingsRenderer:RenderContainerView(containerContentFrame)
         SpellStyler.ConditionalCreator:RenderConditionsView(conditionsContentFrame)
+        SpellStyler.ProfileSettingsRenderer:Render(profileContentFrame)
 
         RegisterView("icons",      settingsContentFrame)
         RegisterView("help",       helpContentFrame)
         RegisterView("containers", containerContentFrame)
         RegisterView("utility",    utilityContentFrame)
         RegisterView("conditions", conditionsContentFrame)
+        RegisterView("profiles",   profileContentFrame)
         SwitchToView("icons")
 
         -- Store references globally so other modules can update the settings menu
@@ -648,22 +655,25 @@ local function ShowBorderDemo()
         local tabContainers = SpellStyler.CreateTab(tabBar, "Containers", tabFaceW, tabH)
         local tabUtility    = SpellStyler.CreateTab(tabBar, "Utility",    tabFaceW, tabH)
         local tabConditions = SpellStyler.CreateTab(tabBar, "Conditions", tabFaceW, tabH)
+        local tabProfiles   = SpellStyler.CreateTab(tabBar, "Profiles",   tabFaceW, tabH)
 
-        tabBar:SetHeight(5 * tabH + 4 * tabGap)
+        tabBar:SetHeight(6 * tabH + 5 * tabGap)
 
         tabSpells:SetPoint("TOPLEFT",     tabBar,        "TOPLEFT", 0, 0)
         tabHelp:SetPoint("TOPLEFT",       tabSpells,     "BOTTOMLEFT", 0, -tabGap)
         tabContainers:SetPoint("TOPLEFT", tabHelp,       "BOTTOMLEFT", 0, -tabGap)
         tabUtility:SetPoint("TOPLEFT",    tabContainers, "BOTTOMLEFT", 0, -tabGap)
         tabConditions:SetPoint("TOPLEFT", tabUtility,    "BOTTOMLEFT", 0, -tabGap)
+        tabProfiles:SetPoint("TOPLEFT",   tabConditions, "BOTTOMLEFT", 0, -tabGap)
 
         tabSpells.onTabClick     = function() SwitchToView("icons") end
         tabHelp.onTabClick       = function() SwitchToView("help") end
         tabContainers.onTabClick = function() SwitchToView("containers") end
         tabUtility.onTabClick    = function() SwitchToView("utility") end
         tabConditions.onTabClick = function() SwitchToView("conditions") end
+        tabProfiles.onTabClick   = function() SwitchToView("profiles") end
 
-        SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabContainers, tabUtility, tabConditions })
+        SpellStyler.SetTabGroupExclusive({ tabSpells, tabHelp, tabContainers, tabUtility, tabConditions, tabProfiles })
         tabSpells:SetSelected(true)
     end
 	-- When the settings menu is open and the user clicks a tracker frame in the

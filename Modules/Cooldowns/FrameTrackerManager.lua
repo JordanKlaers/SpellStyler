@@ -6,7 +6,6 @@ local State = SpellStyler.State
 local isInitialized = false
 local hasPlayerEnetedWorld = false
 
-
 function FrameTrackerManager:GetTrackerFrame(trackerKey, trackerType)
     return FrameTrackerManager.SpellStyler_frames[trackerType] and FrameTrackerManager.SpellStyler_frames[trackerType][trackerKey] or nil
 end
@@ -391,6 +390,95 @@ FrameTrackerManager.lifecycleController = {
 -- GetDeadGroupType - Identify a non-secret player group GUID.
 -- =======================================
 FrameTrackerManager.utils = {
+    GetCurrentItemID = function(config, fallbackItemID)
+        if not config or not config.isItem then
+            return fallbackItemID
+        end
+
+        local resolved = SpellStyler.GetOwnedItemQuality
+            and SpellStyler.GetOwnedItemQuality(config.itemID, config.associatedItemQualities)
+        return (resolved and resolved.itemID) or config.itemID or fallbackItemID
+    end,
+
+    ShouldHideEmptyItemIcon = function(config)
+        if not config or not config.isItem then
+            return false
+        end
+
+        local itemID = FrameTrackerManager.utils.GetCurrentItemID(config, config.itemID)
+        if not itemID then
+            return false
+        end
+
+        local instantItemID, _, _, _, _, classID = C_Item.GetItemInfoInstant(itemID)
+        if not instantItemID then
+            return false
+        end
+
+        local isConsumable = Enum
+            and Enum.ItemClass
+            and classID == Enum.ItemClass.Consumable
+
+        local _, _, _, _, _, _, _, itemStackCount = C_Item.GetItemInfo(instantItemID)
+        local isStackable = tonumber(itemStackCount) and itemStackCount > 1
+
+        if not isConsumable and not isStackable then
+            return false
+        end
+
+        return C_Item.GetItemCount(instantItemID, false, true) == 0
+    end,
+
+    ApplyItemQualityOverlay = function(itemID, frame, associatedItemQualities, shouldShowQualityEmblem)
+        if not frame then return end
+
+        if frame.spellStylerItemQualityTexture then
+            frame.spellStylerItemQualityTexture:Hide()
+            frame.spellStylerItemQualityTexture = nil
+        end
+
+        if not itemID then
+            return
+        end
+        if shouldShowQualityEmblem == false then
+            return
+        end
+
+        local resolved = SpellStyler.GetOwnedItemQuality
+            and SpellStyler.GetOwnedItemQuality(itemID, associatedItemQualities)
+        local quality = resolved and resolved.qualityLevel
+        if not quality and C_TradeSkillUI and C_TradeSkillUI.GetItemReagentQualityInfo then
+            local qualityInfo = C_TradeSkillUI.GetItemReagentQualityInfo(itemID)
+            quality = qualityInfo and (qualityInfo.quality or qualityInfo.qualityLevel)
+        end
+        if not quality and C_Item and C_Item.GetItemInfo then
+            local _, _, itemQuality = C_Item.GetItemInfo(itemID)
+            quality = itemQuality
+        end
+        quality = tonumber(quality) or quality
+
+        local left, right
+        if quality == 2 then
+            left, right = 0.85, 0.915
+        elseif quality == 1 then
+            left, right = 0.755, 0.82
+        else
+            return
+        end
+
+        local width, height = frame:GetSize()
+        if not width or not height or width <= 0 or height <= 0 then
+            return
+        end
+
+        local texture = frame:CreateTexture(nil, "OVERLAY")
+        texture:SetSize(width / 2, height / 2)
+        texture:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
+        texture:SetTexture(7487371)
+        texture:SetTexCoord(left, right, 0.035, 0.16)
+        frame.spellStylerItemQualityTexture = texture
+    end,
+
     -- When all associated spells are set to disabled, this method is used to check that, and delete the frame from within the ApplyStaticFrameProperties method - which is the callback for a state property updating
     IsEveryTrackerSpellDisabled = function(trackerConfig)
         local associatedSpellIDs = State:GetAssociatedSpellIDs(trackerConfig)
@@ -979,7 +1067,9 @@ FrameTrackerManager.frameController = {
             
             if data.config and data.config.isItem then
                 -- Items: create duration object using GetItemDurationObject
-                durationObject = FrameTrackerManager.frameController.GetItemDurationObject(data.itemID)
+                durationObject = FrameTrackerManager.frameController.GetItemDurationObject(
+                    FrameTrackerManager.utils.GetCurrentItemID(data.config, data.itemID)
+                )
             else
                 -- try to get spell charge duration first
                 local maxSpellCharges = 1
@@ -1076,6 +1166,17 @@ FrameTrackerManager.frameController = {
                 end
             end
         end
+    end,
+
+    RefreshItemTrackers = function()
+        for trackerKey, frame in pairs(FrameTrackerManager.SpellStyler_frames.items or {}) do
+            local config = State:GetSpecificTrackerValue(trackerKey, "items")
+            if config and frame then
+                FrameTrackerManager.frameController.ApplyStaticFrameProperties(trackerKey, "items")
+                FrameTrackerManager.frameController.SyncIconTexture(frame)
+            end
+        end
+        FrameTrackerManager.frameController.updateItemCounts()
     end,
 
     UpdateActiveSpells = function()
@@ -1335,7 +1436,9 @@ FrameTrackerManager.frameController = {
         
         -- Items: build duration object on the fly and check cooldown state
         if config and config.isItem and frame.meta.itemID then
-            local durationObj = FrameTrackerManager.frameController.GetItemDurationObject(frame.meta.itemID)
+            local durationObj = FrameTrackerManager.frameController.GetItemDurationObject(
+                FrameTrackerManager.utils.GetCurrentItemID(config, frame.meta.itemID)
+            )
             
             local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
             
@@ -1435,22 +1538,28 @@ FrameTrackerManager.frameController = {
                     -- Items don't have charges, hide count text
                     -- data.customFrame.count:SetAlpha(0)
                 else
-                    -- Spells: show charge count for multi-charge spells
-                    local chargesData = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(data.customFrame.meta.baseSpellID))
                     local currentCharges
-                    if not chargesData or chargesData.maxCharges == 1 then
-                        -- set zero so that spells with only 1 charge dont render the text
-                        if data.customFrame.meta.trackerType == 'items' then
-                            currentCharges = C_Item.GetItemCount(data.customFrame.meta.itemID, true, true)
-                        else
-                            currentCharges = 0
-                        end
+                    local isItem = data.customFrame.meta.trackerType == "items"
+                    if isItem then
+                        currentCharges = C_Item.GetItemCount(
+                            FrameTrackerManager.utils.GetCurrentItemID(data.config, data.customFrame.meta.itemID),
+                            false,
+                            true
+                        )
                     else
-                        currentCharges = chargesData.currentCharges
+                        -- Spells: show charge count for multi-charge spells.
+                        local chargesData = C_Spell.GetSpellCharges(
+                            C_Spell.GetOverrideSpell(data.customFrame.meta.baseSpellID)
+                        )
+                        if not chargesData or chargesData.maxCharges == 1 then
+                            currentCharges = 0
+                        else
+                            currentCharges = chargesData.currentCharges
+                        end
                     end
                     chargesReturnValue = currentCharges
                     data.customFrame.count:SetText(currentCharges)
-                    data.customFrame.count:SetAlpha(currentCharges)
+                    data.customFrame.count:SetAlpha(isItem and 1 or currentCharges)
                     if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
                         if data.customFrame.chargeAnchorBarA then
                             data.customFrame.chargeAnchorBarA:SetValue(currentCharges)
@@ -1496,6 +1605,16 @@ FrameTrackerManager.frameController = {
         if startTimeSeconds and durationSeconds and durationSeconds > 0.01 then
             durationObject = C_DurationUtil.CreateDuration()
             durationObject:SetTimeFromStart(startTimeSeconds, durationSeconds)
+        end
+
+        if not durationObject then
+            local _, itemSpellID = C_Item.GetItemSpell(itemID)
+            if itemSpellID and C_Spell.GetSpellCooldownDuration then
+                local spellDuration = C_Spell.GetSpellCooldownDuration(itemSpellID, true)
+                if spellDuration and not spellDuration:IsZero() then
+                    durationObject = spellDuration
+                end
+            end
         end
         
         if not durationObject then
@@ -1551,6 +1670,13 @@ FrameTrackerManager.frameController = {
 
     --- Resolves the texture used by the icon property pipeline.
     ResolveIconTexture = function(frame, trackerConfig)
+        if trackerConfig.isItem then
+            return SpellStyler.GetOwnedItemIcon
+                and SpellStyler.GetOwnedItemIcon(trackerConfig.itemID, trackerConfig.associatedItemQualities,
+                    trackerConfig.defaultIconTexturePath)
+                or trackerConfig.defaultIconTexturePath
+        end
+
         local baseSpellID = trackerConfig.baseSpellID
         local currentSpellID = C_Spell.GetOverrideSpell(baseSpellID)
         local iconSettings = trackerConfig.iconSettings
@@ -1590,6 +1716,14 @@ FrameTrackerManager.frameController = {
                 frame.variantFrame.icon:SetTexture(texture)
                 frame.variantFrame.icon:SetVertexColor(color.r or 1, color.g or 1, color.b or 1)
                 frame.variantFrame.iconContainer:SetAlpha(color.a or 1)
+            end
+        end
+        if trackerConfig.isItem then
+            FrameTrackerManager.utils.ApplyItemQualityOverlay(trackerConfig.itemID, frame.iconContainer,
+                trackerConfig.associatedItemQualities, trackerConfig.shouldShowQualityEmblem)
+            if frame.variantFrame then
+                FrameTrackerManager.utils.ApplyItemQualityOverlay(trackerConfig.itemID, frame.variantFrame.iconContainer,
+                    trackerConfig.associatedItemQualities, trackerConfig.shouldShowQualityEmblem)
             end
         end
     end,
@@ -2487,21 +2621,30 @@ FrameTrackerManager.FrameBuilder = {
         
         data.frame.icon:SetTexCoord(0 + zoom, 1 - zoom, 0 + zoom, 1 - zoom)
         
-        -- Resolve the initial icon from the exact spell currently represented.
-        local currentSpellID = C_Spell.GetOverrideSpell(data.trackerConfig.baseSpellID)
-        local variation = State:GetAssociatedSpellID(data.trackerConfig, currentSpellID, true)
-        local iconTexture = variation and variation.iconTexturePath
-        if not iconTexture or iconTexture == "" then
-            local currentSpellInfo = C_Spell.GetSpellInfo(currentSpellID)
-            iconTexture = (currentSpellInfo and currentSpellInfo.iconID)
-                or data.frame.meta.customTexture
-                or data.trackerConfig.defaultIconTexturePath
+        local iconTexture
+        if data.trackerConfig.isItem then
+            iconTexture = data.trackerConfig.defaultIconTexturePath
+        else
+            -- Resolve the initial icon from the exact spell currently represented.
+            local currentSpellID = C_Spell.GetOverrideSpell(data.trackerConfig.baseSpellID)
+            local variation = State:GetAssociatedSpellID(data.trackerConfig, currentSpellID, true)
+            iconTexture = variation and variation.iconTexturePath
+            if not iconTexture or iconTexture == "" then
+                local currentSpellInfo = C_Spell.GetSpellInfo(currentSpellID)
+                iconTexture = (currentSpellInfo and currentSpellInfo.iconID)
+                    or data.frame.meta.customTexture
+                    or data.trackerConfig.defaultIconTexturePath
+            end
         end
         
         -- For items, defaultIconTexturePath is already the resolved texture path (not itemID)
         -- No conversion needed
         
         data.frame.icon:SetTexture(iconTexture)
+        if data.trackerConfig.isItem then
+            FrameTrackerManager.utils.ApplyItemQualityOverlay(data.trackerConfig.itemID, data.frame.iconContainer,
+                data.trackerConfig.associatedItemQualities, data.trackerConfig.shouldShowQualityEmblem)
+        end
         
         -- Apply color (RGB only, alpha goes on iconContainer). Base vs override color depends
         -- only on whether the spell is overridden, independent of the texture override.
@@ -3212,6 +3355,12 @@ FrameTrackerManager.ApplyVisibility = {
             alpha = 0
         end
 
+        if not shouldOverrideVisibility
+            and FrameTrackerManager.utils.ShouldHideEmptyItemIcon(context.config)
+        then
+            alpha = 0
+        end
+
         -- Get color from conditional state first, then the tracker config.
         local iconColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "iconColor")
         local color = iconColorOverride or (context.config and context.config.iconColor) or {}
@@ -3590,7 +3739,7 @@ eventFrame:RegisterEvent("UNIT_DIED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "BAG_UPDATE_DELAYED" or  event == "BAG_NEW_ITEMS_UPDATED" or event == "BAG_UPDATE" then
-        FrameTrackerManager.frameController.updateItemCounts()
+        FrameTrackerManager.frameController.RefreshItemTrackers()
         return
     end
 

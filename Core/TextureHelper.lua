@@ -46,7 +46,7 @@ local function CreateCornerFrame(parent, name, point, xOff, yOff, l, r, t, b, ro
 
     local tex = frame:CreateTexture(nil, "ARTWORK")
     tex:SetAllPoints(frame)
-    tex:SetTexture(4554359)
+    tex:SetTexture(7487371)
     tex:SetTexCoord(l, r, t, b)
     local corner = {
         frame = frame,
@@ -358,43 +358,124 @@ local function ListTexturesUnderMouse(frame, parentFrameName)
     end
 end
 
+local function CollectTexturesUnderMouse()
+    wipe(frameData)
+    wipe(visitiedFrames)
+    wipe(savedTextures)
+
+    local mouseFoci = GetMouseFoci()
+    local mouseFocus = mouseFoci and mouseFoci[1]
+    if not mouseFocus then
+        return
+    end
+
+    ListTexturesUnderMouse(mouseFocus, "")
+
+    local textureCount = 0
+    for _ in pairs(savedTextures) do
+        textureCount = textureCount + 1
+    end
+
+end
+
+SLASH_SS_TEXSCAN1 = "/sstexscan"
+SlashCmdList["SS_TEXSCAN"] = function()
+    CollectTexturesUnderMouse()
+end
+
 local donk
 local doop
 -- Keybind handler: Shift+Ctrl+L
 
-pcall(function()
-    local texScanFrame = CreateFrame("Frame")
-    texScanFrame:SetPropagateKeyboardInput(true)
-    texScanFrame:RegisterEvent("PLAYER_LOGIN")
+local texScanFrame = CreateFrame("Frame")
+texScanFrame:SetPropagateKeyboardInput(true)
+texScanFrame:RegisterEvent("PLAYER_LOGIN")
 
-    texScanFrame:SetScript("OnEvent", function(self, event, ...)
-        texScanFrame:SetScript("OnKeyDown", function(self, key)
-            -- Shift+Ctrl+X: Test AuraContainer with spell ID filtering
-            if key == "1" and IsShiftKeyDown() and IsControlKeyDown() then
-                
+texScanFrame:SetScript("OnEvent", function(self, event, ...)
+    texScanFrame:SetScript("OnKeyDown", function(self, key)
+        -- Shift+Ctrl+X: Test AuraContainer with spell ID filtering
+        if key == "1" and IsShiftKeyDown() and IsControlKeyDown() then
+
+        end
+        if key == "2" and IsShiftKeyDown() and IsControlKeyDown() then
+            CollectTexturesUnderMouse()
+        end
+        if key == "L" and IsShiftKeyDown() and IsControlKeyDown() then
+        end
+        if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
+            local currentSpecID = SpellStyler.State:GetCurrentSpecID()
+            local activeTalentID = SpellStyler.State:GetActiveTalentConfigID()
+            local activeTraitConfigID = C_ClassTalents.GetActiveConfigID()
+            local talentConfigIDs = C_ClassTalents.GetConfigIDsBySpecID(currentSpecID) or {}
+            local talentLoadouts = {}
+
+            for _, configID in ipairs(talentConfigIDs) do
+                local configInfo = C_Traits.GetConfigInfo(configID)
+                talentLoadouts[#talentLoadouts + 1] = {
+                    configID = configID,
+                    name = configInfo and configInfo.name,
+                    configInfo = configInfo,
+                }
             end
-            if key == "2" and IsShiftKeyDown() and IsControlKeyDown() then
-                
+
+            -- DevTool:AddData({
+            --     currentSpecID = currentSpecID,
+            --     activeTalentID = activeTalentID,
+            --     activeTraitConfigID = activeTraitConfigID,
+            --     activeTalentConfigInfo = activeTalentID and C_Traits.GetConfigInfo(activeTalentID),
+            --     talents = talentConfigIDs,
+            --     talentLoadouts = talentLoadouts,
+            --     talentConfigIDs = C_Traits.GetConfigsByType(1)
+            -- }, "C_ClassTalents.GetActiveConfigID()")
+            local itemIDs = {
+                6262
+            }
+            local continuableContainer = ContinuableContainer:Create()
+            local itemObjects = {}
+
+            for _, itemID in ipairs(itemIDs) do
+                local item = Item:CreateFromItemID(itemID)
+                itemObjects[itemID] = item
+                continuableContainer:AddContinuable(item)
             end
-            if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-                local modifiedWings = 1279187
-                local corruptedCS = 35395
-                local isUsable, insufficientPower = C_Spell.IsSpellUsable(335467)
-                DevTool:AddData({
-                    aura = C_UnitAuras.GetAuraDataBySpellName("player", "Infusion of Light"),
-                    infusion = C_Spell.GetSpellInfo("Infusion of Light"),
-                    isUsable = isUsable,
-                    insufficientPower = insufficientPower,
-                    _framePropertyOverrides = SpellStyler.ConditionalEngine._framePropertyOverrides
-                }, "aaa")
-            end
-        end)
-        texScanFrame:SetScript("OnKeyUp", function(self, key) end)
-        texScanFrame:SetScript("OnMouseDown", function() end)
-        texScanFrame:SetScript("OnMouseUp", function() end)
-        texScanFrame:EnableKeyboard(true)
+
+            continuableContainer:ContinueOnLoad(function()
+                local loadedItems = {}
+
+                for _, itemID in ipairs(itemIDs) do
+                    local itemName, itemLink, itemQuality, itemLevel,
+                        itemMinLevel, itemType, itemSubType, itemStackCount,
+                        itemEquipLoc, itemTexture, sellPrice, classID,
+                        subclassID, bindType, expansionID, setID,
+                        isCraftingReagent, itemDescription =
+                        C_Item.GetItemInfo(itemID)
+
+                    local detailedItemLevel, previewLevel, sparseItemLevel =
+                        C_Item.GetDetailedItemLevelInfo(itemLink or itemID)
+
+                    local itemObject = itemObjects[itemID]
+                    loadedItems[itemID] = {
+                        isConsumable = C_Item.IsConsumableItem(itemID),
+                        itemStackCount = itemStackCount,
+                        itemEquipLoc = itemEquipLoc,
+                        itemIcon = C_Item.GetItemIconByID(itemID),
+                        itemObject = itemObject
+                    }
+                end
+
+                -- DevTool:AddData({
+                --     itemIDs = itemIDs,
+                --     items = loadedItems,
+                -- }, "aaa")
+            end)
+        end
     end)
+    texScanFrame:SetScript("OnKeyUp", function(self, key) end)
+    texScanFrame:SetScript("OnMouseDown", function() end)
+    texScanFrame:SetScript("OnMouseUp", function() end)
+    texScanFrame:EnableKeyboard(true)
 end)
+
 
 
 
@@ -478,5 +559,3 @@ SLASH_SS_PREVIEWHIDE1 = "/sspreviewhide"
 SlashCmdList["SS_PREVIEWHIDE"] = function()
     if previewFrame then previewFrame:Hide() end
 end
-
-

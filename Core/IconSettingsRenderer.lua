@@ -129,7 +129,7 @@ end
 -- INPUT FACTORY METHODS
 -- ============================================================================
 
-local function CreateIconButton(parent, iconPath, spellName, trackerKey, trackerType, size, devNotes)
+local function CreateIconButton(parent, iconPath, spellName, trackerKey, trackerType, size, devNotes, itemID)
 	local btn = CreateFrame("Button", nil, parent)
 	btn:SetSize(size or 40, size or 40)
 	local tex = btn:CreateTexture(nil, "ARTWORK")
@@ -138,6 +138,16 @@ local function CreateIconButton(parent, iconPath, spellName, trackerKey, tracker
 	btn.trackerType = trackerType
 	btn.trackerKey = trackerKey
 	btn.texture = tex
+	if trackerType == "items" then
+		local config = State:GetSpecificTrackerValue(trackerKey, trackerType)
+		tex:SetTexture(SpellStyler.GetOwnedItemIcon(itemID, config and config.associatedItemQualities, iconPath))
+		SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(
+            itemID,
+            btn,
+            config and config.associatedItemQualities,
+            config and config.shouldShowQualityEmblem
+        )
+	end
 	-- Glow border shown when a section header is dragged over this button
 	local glowBorder = CreateFrame("Frame", nil, btn, "BackdropTemplate")
 	glowBorder:SetPoint("TOPLEFT", btn, "TOPLEFT", -3, 3)
@@ -1105,6 +1115,171 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     local configSections = {}
     table.insert(configSections, {
         type = "header",
+        text = "Templates",
+        state = "collapsed",
+        sectionContent = {
+            {
+                type = "customRender",
+                render = function(container, lastControl, uid, tType, rerender)
+                    local templates = SpellStyler_DB and SpellStyler_DB.trackerTemplates
+                    if not templates then
+                        SpellStyler_DB = SpellStyler_DB or {}
+                        SpellStyler_DB.trackerTemplates = {}
+                        templates = SpellStyler_DB.trackerTemplates
+                    end
+
+                    local block = CreateFrame("Frame", nil, container)
+                    block:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -8)
+                    block:SetPoint("RIGHT", container, "RIGHT", -8, 0)
+                    block:SetHeight(56)
+
+                    local nameInput = CreateFrame("EditBox", nil, block, "InputBoxTemplate")
+                    nameInput:SetPoint("TOPLEFT", block, "TOPLEFT", 8, -4)
+                    nameInput:SetSize(120, 20)
+                    nameInput:SetAutoFocus(false)
+                    nameInput:SetMaxLetters(100)
+
+                    local createButton = CreateFrame("Button", nil, block, "UIPanelButtonTemplate")
+                    createButton:SetPoint("TOPRIGHT", block, "TOPRIGHT", 0, -2)
+                    createButton:SetSize(130, 24)
+                    createButton:SetText("Create Template")
+
+                    local createButtonTooltip = CreateFrame("Frame", nil, block)
+                    createButtonTooltip:SetAllPoints(createButton)
+                    createButtonTooltip:SetFrameStrata(createButton:GetFrameStrata())
+                    createButtonTooltip:SetFrameLevel(createButton:GetFrameLevel() + 10)
+                    createButtonTooltip:EnableMouse(true)
+
+                    local selectedName
+                    local applyButton
+                    local deleteButton
+                    local dropdown
+
+                    local function Trim(value)
+                        return (value or ""):match("^%s*(.-)%s*$")
+                    end
+
+                    local function HasTemplateName(name)
+                        return name ~= "" and templates[name] ~= nil
+                    end
+
+                    local function UpdateButtonStates()
+                        local name = Trim(nameInput:GetText())
+                        local duplicate = HasTemplateName(name)
+                        createButton:SetEnabled(name ~= "" and not duplicate)
+                        applyButton:SetEnabled(selectedName ~= nil)
+                        deleteButton:SetEnabled(selectedName ~= nil)
+                        if duplicate then
+                            createButtonTooltip:Show()
+                            createButtonTooltip:SetScript("OnEnter", function(self)
+                                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                                GameTooltip:SetText(
+                                    "This template name already exists, pick a new one",
+                                    1, 1, 1
+                                )
+                                GameTooltip:Show()
+                            end)
+                        else
+                            createButtonTooltip:Hide()
+                            createButtonTooltip:SetScript("OnEnter", nil)
+                        end
+                    end
+
+                    nameInput:SetScript("OnTextChanged", UpdateButtonStates)
+
+                    createButton:SetScript("OnClick", function()
+                        local name = Trim(nameInput:GetText())
+                        if name == "" or HasTemplateName(name) then
+                            UpdateButtonStates()
+                            return
+                        end
+
+                        local trackerConfig = State:GetSpecificTrackerValue(uid, tType)
+                        if not trackerConfig then
+                            return
+                        end
+
+                        local factory = SpellStyler.TrackerConfigFactory
+                        if not factory then
+                            return
+                        end
+
+                        templates[name] = factory:ExtractTemplate(tType, trackerConfig)
+                        nameInput:SetText("")
+                        if rerender then
+                            rerender()
+                        end
+                    end)
+
+                    createButtonTooltip:SetScript("OnLeave", function()
+                        GameTooltip:Hide()
+                    end)
+
+                    dropdown = CreateFrame("Frame", nil, block, "UIDropDownMenuTemplate")
+                    dropdown:SetPoint("TOPLEFT", block, "TOPLEFT", -16, -30)
+                    UIDropDownMenu_SetWidth(dropdown, 120)
+
+                    local templateNames = {}
+                    for name in pairs(templates) do
+                        table.insert(templateNames, name)
+                    end
+                    table.sort(templateNames)
+
+                    UIDropDownMenu_Initialize(dropdown, function(self, level)
+                        for _, name in ipairs(templateNames) do
+                            local info = UIDropDownMenu_CreateInfo()
+                            info.text = name
+                            info.value = name
+                            info.checked = selectedName == name
+                            info.func = function()
+                                selectedName = name
+                                UIDropDownMenu_SetText(dropdown, name)
+                                UpdateButtonStates()
+                            end
+                            UIDropDownMenu_AddButton(info, level)
+                        end
+                    end)
+                    UIDropDownMenu_SetText(dropdown, "Select template")
+
+                    applyButton = CreateFrame("Button", nil, block, "UIPanelButtonTemplate")
+                    applyButton:SetPoint("TOPRIGHT", block, "TOPRIGHT", 0, -32)
+                    applyButton:SetSize(60, 24)
+                    applyButton:SetText("Apply")
+                    applyButton:SetScript("OnClick", function()
+                        local template = selectedName and templates[selectedName]
+                        local trackerConfig = State:GetSpecificTrackerValue(uid, tType)
+                        local factory = SpellStyler.TrackerConfigFactory
+                        if template and trackerConfig and factory then
+                            factory:ApplyTemplate(tType, trackerConfig, template)
+                            RefreshTrackerVisuals(uid, tType)
+                            if rerender then
+                                rerender()
+                            end
+                        end
+                    end)
+
+                    deleteButton = CreateFrame("Button", nil, block, "UIPanelButtonTemplate")
+                    deleteButton:SetPoint("TOPRIGHT", applyButton, "TOPLEFT", -6, 0)
+                    deleteButton:SetSize(70, 24)
+                    deleteButton:SetText("Delete")
+                    deleteButton:SetScript("OnClick", function()
+                        if selectedName then
+                            templates[selectedName] = nil
+                            selectedName = nil
+                            if rerender then
+                                rerender()
+                            end
+                        end
+                    end)
+
+                    UpdateButtonStates()
+                    return block
+                end,
+            },
+        },
+    })
+    table.insert(configSections, {
+        type = "header",
         text = "Icon Settings",
         state = 'expanded',
         sectionContent = (function()
@@ -1466,6 +1641,39 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     label = "Desaturate when on cooldown",
                     getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.desaturated") or false end,
                     setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.desaturated", value) end,
+                })
+            end
+            if config.trackerType == "items" then
+                table.insert(sections, {
+                    type = "checkbox",
+                    label = "Show quality emblem",
+                    getValue = function(self)
+                        return config.getValue(self.uniqueID, "shouldShowQualityEmblem") ~= false
+                    end,
+                    setValue = function(self, value)
+                        config.setValue(self.uniqueID, "shouldShowQualityEmblem", value)
+                        local frame = SpellStyler.FrameTrackerManager
+                            and SpellStyler.FrameTrackerManager:GetTrackerFrame(
+                                self.uniqueID,
+                                "items"
+                            )
+                        if frame and frame.iconContainer then
+                            SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(
+                                frame.meta.itemID or config.getValue(self.uniqueID, "itemID"),
+                                frame.iconContainer,
+                                config.getValue(self.uniqueID, "associatedItemQualities"),
+                                value
+                            )
+                            if frame.variantFrame and frame.variantFrame.iconContainer then
+                                SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(
+                                    frame.meta.itemID or config.getValue(self.uniqueID, "itemID"),
+                                    frame.variantFrame.iconContainer,
+                                    config.getValue(self.uniqueID, "associatedItemQualities"),
+                                    value
+                                )
+                            end
+                        end
+                    end,
                 })
             end
             table.insert(sections, {
@@ -3127,7 +3335,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         header:SetWordWrap(true)
         header:SetText(displayName)
         header:SetTextColor(1, 1, 1)
-        local icon = CreateIconButton(selectedIconHeader, displayIcon, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes)
+        local icon = CreateIconButton(selectedIconHeader, displayIcon, displayName, trackerKey, trackedValue.trackerType, 30, trackedValue.devNotes, trackedValue.itemID)
 		icon:SetPoint("LEFT", selectedIconHeader, "LEFT", 10, 0)
 
         local actionsHost = self._selectedIconActionsHost or selectedIconHeader
@@ -4113,7 +4321,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                 lbl:SetJustifyH("CENTER")
                 yOffset = yOffset - headerHeight - headerPaddingBottom
             else
-                local btn = CreateIconButton(iconScrollChild, entry.defaultIconTexturePath, entry.name, entry.trackerKey, entry.trackerType, nil, entry.devNotes)
+                local btn = CreateIconButton(iconScrollChild, entry.defaultIconTexturePath, entry.name, entry.trackerKey, entry.trackerType, nil, entry.devNotes, entry.itemID)
                 table.insert(settingsMenuIconList, btn)
                 btn:ClearAllPoints()
                 btn:SetParent(iconScrollChild)
@@ -4308,11 +4516,22 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             RefreshTrackerVisuals(trackerKey, trackerType)
         end
         
+        local function GetTrackerHoverName(frame)
+            local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
+            if trackerConfig and trackerConfig.isItem then
+                return trackerConfig.name
+                    or (trackerConfig.itemID and C_Item.GetItemNameByID(trackerConfig.itemID))
+                    or frame.meta.spellName
+                    or "Icon"
+            end
+            return frame.meta.spellName or (trackerConfig and trackerConfig.name) or "Icon"
+        end
+
         local mouseHoverTooltip = function(self)
             self:EnableMouseWheel(true)
             -- Show tooltip with size info
             GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-            GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
+            GameTooltip:SetText(GetTrackerHoverName(self), 1, 1, 1)
             GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
             local width = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.width") or 48
             local height = State:GetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.height") or 48
@@ -4357,7 +4576,7 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             if GameTooltip:IsOwned(self) then
                 GameTooltip:ClearLines()
                 GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-                GameTooltip:SetText(self.meta.spellName or "Icon", 1, 1, 1)
+                GameTooltip:SetText(GetTrackerHoverName(self), 1, 1, 1)
                 GameTooltip:AddLine("Scroll to resize", 0.5, 0.8, 1)
                 GameTooltip:AddLine(string.format("Size: %dx%d", newWidth, newHeight), 1, 1, 0)
                 GameTooltip:Show()

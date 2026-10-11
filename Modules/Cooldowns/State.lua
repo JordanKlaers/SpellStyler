@@ -118,6 +118,15 @@ function State:GetClassAndSpecInfo()
 end
 
 local _cachedSpecID = nil
+local PROFILE_DATA_KEYS = {
+    "buffs",
+    "essential",
+    "utility",
+    "spells",
+    "items",
+    "docks",
+    "globalSettings",
+}
 
 --[[----------------------------------------------------
 Database access, aura filtering, and settings/search code use this for the
@@ -137,6 +146,140 @@ function State:GetCurrentSpecID()
     return _cachedSpecID
 end
 
+function State:GetActiveTalentConfigID()
+    local specID = self:GetCurrentSpecID()
+    if C_ClassTalents
+        and C_ClassTalents.GetLastSelectedSavedConfigID
+        and specID
+    then
+        return C_ClassTalents.GetLastSelectedSavedConfigID(specID)
+    end
+
+    if C_ClassTalents and C_ClassTalents.GetActiveConfigID then
+        return C_ClassTalents.GetActiveConfigID()
+    end
+end
+
+function State:GetTalentLoadoutsForSpec(specID)
+    if not specID or not C_ClassTalents or not C_ClassTalents.GetConfigIDsBySpecID then
+        return {}
+    end
+
+    local loadouts = {}
+    for _, configID in ipairs(C_ClassTalents.GetConfigIDsBySpecID(specID) or {}) do
+        local configInfo = C_Traits and C_Traits.GetConfigInfo
+            and C_Traits.GetConfigInfo(configID)
+        loadouts[#loadouts + 1] = {
+            id = configID,
+            name = (configInfo and configInfo.name) or ("Talent Loadout " .. tostring(configID)),
+        }
+    end
+    return loadouts
+end
+
+function State:GetActiveTalentLoadoutInfo()
+    local configID = self:GetActiveTalentConfigID()
+    if not configID then return nil end
+
+    local configInfo = C_Traits and C_Traits.GetConfigInfo
+        and C_Traits.GetConfigInfo(configID)
+
+    return {
+        id = configID,
+        name = (configInfo and configInfo.name) or ("Talent Loadout " .. tostring(configID)),
+    }
+end
+
+function State:CanRegisterTalentLoadouts()
+    local hasUnspentHeroPoints = C_ClassTalents
+        and C_ClassTalents.HasUnspentHeroTalentPoints
+        and select(1, C_ClassTalents.HasUnspentHeroTalentPoints())
+    local hasUnspentTalentPoints = C_ClassTalents
+        and C_ClassTalents.HasUnspentTalentPoints
+        and select(1, C_ClassTalents.HasUnspentTalentPoints())
+
+    return not hasUnspentHeroPoints and not hasUnspentTalentPoints
+end
+
+function State:ReconcileTalentLoadouts(specID, specDB, populateMissing)
+    if not specDB or not specDB.profileSettings then return false end
+
+    local validLoadouts = self:GetTalentLoadoutsForSpec(specID)
+    if #validLoadouts == 0 then
+        return false
+    end
+
+    local savedLoadouts = specDB.profileSettings.talentLoadouts
+    local validLoadoutIDs = {}
+    for _, loadout in ipairs(validLoadouts) do
+        validLoadoutIDs[tostring(loadout.id)] = true
+    end
+
+    for configID in pairs(savedLoadouts) do
+        if not validLoadoutIDs[tostring(configID)] then
+            savedLoadouts[configID] = nil
+        elseif type(configID) == "string" and tonumber(configID) then
+            local numericConfigID = tonumber(configID)
+            if not savedLoadouts[numericConfigID] then
+                savedLoadouts[numericConfigID] = savedLoadouts[configID]
+            end
+            savedLoadouts[configID] = nil
+        end
+    end
+
+    for _, loadout in ipairs(validLoadouts) do
+        local savedLoadout = savedLoadouts[loadout.id]
+        if not savedLoadout and populateMissing then
+            savedLoadout = {
+                profile = specDB.profileSettings.singleProfile or "default",
+            }
+            savedLoadouts[loadout.id] = savedLoadout
+        end
+        if savedLoadout then
+            savedLoadout.name = loadout.name
+        end
+    end
+
+    return true
+end
+
+local function CreateDefaultProfileData(source)
+    local profile = {}
+    for _, key in ipairs(PROFILE_DATA_KEYS) do
+        profile[key] = DeepCopy(source[key] or {})
+    end
+    return profile
+end
+
+local function EnsureProfileDataShape(profile)
+    for _, key in ipairs(PROFILE_DATA_KEYS) do
+        profile[key] = profile[key] or {}
+    end
+end
+
+function State:GetActiveProfileName(specDB)
+    if not specDB or type(specDB.profiles) ~= "table" then
+        return "default"
+    end
+
+    local settings = specDB.profileSettings or {}
+    local profileName = settings.singleProfile or "default"
+
+    if settings.mode == "talent" then
+        local loadout = settings.talentLoadouts
+            and settings.talentLoadouts[self:GetActiveTalentConfigID()]
+        profileName = (loadout and loadout.profile) or profileName
+    end
+
+    if type(specDB.profiles[profileName]) ~= "table" then
+        profileName = "default"
+    end
+    if type(specDB.profiles[profileName]) ~= "table" then
+        profileName = next(specDB.profiles)
+    end
+    return profileName
+end
+
 --[[----------------------------------------------------
 Tracker operations and settings code use this as the entry point to the
 character's current-spec database. Create missing tracker collections and
@@ -154,6 +297,30 @@ function State:GetDataBase_V2()
     end
     
     local specDB = SpellStyler_CharDB.classSpecializations[classSpecialization]
+
+    if specDB.profiles then
+        specDB.profileSettings = specDB.profileSettings or {
+            mode = "single",
+            singleProfile = "default",
+            talentLoadouts = {},
+        }
+        specDB.profileSettings.talentLoadouts = specDB.profileSettings.talentLoadouts or {}
+        specDB.profiles.default = specDB.profiles.default or CreateDefaultProfileData(specDB)
+        for _, profile in pairs(specDB.profiles) do
+            EnsureProfileDataShape(profile)
+        end
+        local activeProfile = specDB.profiles[self:GetActiveProfileName(specDB)]
+        EnsureProfileDataShape(activeProfile)
+        activeProfile.globalSettings.visibilitySettings = activeProfile.globalSettings.visibilitySettings or {
+            hideWhenOutOfCombat = false,
+        }
+        activeProfile.globalSettings.fontSettings = activeProfile.globalSettings.fontSettings or {
+            globalFont = "Friz Quadrata TT",
+            globalFontFlags = "OUTLINE",
+            overrideAllFonts = false,
+        }
+        return activeProfile
+    end
     
     -- Initialize tracker type tables
     specDB.buffs = specDB.buffs or {}
@@ -950,8 +1117,11 @@ function State:RemoveTrackerValue(trackerKey, trackerType)
         local container = SpellStyler.BuffManager
             and SpellStyler.BuffManager.buffContainers[trackerKey]
         if container and container.auraContainer then
-            container.auraContainer:Hide()
-            container.auraContainer:SetParent(nil)
+            container.auraContainer:SetEnabled(false)
+        end
+        if container and container.placeHolder then
+            SpellStyler.IconSettingsRenderer:DisableDraggingForSpecificFrame(container.placeHolder)
+            container.placeHolder:Hide()
         end
         if SpellStyler.BuffManager then
             SpellStyler.BuffManager.buffContainers[trackerKey] = nil
@@ -1141,8 +1311,8 @@ function State:MigrateDatabase()
         for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
             for trackerKey, trackerValue in pairs(specDB[trackerType]) do
                 -- Ensure proper base spellID if it doesnt exist
-                if trackerValue.rootSpellID and not trackerValue.baseSpellID then
-                    trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID)
+                if not trackerValue.baseSpellID then
+                    trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID or trackerValue.overrideSpellID or trackerKey)
                 end
                 if trackerType == "spells" then
                     NormalizeAssociatedSpellIDs(trackerValue)
@@ -1157,7 +1327,7 @@ function State:MigrateDatabase()
                 end
 
 
-                if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar.attemptToTrack then
+                if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar and trackerValue.totemBar.attemptToTrack then
                     trackerValue.statusBar.includeTotemDuration = true
                 end
                 --[[----------------------------------------------------
@@ -1238,8 +1408,197 @@ function State:MigrateDatabase()
             end
         end
 
+        if not specDB.profiles then
+            specDB.profiles = {
+                default = CreateDefaultProfileData(specDB),
+            }
+            specDB.profileSettings = {
+                mode = "single",
+                singleProfile = "default",
+                talentLoadouts = {},
+            }
+        else
+            specDB.profileSettings = specDB.profileSettings or {
+                mode = "single",
+                singleProfile = "default",
+                talentLoadouts = {},
+            }
+            specDB.profileSettings.talentLoadouts = specDB.profileSettings.talentLoadouts or {}
+            for _, profile in pairs(specDB.profiles) do
+                EnsureProfileDataShape(profile)
+            end
+        end
+
+        if specID == currentSpecID then
+            State:ReconcileTalentLoadouts(specID, specDB, true)
+        end
+
     end
 end
+
+function State:GetCurrentSpecDatabase()
+    local specID = self:GetCurrentSpecID()
+    return specID
+        and SpellStyler_CharDB
+        and SpellStyler_CharDB.classSpecializations
+        and SpellStyler_CharDB.classSpecializations[specID]
+end
+
+function State:GetProfileNames()
+    local specDB = self:GetCurrentSpecDatabase()
+    local names = {}
+    for name in pairs((specDB and specDB.profiles) or {}) do
+        names[#names + 1] = name
+    end
+    table.sort(names, function(left, right)
+        return string.lower(left) < string.lower(right)
+    end)
+    return names
+end
+
+function State:IsProfileNameAvailable(name, excludedName)
+    if type(name) ~= "string" or name:match("^%s*$") then
+        return false
+    end
+
+    local normalized = string.lower(name)
+    for _, existingName in ipairs(self:GetProfileNames()) do
+        if string.lower(existingName) == normalized
+            and string.lower(existingName) ~= string.lower(excludedName or "")
+        then
+            return false
+        end
+    end
+    return true
+end
+
+function State:CreateProfile(name)
+    name = type(name) == "string" and strtrim(name) or name
+    if not self:IsProfileNameAvailable(name) then
+        return nil, "A profile with that name already exists."
+    end
+
+    local specDB = self:GetCurrentSpecDatabase()
+    if not specDB then return nil, "No active specialization is available." end
+    local activeName = self:GetActiveProfileName(specDB)
+    local source = specDB.profiles[activeName]
+    specDB.profiles[name] = DeepCopy(source)
+    return name
+end
+
+function State:DeleteProfile(profileName)
+    local specDB = self:GetCurrentSpecDatabase()
+    if not specDB or type(specDB.profiles) ~= "table" then
+        return false, "No active specialization is available."
+    end
+    if profileName == "default" then
+        return false, "The default profile cannot be deleted."
+    end
+    if type(specDB.profiles[profileName]) ~= "table" then
+        return false, "The selected profile does not exist."
+    end
+
+    specDB.profiles[profileName] = nil
+
+    local profileSettings = specDB.profileSettings
+    if profileSettings.singleProfile == profileName then
+        profileSettings.singleProfile = "default"
+    end
+    for _, loadout in pairs(profileSettings.talentLoadouts or {}) do
+        if loadout.profile == profileName then
+            loadout.profile = "default"
+        end
+    end
+
+    self._lastActiveProfileName = self:GetActiveProfileName(specDB)
+    return true
+end
+
+function State:SetSingleProfile(profileName)
+    local specDB = self:GetCurrentSpecDatabase()
+    if not specDB or not specDB.profiles[profileName] then return false end
+    specDB.profileSettings.singleProfile = profileName
+    self._lastActiveProfileName = self:GetActiveProfileName(specDB)
+    return true
+end
+
+function State:SetProfileMode(mode)
+    local specDB = self:GetCurrentSpecDatabase()
+    if not specDB or (mode ~= "single" and mode ~= "talent") then return false end
+    specDB.profileSettings.mode = mode
+    self._lastActiveProfileName = self:GetActiveProfileName(specDB)
+    return true
+end
+
+function State:SetTalentLoadoutProfile(configID, profileName)
+    local specDB = self:GetCurrentSpecDatabase()
+    if not specDB or not specDB.profiles[profileName] then return false end
+    local loadout = specDB.profileSettings.talentLoadouts[configID]
+    if not loadout then return false end
+    loadout.profile = profileName
+    self._lastActiveProfileName = self:GetActiveProfileName(specDB)
+    return true
+end
+
+function State:HandleTalentProfileUpdate()
+    local specDB = self:GetCurrentSpecDatabase()
+    local loadout = self:GetActiveTalentLoadoutInfo()
+    if not specDB or not loadout then return false end
+
+    self:ReconcileTalentLoadouts(
+        self:GetCurrentSpecID(),
+        specDB,
+        self:CanRegisterTalentLoadouts()
+    )
+
+    local previousProfile = self._lastActiveProfileName
+        or self:GetActiveProfileName(specDB)
+    local loadoutData = specDB.profileSettings.talentLoadouts[loadout.id]
+    if not loadoutData then
+        if not self:CanRegisterTalentLoadouts() then
+            return false
+        end
+
+        loadoutData = {
+            name = loadout.name,
+            profile = previousProfile,
+        }
+        specDB.profileSettings.talentLoadouts[loadout.id] = loadoutData
+    else
+        loadoutData.name = loadout.name
+    end
+
+    local activeProfile = self:GetActiveProfileName(specDB)
+    local profileChanged = activeProfile ~= self._lastActiveProfileName
+    self._lastActiveProfileName = activeProfile
+    self._lastTalentConfigID = loadout.id
+    return profileChanged
+end
+
+local talentProfileEventFrame = CreateFrame("Frame")
+talentProfileEventFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
+talentProfileEventFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+talentProfileEventFrame:RegisterEvent("TRAIT_CONFIG_LIST_UPDATED")
+talentProfileEventFrame:SetScript("OnEvent", function()
+    C_Timer.After(0.1, function()
+        local profileChanged = State:HandleTalentProfileUpdate()
+        if SpellStyler.ProfileSettingsRenderer
+            and SpellStyler.ProfileSettingsRenderer.frame
+        then
+            SpellStyler.ProfileSettingsRenderer:Refresh()
+        end
+        if not profileChanged then return end
+        FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
+        if FrameTrackerManager and FrameTrackerManager.lifecycleController then
+            if SpellStyler.BuffManager and SpellStyler.BuffManager.DestroyBuffContainers then
+                SpellStyler.BuffManager:DestroyBuffContainers()
+                SpellStyler.BuffManager:CreateBuffContainers()
+            end
+            FrameTrackerManager.lifecycleController.TeardownSpecFrames()
+            FrameTrackerManager.lifecycleController.FreshCreateFrames("profile_change")
+        end
+    end)
+end)
 
 --[[----------------------------------------------------
 The frame manager calls this shortly after a detected talent-change cast,
@@ -1264,6 +1623,9 @@ function State:HandleTalentChange()
 
 	local specDB = SpellStyler_CharDB.classSpecializations[State:GetCurrentSpecID()]
 
+    if SpellStyler.BuffManager and SpellStyler.BuffManager.DestroyBuffContainers then
+        SpellStyler.BuffManager:DestroyBuffContainers()
+    end
     SpellStyler.BuffManager:CreateBuffContainers()
 end
 
@@ -1380,6 +1742,7 @@ function State:getTrackerValuesListForSettings()
                 trackerType = "items",
                 name = displayName,
                 defaultIconTexturePath = iconTexture,
+                itemID = trackerValue.itemID,
                 devNotes = trackerValue.devNotes
             })
         end
@@ -1990,6 +2353,10 @@ function State:HandleEquipmentChanged()
             trackerValue.baseSpellID = spellID or trackerKey
             trackerValue.name = (itemID and C_Item.GetItemNameByID(itemID)) or slotInfo.name
             trackerValue.defaultIconTexturePath = itemID and C_Item.GetItemIconByID(itemID) or nil
+            if itemID and SpellStyler.GetOwnedItemQuality then
+                trackerValue.associatedItemQualities = trackerValue.associatedItemQualities or {}
+                SpellStyler.GetOwnedItemQuality(itemID, trackerValue.associatedItemQualities)
+            end
 
             if trackerValue.isEnabled ~= false
                 and FrameTrackerManager.SpellStyler_frames.items

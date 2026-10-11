@@ -55,8 +55,14 @@ function BuffManager:CreateStatusBar(frame, key, trackerConfig)
         barConfig.color.a or 1 -- start with an alpha of zero so that GCD doesnt trigger accidentally.
     )
     
-    -- Fill direction is controlled via TimerDirection in SetTimerDuration (ElapsedTime = fills up, RemainingTime = depletes)
+    -- Match the spell/item status-bar fill configuration for both live auras
+    -- and their settings placeholders.
     bar:SetReverseFill(reverseFill)
+    bar:SetFillStyle(
+        barConfig.progressDirection == 'reverse'
+            and Enum.StatusBarFillStyle.Reverse
+            or Enum.StatusBarFillStyle.Standard
+    )
     bar:SetOrientation(
         (barConfig.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
     )
@@ -112,7 +118,7 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 			return
 		end
 		-- Create container frame
-		local auraContainer = CreateFrame("AuraContainer", 'AuraContainer_' .. baseSpellID, UIParent, "CustomAuraContainerTemplate")
+		local auraContainer = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
 		auraContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
 
 		local options = {
@@ -243,7 +249,9 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 						)
 					end
 					if isPlaceholder then
-						durationBar:SetValue(1)
+						durationBar:SetValue(
+							buffConfig.statusBar.defaultFillValue == "full" and 1 or 0
+						)
 					elseif buffConfig['statusBar'].displayState ~= 'never' then
 						local direction = buffConfig['statusBar'].fillOrEmpty == 'inverse'
 							and Enum.StatusBarTimerDirection.ElapsedTime
@@ -273,7 +281,11 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 						)
 					end
 					if isPlaceholder then
-						chargeBar:SetValue(buffConfig.visualChargeBar.maxValue or 4)
+						chargeBar:SetValue(
+							buffConfig.visualChargeBar.defaultFillValue == "full"
+								and (buffConfig.visualChargeBar.maxValue or 4)
+								or 0
+						)
 					elseif buffConfig['visualChargeBar'].displayState ~= 'never' then
 						local direction = buffConfig['visualChargeBar'].fillOrEmpty == 'inverse'
 							and Enum.StatusBarTimerDirection.ElapsedTime
@@ -377,7 +389,7 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 		
 		auraContainer:SetUnit(unitToTrack)
 		-- Create placeholder frame for dragging in settings menu
-		local placeHolder = CreateFrame("Button", 'buffPlaceholder_' .. baseSpellID .. "-" .. buffConfig.name, UIParent, "BackdropTemplate")
+		local placeHolder = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
 		options.initializeFrame(placeHolder, true)
 		placeHolder:SetPoint("CENTER", UIParent, "CENTER", posX / (buffConfig.scale or 1), posY / (buffConfig.scale or 1))
 
@@ -557,10 +569,15 @@ function BuffManager:UpdateAura(aura, trackerValue)
 						config.color.b or 1,
 						config.color.a or 1
 					)
-					if isPlaceholder then  barFrame:SetValue(1) end
+					if isPlaceholder then
+						local maxValue = config.maxValue or 4
+						barFrame:SetValue(
+							config.defaultFillValue == "full" and maxValue or 0
+						)
+					end
 				end
 
-				if frame.SetApplicationBar then
+				if barFrame == frame.chargeBar and frame.SetApplicationBar then
 					frame:SetApplicationBar(barFrame, {
 						maxApplications = config.maxValue or 4,  -- Adjust based on buff max stacks
 						interpolation = Enum.StatusBarInterpolation.Smooth
@@ -582,7 +599,7 @@ function BuffManager:UpdateAura(aura, trackerValue)
 				local direction = config.fillOrEmpty == 'inverse'
 					and Enum.StatusBarTimerDirection.ElapsedTime
 					or  Enum.StatusBarTimerDirection.RemainingTime
-				if not isPlaceholder then
+				if not isPlaceholder and barFrame == frame.durationBar then
 					frame:SetDurationBar(barFrame, {
 						direction = direction,
 						interpolation = Enum.StatusBarInterpolation.Smooth
@@ -820,13 +837,18 @@ end
 
 -- ============================================================================
 -- BUFF CONTAINER CLEANUP
--- Destroys all buff containers and slots
+-- Disables old protected aura containers and hides their placeholders.
 -- ============================================================================
-local function DestroyBuffContainers()
-    for baseSpellID, container in pairs(BuffManager.buffContainers) do
-        if container then
-            container:Hide()
-            container:SetParent(nil)
+function BuffManager:DestroyBuffContainers()
+    for _, containerData in pairs(BuffManager.buffContainers) do
+        if containerData then
+            if containerData.auraContainer then
+                containerData.auraContainer:SetEnabled(false)
+            end
+            if containerData.placeHolder then
+                SpellStyler.IconSettingsRenderer:DisableDraggingForSpecificFrame(containerData.placeHolder)
+                containerData.placeHolder:Hide()
+            end
         end
     end
     
@@ -916,4 +938,3 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 		BuffManager:RefreshAllBuffAuras(AuraUtil.AuraFilters.Harmful, 'target')
     end
 end)
-
