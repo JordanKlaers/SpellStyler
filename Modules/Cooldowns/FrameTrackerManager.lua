@@ -3351,15 +3351,15 @@ FrameTrackerManager.ApplyVisibility = {
             alpha = context.whenOnCooldownAlpha
         elseif context.displayState == "available" or context.displayState == "inactive" then
             alpha = context.whenAvailableToCastAlpha
+            if not shouldOverrideVisibility
+                and FrameTrackerManager.utils.ShouldHideEmptyItemIcon(context.config)
+            then
+                alpha = 0
+            end
         else
             alpha = 0
         end
 
-        if not shouldOverrideVisibility
-            and FrameTrackerManager.utils.ShouldHideEmptyItemIcon(context.config)
-        then
-            alpha = 0
-        end
 
         -- Get color from conditional state first, then the tracker config.
         local iconColorOverride = SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(context.customFrame, "iconColor")
