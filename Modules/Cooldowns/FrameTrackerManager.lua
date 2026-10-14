@@ -432,15 +432,20 @@ FrameTrackerManager.utils = {
     ApplyItemQualityOverlay = function(itemID, frame, associatedItemQualities, shouldShowQualityEmblem)
         if not frame then return end
 
-        if frame.spellStylerItemQualityTexture then
-            frame.spellStylerItemQualityTexture:Hide()
-            frame.spellStylerItemQualityTexture = nil
-        end
-
         if not itemID then
+            if frame.spellStylerItemQualityTexture then
+                frame.spellStylerItemQualityTexture:Hide()
+            end
+            frame._spellStylerItemQualityKey = nil
+            frame._spellStylerItemQualityLevel = nil
             return
         end
         if shouldShowQualityEmblem == false then
+            if frame.spellStylerItemQualityTexture then
+                frame.spellStylerItemQualityTexture:Hide()
+            end
+            frame._spellStylerItemQualityKey = nil
+            frame._spellStylerItemQualityLevel = nil
             return
         end
 
@@ -463,6 +468,11 @@ FrameTrackerManager.utils = {
         elseif quality == 1 then
             left, right = 0.755, 0.82
         else
+            if frame.spellStylerItemQualityTexture then
+                frame.spellStylerItemQualityTexture:Hide()
+            end
+            frame._spellStylerItemQualityKey = nil
+            frame._spellStylerItemQualityLevel = nil
             return
         end
 
@@ -471,12 +481,28 @@ FrameTrackerManager.utils = {
             return
         end
 
+        local qualityKey = tostring(quality) .. ":" .. tostring(width) .. ":" .. tostring(height)
+        if frame.spellStylerItemQualityTexture
+            and frame._spellStylerItemQualityLevel == quality
+            and frame._spellStylerItemQualityKey == qualityKey
+        then
+            frame.spellStylerItemQualityTexture:Show()
+            return
+        end
+
+        if frame.spellStylerItemQualityTexture then
+            frame.spellStylerItemQualityTexture:Hide()
+            frame.spellStylerItemQualityTexture = nil
+        end
+
         local texture = frame:CreateTexture(nil, "OVERLAY")
         texture:SetSize(width / 2, height / 2)
         texture:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
         texture:SetTexture(7487371)
         texture:SetTexCoord(left, right, 0.035, 0.16)
         frame.spellStylerItemQualityTexture = texture
+        frame._spellStylerItemQualityKey = qualityKey
+        frame._spellStylerItemQualityLevel = quality
     end,
 
     -- When all associated spells are set to disabled, this method is used to check that, and delete the frame from within the ApplyStaticFrameProperties method - which is the callback for a state property updating
@@ -1431,33 +1457,7 @@ FrameTrackerManager.frameController = {
         end
         
         local statusBarAlpha = (config and config.statusBar and config.statusBar.color and config.statusBar.color.a) or 1
-        
-        
-        
-        -- Items: build duration object on the fly and check cooldown state
-        if config and config.isItem and frame.meta.itemID then
-            local durationObj = FrameTrackerManager.frameController.GetItemDurationObject(
-                FrameTrackerManager.utils.GetCurrentItemID(config, frame.meta.itemID)
-            )
-            
-            local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
-            
-            if durationObj and not durationObj:IsZero() then
-                -- Item is on cooldown
-                whenAvailableToCast = 0
-                whenOnCooldown = 1
-                progressBar = statusBarAlpha  -- Items have full progress bar during cooldown
-                fullBar = 0
-            else
-                -- Item is available
-                whenAvailableToCast = 1
-                whenOnCooldown = 0
-                progressBar = 0
-                fullBar = statusBarAlpha
-            end
-            
-            return whenAvailableToCast, whenOnCooldown, progressBar, fullBar
-        end
+
 
         -- Spells: use secret-safe charge count or duration curves
         local overrideSpellID = C_Spell.GetOverrideSpell(config.baseSpellID)
@@ -1471,6 +1471,13 @@ FrameTrackerManager.frameController = {
         local durationObj = frame.meta.totemDuration
             or (chargeInfo and chargeInfo.maxCharges > 1) and C_Spell.GetSpellChargeDuration(overrideSpellID, true)
             or C_Spell.GetSpellCooldownDuration(overrideSpellID, true)
+
+        if config and config.isItem and frame.meta.itemID then
+            durationObj = FrameTrackerManager.frameController.GetItemDurationObject(
+                FrameTrackerManager.utils.GetCurrentItemID(config, frame.meta.itemID)
+            )
+        end
+
         local whenAvailableToCast, whenOnCooldown, progressBar, fullBar
         
         if chargeInfo and chargeInfo.maxCharges > 1 then
@@ -1611,7 +1618,7 @@ FrameTrackerManager.frameController = {
             local _, itemSpellID = C_Item.GetItemSpell(itemID)
             if itemSpellID and C_Spell.GetSpellCooldownDuration then
                 local spellDuration = C_Spell.GetSpellCooldownDuration(itemSpellID, true)
-                if spellDuration and not spellDuration:IsZero() then
+                if spellDuration then
                     durationObject = spellDuration
                 end
             end
@@ -1710,10 +1717,12 @@ FrameTrackerManager.frameController = {
         local color = variation and variation.iconColor or trackerConfig.iconColor or {}
         if texture then
             frame.icon:SetTexture(texture)
+            frame._spellStylerIconTexture = texture
             frame.icon:SetVertexColor(color.r or 1, color.g or 1, color.b or 1)
             frame.iconContainer:SetAlpha(color.a or 1)
             if frame.variantFrame then
                 frame.variantFrame.icon:SetTexture(texture)
+                frame.variantFrame._spellStylerIconTexture = texture
                 frame.variantFrame.icon:SetVertexColor(color.r or 1, color.g or 1, color.b or 1)
                 frame.variantFrame.iconContainer:SetAlpha(color.a or 1)
             end
@@ -2918,8 +2927,14 @@ FrameTrackerManager.FrameUpdater = {
         end
         data.frame.icon:SetDesaturated(data.icon.desaturated)
         -- Apply icon texture and zoom from pre-computed values
-        data.frame.icon:SetTexture(data.icon.texture)
-        data.frame.icon:SetTexCoord(0 + data.icon.zoom, 1 - data.icon.zoom, 0 + data.icon.zoom, 1 - data.icon.zoom)
+        if data.frame._spellStylerIconTexture ~= data.icon.texture then
+            data.frame.icon:SetTexture(data.icon.texture)
+            data.frame._spellStylerIconTexture = data.icon.texture
+        end
+        if data.frame._spellStylerIconZoom ~= data.icon.zoom then
+            data.frame.icon:SetTexCoord(0 + data.icon.zoom, 1 - data.icon.zoom, 0 + data.icon.zoom, 1 - data.icon.zoom)
+            data.frame._spellStylerIconZoom = data.icon.zoom
+        end
         -- Apply icon color (RGB on icon, alpha on container)
         local color = data.icon.color
         data.frame.icon:SetVertexColor(color.r or 1, color.g or 1, color.b or 1)
@@ -3351,12 +3366,14 @@ FrameTrackerManager.ApplyVisibility = {
             alpha = context.whenOnCooldownAlpha
         elseif context.displayState == "available" or context.displayState == "inactive" then
             alpha = context.whenAvailableToCastAlpha
-            if not shouldOverrideVisibility
-                and FrameTrackerManager.utils.ShouldHideEmptyItemIcon(context.config)
-            then
-                alpha = 0
-            end
         else
+            alpha = 0
+        end
+
+        if not shouldOverrideVisibility
+            and context.displayState ~= "always"
+            and FrameTrackerManager.utils.ShouldHideEmptyItemIcon(context.config)
+        then
             alpha = 0
         end
 
@@ -3378,6 +3395,9 @@ FrameTrackerManager.ApplyVisibility = {
         -- Apply combined alpha to iconContainer: dynamicAlpha * colorAlpha * opacitySettings
         local colorAlpha = color.a or 1
         context.customFrame.iconContainer:SetAlpha(colorAlpha)
+        if context.customFrame.spellStylerItemQualityTexture then
+            context.customFrame.spellStylerItemQualityTexture:SetAlpha(alpha)
+        end
     end,
     --[[
         customFrame
@@ -4155,3 +4175,13 @@ globalVisibilityFrame:SetScript("OnEvent", function(self, event)
         end
     end
 end)
+
+-- if NumyFunctionProfiler and not FrameTrackerManager._numyProfilerWrapped then
+--     NumyFunctionProfiler:WrapModules(
+--         "SpellStyler",
+--         "FrameTrackerManager",
+--         FrameTrackerManager,
+--         2
+--     )
+--     FrameTrackerManager._numyProfilerWrapped = true
+-- end
