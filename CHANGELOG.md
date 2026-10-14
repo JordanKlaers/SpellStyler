@@ -347,4 +347,7 @@ Version 3.0.0
 	- Adds templates. For spells, items and auras, you can save the configuration to a template to make applying that config to another entry. Some values are excluded from the copy, such as position, data specific to the tracker type like spell ID and textures for specific spellIDs.
 	- Items have been updated to more accurately track item count.
 	- Items that have different quality (like health pots) now track all quality levels. They also display a quality emblem on the tracker frame. As you run out of a higher quality, the emblem will change and the stack count will update to the lower quantity if you have them in your bag. (Id reccomend a macro of sorts to use whichever quality healthpot you have)
-	
+
+Version 3.0.1
+	- Items can not use "isActive" check in combat after patch changes. Updated to ensure item cooldown tracking and visbility continues to work again as it did before.
+	- Links the item quality emblem to the icons visibility instead of being separate.
