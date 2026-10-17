@@ -1310,6 +1310,22 @@ function State:MigrateDatabase()
         ----------------------------------------------------]]
         for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
             for trackerKey, trackerValue in pairs(specDB[trackerType]) do
+                if trackerType == "items" then
+                    local itemID = tonumber(trackerValue.itemID)
+                    if itemID and itemID > 0 then
+                        trackerValue.itemID = itemID
+                    else
+                        local keyItemID = tonumber(trackerKey)
+                        local instantItemID = keyItemID
+                            and C_Item.GetItemInfoInstant(keyItemID)
+                        if instantItemID then
+                            trackerValue.itemID = tonumber(instantItemID)
+                        end
+                    end
+                end
+                trackerValue.statusBar = trackerValue.statusBar or {}
+                trackerValue.visualChargeBar = trackerValue.visualChargeBar or {}
+                trackerValue.iconSettings = trackerValue.iconSettings or {}
                 -- Ensure proper base spellID if it doesnt exist
                 if not trackerValue.baseSpellID then
                     trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID or trackerValue.overrideSpellID or trackerKey)
@@ -1389,6 +1405,7 @@ function State:MigrateDatabase()
                             unit = unit
                         }
                     else
+                        trackerValue.auraConfig.filters = trackerValue.auraConfig.filters or {}
                         if not next(trackerValue.auraConfig.filters) then
                             trackerValue.auraConfig.filters = filters
                         end

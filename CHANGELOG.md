@@ -351,3 +351,12 @@ Version 3.0.0
 Version 3.0.1
 	- Items can not use "isActive" check in combat after patch changes. Updated to ensure item cooldown tracking and visbility continues to work again as it did before.
 	- Links the item quality emblem to the icons visibility instead of being separate.
+
+Version 3.1.0
+	- Only creates valid items
+	- Doubles the even batching time to reduce computation for frame event handling (performance update)
+	- Updates callback for responding to spell charge changes to improve performance
+	- Hides item stack text when the value is 0
+	- Updates quality emblem texture to share its icon visibility state (thought it already worked this way, but it seemed to have not accounted for the item not being in the bag at all)
+	- Updates frame creating to not throw an error on invalid items if they somehow slip through the other validation check
+	- Adds more item state normalization to account for older state configurations and to ensure proper data structures so items are considered valid and dont throw errors when creating the tracker frames.

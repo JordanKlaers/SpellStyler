@@ -36,9 +36,10 @@ FrameTrackerManager.lifecycleController = {
                     -- If it's a spell, verify it's known; if it's an item, allow it through
                     if shouldCreate then
                         if trackerType == "items" then
-                            -- Item tracker - no spell check needed, items use itemID directly
-                            -- TODO: check if the item is 
-                            shouldCreate = true
+                            -- Item trackers require a valid item ID; unlike spell IDs,
+                            -- the state key cannot reliably identify the item.
+                            shouldCreate = type(trackerConfig.itemID) == "number"
+                                and trackerConfig.itemID > 0
                         else
                             -- Spell tracker - verify spell is known
                             shouldCreate = C_SpellBook.IsSpellKnown(trackerConfig.baseSpellID)
@@ -230,7 +231,7 @@ FrameTrackerManager.lifecycleController = {
                 sources = { source or "unknown" },
             }
             -- Capture values for debug
-            C_Timer.After(0.005, function()
+            C_Timer.After(0.01, function()
                 local entry = q[queueKey]
                 q[queueKey] = nil
                 if entry and entry.frame then
@@ -452,14 +453,6 @@ FrameTrackerManager.utils = {
         local resolved = SpellStyler.GetOwnedItemQuality
             and SpellStyler.GetOwnedItemQuality(itemID, associatedItemQualities)
         local quality = resolved and resolved.qualityLevel
-        if not quality and C_TradeSkillUI and C_TradeSkillUI.GetItemReagentQualityInfo then
-            local qualityInfo = C_TradeSkillUI.GetItemReagentQualityInfo(itemID)
-            quality = qualityInfo and (qualityInfo.quality or qualityInfo.qualityLevel)
-        end
-        if not quality and C_Item and C_Item.GetItemInfo then
-            local _, _, itemQuality = C_Item.GetItemInfo(itemID)
-            quality = itemQuality
-        end
         quality = tonumber(quality) or quality
 
         local left, right
@@ -1206,10 +1199,10 @@ FrameTrackerManager.frameController = {
     end,
 
     UpdateActiveSpells = function()
-        for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
-            local trackerConfig, foundConfig = State:GetSpecificTrackerValue(trackerKey, "spells")
-            if foundConfig then
-                local cooldownInfo = C_Spell.GetSpellCooldown(C_Spell.GetOverrideSpell(trackerConfig.baseSpellID))
+        for _, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
+            local baseSpellID = customFrame.meta and customFrame.meta.baseSpellID
+            if baseSpellID then
+                local cooldownInfo = C_Spell.GetSpellCooldown(C_Spell.GetOverrideSpell(baseSpellID))
                 if cooldownInfo and cooldownInfo.isActive then
                     FrameTrackerManager.lifecycleController.DriveFrameUpdate(
                         customFrame,
@@ -1566,7 +1559,9 @@ FrameTrackerManager.frameController = {
                     end
                     chargesReturnValue = currentCharges
                     data.customFrame.count:SetText(currentCharges)
-                    data.customFrame.count:SetAlpha(isItem and 1 or currentCharges)
+                    data.customFrame.count:SetAlpha(
+                        isItem and (currentCharges > 0 and 1 or 0) or currentCharges
+                    )
                     if data.config.chargeBasedDisplay.enabled or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:TrackerHasChargesConditionals(data.config)) then
                         if data.customFrame.chargeAnchorBarA then
                             data.customFrame.chargeAnchorBarA:SetValue(currentCharges)
@@ -2241,10 +2236,13 @@ FrameTrackerManager.FrameBuilder = {
             return Frame
         end
         local entryInfo
-        if trackerConfig.isItem then
-            entryInfo = {
-                name = C_Item.GetItemInfo(trackerConfig.itemID)
-            }
+        if trackerConfig.isItem and trackerConfig.itemID then
+            local itemName = C_Item.GetItemInfo(trackerConfig.itemID)
+            if itemName then
+                entryInfo = {
+                    name = itemName
+                }
+            end
         end
         if not entryInfo or not entryInfo.name or entryInfo.name == nil or entryInfo.name == '' then
             entryInfo = C_Spell.GetSpellInfo(trackerConfig.baseSpellID)
@@ -3395,8 +3393,10 @@ FrameTrackerManager.ApplyVisibility = {
         -- Apply combined alpha to iconContainer: dynamicAlpha * colorAlpha * opacitySettings
         local colorAlpha = color.a or 1
         context.customFrame.iconContainer:SetAlpha(colorAlpha)
-        if context.customFrame.spellStylerItemQualityTexture then
-            context.customFrame.spellStylerItemQualityTexture:SetAlpha(alpha)
+        local qualityTexture = context.customFrame.iconContainer
+            and context.customFrame.iconContainer.spellStylerItemQualityTexture
+        if qualityTexture then
+            qualityTexture:SetAlpha(alpha)
         end
     end,
     --[[
@@ -3958,15 +3958,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
     end
 
     if event == "SPELL_UPDATE_CHARGES" then
-        for _, tType in ipairs({"essential", "utility", "spells", "items"}) do
+        for _, tType in ipairs({ "spells" }) do
             if FrameTrackerManager.SpellStyler_frames[tType] then
                 for trackerKey, customFrame in pairs(FrameTrackerManager.SpellStyler_frames[tType]) do
                     -- Skip if mock cooldown is active
                     if not customFrame.meta.mockCooldownActive then
-                        local match = FrameTrackerManager.utils.MatchTrackerFrame(trackerKey)
-                        if match and match.customFrame.meta.isSpellWithCharges then
-                            if match.customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("SPELL_UPDATE_CHARGES", match.customFrame, nil) end
-                            if match.customFrame.variantFrame and match.customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("SPELL_UPDATE_CHARGES", match.customFrame.variantFrame, nil) end
+                        if customFrame.meta.isSpellWithCharges then
+                            if customFrame.meta.dualFrameStatus ~= 'hideBase' then eventHandlers("SPELL_UPDATE_CHARGES", customFrame, nil) end
+                            if customFrame.variantFrame and customFrame.meta.dualFrameStatus ~= 'hideVariant' then eventHandlers("SPELL_UPDATE_CHARGES", customFrame.variantFrame, nil) end
                         end
                     end
                 end
