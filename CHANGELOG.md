@@ -360,3 +360,8 @@ Version 3.1.0
 	- Updates quality emblem texture to share its icon visibility state (thought it already worked this way, but it seemed to have not accounted for the item not being in the bag at all)
 	- Updates frame creating to not throw an error on invalid items if they somehow slip through the other validation check
 	- Adds more item state normalization to account for older state configurations and to ensure proper data structures so items are considered valid and dont throw errors when creating the tracker frames.
+
+Version 3.2.0
+	- Additional performance updates - reduces the number of API calls when processing even for tracked values and changes the events used for tracking item quality and count.
+	- Adds an additional status bar property that was needed to provided the intended full control for direction of the progress animation
+	- The add spells menu no longer distinguishes between direct or associated matches - if the spell or its override/base is tracked, it cant be duplicate added. (The only difference being the info in the tooltip)

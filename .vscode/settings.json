@@ -95,7 +95,8 @@
 		"FrameUtil",
 		"RAID",
 		"PLAYER",
-		"UIDropDownMenu_EnableDropDown"
+		"UIDropDownMenu_EnableDropDown",
+		"AURAS"
 	],
 	"Lua.type.weakUnionCheck": true
 }

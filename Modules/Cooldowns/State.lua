@@ -369,226 +369,24 @@ use this constructor for the current configuration defaults. It returns a
 configuration object; the caller decides where to store or merge it.
 ----------------------------------------------------]]
 function AddNewTrackerValueConfig(data)
-    local iconSize = 48  -- Default icon size
-    return {
-        baseSpellID = data.baseSpellID,
-        itemID = data.itemID,
-		isEnabled = true,
-        trackerType = data.trackerType, -- essential, utility, buffs
-        name = data.name,
-        defaultIconTexturePath = data.defaultIconTexturePath,
-        iconColor = data.iconColor or { r = 1, g = 1, b = 1, a = 1 },
-        isItem = data.isItem or false,  -- Flag to identify item trackers (for icon lookup)
-        scale = 1,
-        auraConfig = {
-            filters = {
-                [AuraUtil.AuraFilters.Helpful] = true
-            },
-            unit = 'player'
-        },
-        auraSpecs = data.auraSpecs or {
-            -- table to indicate which specs the aura should be enabled for
-        },
-        isNPCDebuff = data.trackerType == 'buffs' and false or nil,  -- For buffs: track as debuff on target instead of buff on player
-        additionalBuffIDs = {},
-        position = {
-            anchorPoint = "center",
-            relativeToFrame = nil,
-            relativeAnchorPoint = "center",
-            x = 0,
-            y = 0
-        },
-        iconSettings = {
-            disableDragging = false,
-            displayCharges = data.trackerType == 'buffs' and true or false,
-            iconDisplayState = data.trackerType == 'buffs' and 'available' or "always", -- "always", "active/cooldown", "inactive/available", "never"
-            desaturated = false,
-            enabled = true,
-            size = nil, -- deprecated; use width/height
-            width = 48,
-            height = 48,
-            opacity = 1,
-            hideDefaultSweep = false,
-            hideCooldownBling = false,
-            isSpellOffGCD = false,
-            insufficientPower = false,
-            insufficientPowerIconColor = {
-                r = 1,
-                g = 0,
-                b = 0,
-                a = 1,
-            },
-            frameStrataLevel = "MEDIUM", -- BACKGROUND LOW MEDIUM HIGH DIALOG FULLSCREEN FULLSCREEN_DIALOG TOOLTIP
-            frameStrataValue = 100,
-            zoom = 0,
-            borderSize = 0,
-            borderColor = {
-                r = 1,
-                g = 1,
-                b = 1,
-                a = 0,
-            }
-        },
-        associatedSpellIDs = data.trackerType == "spells" and (data.associatedSpellIDs or {}) or nil,
-        chargeBasedDisplay = {
-            enabled = false,
-            displayState = true, -- true == show, false == hdie
-            displayOperator = ">",
-            chargeValue = 0
-        },
-        glowNotification = {
-            shouldDisplay = false,
-            glowStyle = 'thin', -- 'thick'
-            duration = 1,
-            glowColor = {
-                r = 1,
-                g = 1,
-                b = 1,
-                a = 1
-            }
-        },
-        customLabel = {
-            display = false,
-            text = "",
-            size = 10,
-            x = 0,
-            y = 0,
-            font = "default",  -- Font selection: "default" = use global, or specific font name
-            fontFlags = "default",  -- Font flags: "default" = use global, or single flag: "OUTLINE", "THICKOUTLINE", "MONOCHROME"
-            color = {
-                r = 1,
-                g = 1,
-                b = 1,
-                a = 1,
-            }
-        },
-        cooldownText = {
-            display = true,
-            size = 14,
-            font = "default",  -- Font selection: "default" = use global, or specific font name
-            fontFlags = "default",  -- Font flags: "default" = use global, or single flag: "OUTLINE", "THICKOUTLINE", "MONOCHROME"
-            color = {
-                r = 1,
-                g = 1,
-                b = 1,
-                a = 1,
-            },
-            x = 0,
-            y = 0,
-        },
-        countText = {
-            display = true,
-            size = 12,
-            font = "default",  -- Font selection: "default" = use global, or specific font name
-            fontFlags = "default",  -- Font flags: "default" = use global, or single flag: "OUTLINE", "THICKOUTLINE", "MONOCHROME"
-            color = {
-                r = 1,
-                g = 1,
-                b = 1,
-                a = 1,
-            },
-            x = 0,
-            y = 0,
-            useSpellDisplayCount = false,
-        },
-        statusBar = {
-            includeTotemDuration = false,
-            displayState = "never",  -- "always", "active", "inactive", "never"
-            defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
-            customBarTexture = "",
-            onlyRenderBar = false,
-            barOrientation = 'horizontal', -- 'vertical'
-            fillOrEmpty = 'regular', -- 'inverse'
-            progressDirection = 'standard', -- 'reverse'
-            defaultFillValue = 'empty', -- 'full'
-            color = {
-                r = 0.2,
-                g = 0.8,
-                b = 1,
-                a = 0.9,
-            },
-            backgroundColor = {
-                r = 0,
-                g = 0,
-                b = 0,
-                a = 0.65,
-            },
-            glowColor = {
-                r = 1,
-                g = 1,
-                b = 1,
-                a = 0.25,
-            },
-            borderColor = {
-                r = 0,
-                g = 0,
-                b = 0,
-                a = 1,
-            },
-            borderScale = 0.5,
-            scale = 1,
-            x = 0,
-            y = 0,
-            width = 200,
-            height = 20,
-            rotation = 0,
-            anchorParent = "RIGHT",
-            anchorSelf = "LEFT"
-        },
-        visualChargeBar = {
-            displayState = "never",  -- "always", "never", "available" (show when >= 1)
-            defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
-            customBarTexture = "",
-            onlyRenderBar = false,
-            barOrientation = "horizontal",
-            fillOrEmpty = "regular",
-            progressDirection = "standard",
-            textureRotation = 0,
-            defaultFillValue = "empty",
-            color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
-            backgroundColor = { r = 0, g = 0, b = 0, a = 0.65 },
-            glowColor = { r = 1, g = 1, b = 1, a = 0.25 },
-            borderColor = { r = 0, g = 0, b = 0, a = 1 },
-            borderScale = 0.5,
-            scale = 1,
-            x = 0,
-            y = 0,
-            width = iconSize * 5,
-            height = iconSize / 2,
-            anchorParent = "RIGHT",
-            anchorSelf = "LEFT",
-            minValue = 0,
-            maxValue = 5
-        },
-		specialVisibilityConditions = {},
-        devNotes = {
+    local base = SpellStyler.TrackerConfigFactory:Create(data.trackerType)
+    for key, value in pairs(data) do
+        base[key] = value
+    end
 
-        },
-        totemBar = {
-            attemptToTrack = false,
-            displayState = 'never', --always, active, never
-            defaultBarTexture = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\statusBarFill.tga",
-            customBarTexture = "",
-            onlyRenderBar = false,
-            barOrientation = "horizontal",
-            fillOrEmpty = "regular",
-            progressDirection = "standard",
-            textureRotation = 0,
-            defaultFillValue = "empty",
-            color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
-            backgroundColor = { r = 0, g = 0, b = 0, a = 0.65 },
-            glowColor = { r = 1, g = 1, b = 1, a = 0.25 },
-            borderColor = { r = 0, g = 0, b = 0, a = 1 },
-            borderScale = 0.5,
-            scale = 1,
-            x = 0,
-            y = 0,
-            width = iconSize * 5,
-            height = iconSize / 2,
-            anchorParent = "RIGHT",
-            anchorSelf = "LEFT",
+    if data.trackerType == 'spells' then
+        base.associatedSpellIDs[tostring(data.baseSpellID)] = {
+            enabled = true,
+            iconTexturePath = '',
+            iconColor = { r=1, g=1, b=1, a=1 },
         }
-    }
+        base.associatedSpellIDs[tostring(C_Spell.GetOverrideSpell(data.baseSpellID, GetSpecialization(), true))] = {
+            enabled = true,
+            iconTexturePath = '',
+            iconColor = { r=1, g=1, b=1, a=1 },
+        }
+    end
+    return base
 end
 
 --[[----------------------------------------------------
@@ -912,6 +710,17 @@ function State:FindSpellTrackerByAssociatedSpellID(spellID)
     end
 end
 
+function State:IsTrackerEnabled(trackerConfig)
+    if not trackerConfig then return false end
+    local hasAssociationEnabled = false
+    if trackerConfig.associatedSpellIDs then
+       for _, value in pairs(trackerConfig.associatedSpellIDs) do
+            if value.enabled then hasAssociationEnabled = true end
+        end 
+    end
+    return trackerConfig.isEnabled or hasAssociationEnabled
+end
+
 --[[----------------------------------------------------
 Search results, settings lists, and frame-population code use this to check
 whether a spell tracker has at least one enabled associated spell.
@@ -1085,20 +894,17 @@ function State:ReenableTrackerValue(trackerKey, trackerType)
     if not trackerConfig then return end
 
     FrameTrackerManager = FrameTrackerManager or SpellStyler.FrameTrackerManager
-    trackerConfig.isEnabled = true
-    if trackerType == "spells" then
-        for _, association in pairs(State:GetAssociatedSpellIDs(trackerConfig)) do
-            association.enabled = true
+    if trackerType == 'spells' then
+        for spellID, associationData in pairs(trackerConfig.associatedSpellIDs) do
+            trackerConfig.associatedSpellIDs[spellID].enabled = true
         end
-        if FrameTrackerManager then
-            FrameTrackerManager.lifecycleController.CreateItemAndSpellTrackerFrames()
-        end
-    elseif trackerType == "buffs" then
-        if SpellStyler.BuffManager then
-            SpellStyler.BuffManager:CreateBuffContainers()
-        end
-    elseif FrameTrackerManager then
-        FrameTrackerManager.lifecycleController.CreateItemAndSpellTrackerFrames()
+    else
+        trackerConfig.isEnabled = true
+    end
+    if trackerType == 'spells' or trackerType == 'items' then
+        SpellStyler.FrameTrackerManager.lifecycleController.CreateItemAndSpellTrackerFrames()
+    else
+        SpellStyler.BuffManager:CreateBuffContainers()
     end
 end
 
@@ -1308,120 +1114,129 @@ function State:MigrateDatabase()
             Ensure all tracker entries have the correct datastructure and all default values filled
             Convert legacy settings and backfill missing configuration fields.
         ----------------------------------------------------]]
+        local specDB = State:GetCurrentSpecDatabase()
+
         for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
-            for trackerKey, trackerValue in pairs(specDB[trackerType]) do
-                if trackerType == "items" then
-                    local itemID = tonumber(trackerValue.itemID)
-                    if itemID and itemID > 0 then
-                        trackerValue.itemID = itemID
-                    else
-                        local keyItemID = tonumber(trackerKey)
-                        local instantItemID = keyItemID
-                            and C_Item.GetItemInfoInstant(keyItemID)
-                        if instantItemID then
-                            trackerValue.itemID = tonumber(instantItemID)
-                        end
-                    end
+            
+            for profileName, profileDatabase in pairs(specDB.profiles) do
+                local trackerValues = profileDatabase[trackerType] or {}
+                for configKey in pairs(SpellStyler.TrackerConfigFactory.definitions or {}) do
+                    trackerValues[configKey] = nil
                 end
-                trackerValue.statusBar = trackerValue.statusBar or {}
-                trackerValue.visualChargeBar = trackerValue.visualChargeBar or {}
-                trackerValue.iconSettings = trackerValue.iconSettings or {}
-                -- Ensure proper base spellID if it doesnt exist
-                if not trackerValue.baseSpellID then
-                    trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID or trackerValue.overrideSpellID or trackerKey)
-                end
-                if trackerType == "spells" then
-                    NormalizeAssociatedSpellIDs(trackerValue)
-                end
-                -- Change key from "barFillDirection" to "fillOrEmpty"
-                if trackerValue.statusBar
-                    and trackerValue.statusBar.barFillDirection ~= nil
-                    and trackerValue.statusBar.fillOrEmpty == nil
-                then
-                    trackerValue.statusBar.fillOrEmpty = trackerValue.statusBar.barFillDirection
-                    trackerValue.statusBar.barFillDirection = nil
-                end
-
-
-                if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar and trackerValue.totemBar.attemptToTrack then
-                    trackerValue.statusBar.includeTotemDuration = true
-                end
-                --[[----------------------------------------------------
-                Legacy: countText.renderAsStatusBar -> visualChargeBar.displayState
-                This migration ensures users who had the old checkbox get proper displayState values
-                ----------------------------------------------------]]
-                if trackerValue.countText and trackerValue.countText.renderAsStatusBar ~= nil then
-                    -- Initialize visualChargeBar if it doesn't exist
-                    if not trackerValue.visualChargeBar then
-                        trackerValue.visualChargeBar = {}
-                    end
-                    -- Only migrate if displayState hasn't been set yet
-                    if not trackerValue.visualChargeBar.displayState then
-                        if trackerValue.countText.renderAsStatusBar == true then
-                            trackerValue.visualChargeBar.displayState = "always"
+                for trackerKey, trackerValue in pairs(trackerValues) do
+                    if trackerType == "items" then
+                        local itemID = tonumber(trackerValue.itemID)
+                        if itemID and itemID > 0 then
+                            trackerValue.itemID = itemID
                         else
-                            trackerValue.visualChargeBar.displayState = "never"
+                            local keyItemID = tonumber(trackerKey)
+                            local instantItemID = keyItemID
+                                and C_Item.GetItemInfoInstant(keyItemID)
+                            if instantItemID then
+                                trackerValue.itemID = tonumber(instantItemID)
+                            end
                         end
                     end
-                    -- Clean up the old field
-                    trackerValue.countText.renderAsStatusBar = nil
-                end
-                if trackerType == 'buffs' then
-                    if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
-                    if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
-                    if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
-                    if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
-                    if trackerValue.iconSettings.iconDisplayState ~= 'active' and trackerValue.iconSettings.iconDisplayState ~= 'never' then trackerValue.iconSettings.iconDisplayState = 'active' end
-                    local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
-                    if not trackerValue.auraSpecs then
-                        trackerValue.auraSpecs = {}
+                    trackerValue.statusBar = trackerValue.statusBar or {}
+                    trackerValue.visualChargeBar = trackerValue.visualChargeBar or {}
+                    trackerValue.iconSettings = trackerValue.iconSettings or {}
+
+                    if not trackerValue.statusBar.reverseFill then
+                        trackerValue.statusBar.reverseFill = false
                     end
-                    if next(trackerValue.auraSpecs) == nil then
+                    -- Ensure proper base spellID if it doesnt exist
+                    if not trackerValue.baseSpellID then
+                        trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID or trackerValue.overrideSpellID or trackerKey)
+                    end
+                    if trackerType == "spells" then
+                        NormalizeAssociatedSpellIDs(trackerValue)
+                    end
+                    -- Change key from "barFillDirection" to "fillOrEmpty"
+                    if trackerValue.statusBar
+                        and trackerValue.statusBar.barFillDirection ~= nil
+                        and trackerValue.statusBar.fillOrEmpty == nil
+                    then
+                        trackerValue.statusBar.fillOrEmpty = trackerValue.statusBar.barFillDirection
+                        trackerValue.statusBar.barFillDirection = nil
+                    end
+
+
+                    if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar and trackerValue.totemBar.attemptToTrack then
+                        trackerValue.statusBar.includeTotemDuration = true
+                    end
+                    --[[----------------------------------------------------
+                    Legacy: countText.renderAsStatusBar -> visualChargeBar.displayState
+                    This migration ensures users who had the old checkbox get proper displayState values
+                    ----------------------------------------------------]]
+                    if trackerValue.countText and trackerValue.countText.renderAsStatusBar ~= nil then
+                        -- Initialize visualChargeBar if it doesn't exist
+                        if not trackerValue.visualChargeBar then
+                            trackerValue.visualChargeBar = {}
+                        end
+                        -- Only migrate if displayState hasn't been set yet
+                        if not trackerValue.visualChargeBar.displayState then
+                            if trackerValue.countText.renderAsStatusBar == true then
+                                trackerValue.visualChargeBar.displayState = "always"
+                            else
+                                trackerValue.visualChargeBar.displayState = "never"
+                            end
+                        end
+                        -- Clean up the old field
+                        trackerValue.countText.renderAsStatusBar = nil
+                    end
+                    if trackerType == 'buffs' then
+                        if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
+                        if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
+                        if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
+                        if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
+                        if trackerValue.iconSettings.iconDisplayState ~= 'active' and trackerValue.iconSettings.iconDisplayState ~= 'never' then trackerValue.iconSettings.iconDisplayState = 'active' end
+                        local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
+                        if not trackerValue.auraSpecs then
+                            trackerValue.auraSpecs = {}
+                        end
+                        if next(trackerValue.auraSpecs) == nil then
+                            for _, spec in ipairs(classAndSpecData.specs) do
+                                trackerValue.auraSpecs[spec.specId] = classAndSpecData.currentSpecID == spec.specId
+                            end
+                        end
+                        local isEnabledForAnyAura = false
                         for _, spec in ipairs(classAndSpecData.specs) do
-                            trackerValue.auraSpecs[spec.specId] = classAndSpecData.currentSpecID == spec.specId
+                            isEnabledForAnyAura = isEnabledForAnyAura or trackerValue.auraSpecs[spec.specId]
                         end
-                    end
-                    local isEnabledForAnyAura = false
-                    for _, spec in ipairs(classAndSpecData.specs) do
-                        isEnabledForAnyAura = isEnabledForAnyAura or trackerValue.auraSpecs[spec.specId]
-                    end
-                    if not isEnabledForAnyAura and trackerValue.isEnabled then
-                        trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
-                    end
+                        if not isEnabledForAnyAura and trackerValue.isEnabled then
+                            trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
+                        end
 
 
-                    local filters = {}
-                    local unit
-                    if trackerValue.isNPCDebuff == true then
-                        filters[AuraUtil.AuraFilters.Harmful] = true
-                        unit = 'target'
-                    else
-                        filters[AuraUtil.AuraFilters.Helpful] = true
-                        unit = 'player'
-                    end
-                    if trackerValue.auraConfig == nil then
-                        trackerValue.auraConfig = {
-                            filters = filters,
-                            unit = unit
-                        }
-                    else
-                        trackerValue.auraConfig.filters = trackerValue.auraConfig.filters or {}
-                        if not next(trackerValue.auraConfig.filters) then
-                            trackerValue.auraConfig.filters = filters
+                        local filters = {}
+                        local unit
+                        if trackerValue.isNPCDebuff == true then
+                            filters[AuraUtil.AuraFilters.Harmful] = true
+                            unit = 'target'
+                        else
+                            filters[AuraUtil.AuraFilters.Helpful] = true
+                            unit = 'player'
                         end
-                        if trackerValue.auraConfig.unit == '' or trackerValue.auraConfig.unit == nil then
-                            trackerValue.auraConfig.unit = unit
+                        if trackerValue.auraConfig == nil then
+                            trackerValue.auraConfig = {
+                                filters = filters,
+                                unit = unit
+                            }
+                        else
+                            trackerValue.auraConfig.filters = trackerValue.auraConfig.filters or {}
+                            if not next(trackerValue.auraConfig.filters) then
+                                trackerValue.auraConfig.filters = filters
+                            end
+                            if trackerValue.auraConfig.unit == '' or trackerValue.auraConfig.unit == nil then
+                                trackerValue.auraConfig.unit = unit
+                            end
                         end
                     end
+                    local defaults = SpellStyler.TrackerConfigFactory:Create(trackerType)
+                    defaults.baseSpellID = trackerValue.baseSpellID
+                    defaults.defaultIconTexturePath = trackerValue.defaultIconTexturePath
+                    DeepMergeDefaults(trackerValue, defaults)
                 end
-                local defaults = AddNewTrackerValueConfig({
-                    baseSpellID            = trackerValue.baseSpellID,
-                    trackerType            = trackerType,
-                    name                   = C_Spell.GetSpellName(trackerValue.baseSpellID),
-                    defaultIconTexturePath = trackerValue.defaultIconTexturePath
-                })
-                DeepMergeDefaults(trackerValue, defaults)
-
             end
         end
 
@@ -1445,6 +1260,22 @@ function State:MigrateDatabase()
                 EnsureProfileDataShape(profile)
             end
         end
+
+        -- The profile conversion copies legacy top-level data into the
+        -- default profile. Do not retain the legacy collections afterward:
+        -- they are duplicate tracker state and can be mistaken for the
+        -- current profile by migration or debugging code.
+        -- for _, key in ipairs({
+        --     "buffs",
+        --     "essential",
+        --     "utility",
+        --     "spells",
+        --     "items",
+        --     "docks",
+        --     "globalSettings",
+        -- }) do
+        --     specDB[key] = nil
+        -- end
 
         if specID == currentSpecID then
             State:ReconcileTalentLoadouts(specID, specDB, true)
@@ -1713,9 +1544,9 @@ function State:getTrackerValuesListForSettings()
     for trackerKey, trackerValue in pairs(spellsValues or {}) do
         State:EnsureVisualChargeBarDefaults(trackerValue)
         
-        -- Keep entries with all variants unchecked in the settings list. The
-        -- variant checkboxes control visibility; Disable controls the entry.
-        local shouldInclude = trackerValue.isEnabled ~= false
+        -- Match frame creation: an enabled associated spell keeps the tracker
+        -- in the settings list even when the legacy top-level flag is stale.
+        local shouldInclude = State:IsSpellTrackerEnabled(trackerValue)
             and (C_SpellBook.IsSpellKnown(trackerValue.baseSpellID) or C_SpellBook.IsSpellKnown(C_Spell.GetOverrideSpell(trackerValue.baseSpellID)))
         
         if shouldInclude then
@@ -2370,9 +2201,9 @@ function State:HandleEquipmentChanged()
             trackerValue.baseSpellID = spellID or trackerKey
             trackerValue.name = (itemID and C_Item.GetItemNameByID(itemID)) or slotInfo.name
             trackerValue.defaultIconTexturePath = itemID and C_Item.GetItemIconByID(itemID) or nil
-            if itemID and SpellStyler.GetOwnedItemQuality then
+            if itemID then
                 trackerValue.associatedItemQualities = trackerValue.associatedItemQualities or {}
-                SpellStyler.GetOwnedItemQuality(itemID, trackerValue.associatedItemQualities)
+                SpellStyler.State.items.GetOwnedItemQuality(itemID, trackerValue.associatedItemQualities)
             end
 
             if trackerValue.isEnabled ~= false

@@ -140,7 +140,7 @@ local function CreateIconButton(parent, iconPath, spellName, trackerKey, tracker
 	btn.texture = tex
 	if trackerType == "items" then
 		local config = State:GetSpecificTrackerValue(trackerKey, trackerType)
-		tex:SetTexture(SpellStyler.GetOwnedItemIcon(itemID, config and config.associatedItemQualities, iconPath))
+		tex:SetTexture(SpellStyler.State.items.GetOwnedItemIcon(itemID, config and config.associatedItemQualities, iconPath))
 		SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(
             itemID,
             btn,
@@ -756,7 +756,8 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
                 else
                     -- For spells/items, call IconSettingsRenderer's mock cooldown method
                     SpellStyler.IconSettingsRenderer:ToggleMockCooldown(btn.uniqueID, btn.trackerType)
-                    local isNowActive = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType][btn.uniqueID].meta.mockCooldownActive
+                    local frames = SpellStyler.FrameTrackerManager.SpellStyler_frames[btn.trackerType]
+                    local isNowActive = frames and frames[btn.uniqueID] and frames[btn.uniqueID].meta.mockCooldownActive
                     btnFrame:SetText(isNowActive and "Stop Cooldown" or "Mock Cooldown")
                 end
             end,
@@ -839,6 +840,12 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         },
         getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".progressDirection") or "standard" end,
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".progressDirection", value) end,
+    })
+    table.insert(inputs, {
+        type = "checkbox",
+        label = "Reverse Fill:",
+        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".reverseFill") or false end,
+        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".reverseFill", value) end,
     })
     
     table.insert(inputs, {

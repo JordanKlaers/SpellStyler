@@ -8,6 +8,11 @@
 --   completeState.position.x
 --
 -- No runtime value becomes { value = ..., template = ... }.
+local addonName, SpellStyler = ...
+SpellStyler.TrackerConfigFactory = SpellStyler.TrackerConfigFactory or {}
+local TrackerConfigFactory = SpellStyler.TrackerConfigFactory
+
+
 
 local function DeepCopy(value)
     if type(value) ~= "table" then
@@ -56,13 +61,13 @@ local function WritePath(object, path, value)
     current[keys[#keys]] = DeepCopy(value)
 end
 
-local function IsMetaDefinition(value)
+TrackerConfigFactory.IsMetaDefinition = function(value)
     return type(value) == "table" and value.__kind == "field"
 end
 
 -- A callable table keeps the default and its copy policy together in the
 -- definition layer. Calling it returns only the normal runtime value.
-local _ = {} -- Local sentinel meaning that a field applies to every tracker type.
+local _ = 'all' -- Local sentinel meaning that a field applies to every tracker type.
 local excludedFromTemplate = {} -- Policy sentinel for fields excluded from templates.
 
 local SPELLS_AND_ITEMS = {
@@ -70,6 +75,11 @@ local SPELLS_AND_ITEMS = {
     essential = true,
     utility = true,
     items = true,
+}
+
+local ITEMS_AND_AURAS = {
+    buffs = true,
+    items = true
 }
 
 local AURAS_ONLY = {
@@ -93,11 +103,17 @@ local ITEMS_ONLY = {
         - The tracker type the value is used for
 ]]
 local function __(defaultValue, appliesTo, policy)
+    local appliesToTrackerType
+    if appliesTo == _ then
+        appliesToTrackerType = nil
+    else
+        appliesToTrackerType = appliesTo
+    end
     local field = {
         __kind = "field",
         default = defaultValue,
         excludeFromTemplate = policy == excludedFromTemplate,
-        appliesTo = appliesTo == _ and nil or appliesTo,
+        appliesTo = appliesToTrackerType
     }
 
     return setmetatable(field, {
@@ -108,7 +124,13 @@ local function __(defaultValue, appliesTo, policy)
 end
 
 local function AppliesTo(field, trackerType)
-    return not field.appliesTo or field.appliesTo[trackerType] == true
+    if not field.appliesTo then
+        return true
+    end
+    if type(field.appliesTo) == "table" then
+        return field.appliesTo[trackerType] == true
+    end
+    return field.appliesTo == trackerType
 end
 
 -- This is the definition source. Defaults and template exclusions are declared
@@ -125,7 +147,7 @@ local TrackerDefinitions = {
     name = __(nil, _, excludedFromTemplate),
     defaultIconTexturePath = __(nil, _, excludedFromTemplate),
     isItem = __(false, _, excludedFromTemplate),
-    isEnabled = true,
+    isEnabled = __(true, AURAS_ONLY, excludedFromTemplate),
     iconColor = { r = 1, g = 1, b = 1, a = 1 },
     scale = 1,
     position = __({
@@ -178,6 +200,7 @@ local TrackerDefinitions = {
         barOrientation = "horizontal",
         fillOrEmpty = "regular",
         progressDirection = "standard",
+        reverseFill = false,
         defaultFillValue = __("empty", SPELLS_AND_ITEMS),
         color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
         backgroundColor = __({ r = 0, g = 0, b = 0, a = 0.65 }, SPELLS_AND_ITEMS),
@@ -250,13 +273,13 @@ local TrackerDefinitions = {
     devNotes = __({}, SPELLS_AND_ITEMS, excludedFromTemplate),
 }
 
-local TrackerConfigFactory = {}
+
 
 local function Materialize(definitions, trackerType)
     local result = {}
 
     for key, definition in pairs(definitions or {}) do
-        if IsMetaDefinition(definition) then
+        if TrackerConfigFactory.IsMetaDefinition(definition) then
             if AppliesTo(definition, trackerType) then
                 result[key] = definition()
             end
@@ -276,7 +299,7 @@ end
 local function WalkDefinitions(definitions, path, callback)
     for key, definition in pairs(definitions or {}) do
         local childPath = path and (path .. "." .. key) or key
-        if IsMetaDefinition(definition) then
+        if TrackerConfigFactory.IsMetaDefinition(definition) then
             callback(childPath, definition)
         elseif type(definition) ~= "table" then
             callback(childPath)
@@ -286,9 +309,9 @@ local function WalkDefinitions(definitions, path, callback)
     end
 end
 
-function TrackerConfigFactory:Create(trackerType, identity)
+function TrackerConfigFactory:Create(trackerType, targetObject)
     local config = Materialize(self.definitions, trackerType)
-    MergeInto(config, identity)
+    MergeInto(config, targetObject)
     config.trackerType = trackerType
     return config
 end

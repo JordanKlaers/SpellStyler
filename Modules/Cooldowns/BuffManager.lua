@@ -24,7 +24,7 @@ function BuffManager:CreateStatusBar(frame, key, trackerConfig)
     local _iconH = trackerConfig.iconSettings.height or trackerConfig.iconSettings.size or 48
     local statusBarWidth = barConfig and barConfig.width or (_iconW * 4)
     local statusBarHeight = barConfig and barConfig.height or (_iconH / 2)
-	local reverseFill = barConfig.fillOrEmpty == 'inverse'
+	local reverseFill = barConfig.reverseFill == true
 
     bar:SetSize(statusBarWidth, statusBarHeight)
     bar:SetScale(barConfig.scale or 1)
@@ -66,6 +66,7 @@ function BuffManager:CreateStatusBar(frame, key, trackerConfig)
     bar:SetOrientation(
         (barConfig.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
     )
+    bar:RotateTextures(barConfig.textureRotation or 0)
     -- Show statusBar frame once at creation; visibility controlled by alpha thereafter
     -- bar:Show()
 

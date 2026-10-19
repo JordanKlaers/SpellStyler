@@ -5,107 +5,134 @@ local State = SpellStyler.State
 
 local PLUS_ICON_PATH = "Interface\\AddOns\\SpellStyler\\Media\\Textures\\PlusIcon"
 
-local function GetItemQuality(itemID)
-    if not itemID then return nil end
-    if C_TradeSkillUI and C_TradeSkillUI.GetItemReagentQualityInfo then
-        local info = C_TradeSkillUI.GetItemReagentQualityInfo(itemID)
-        if info and (info.quality or info.qualityLevel) then
-            return info.quality or info.qualityLevel
-        end
-    end
-    local _, _, quality = C_Item.GetItemInfo(itemID)
-    return quality
-end
-
-local function GetOwnedItemIDs()
-    local ids = {}
-    local seen = {}
-    for slotID = 1, 19 do
-        local itemID = GetInventoryItemID("player", slotID)
-        if itemID and not seen[itemID] then
-            seen[itemID] = true
-            table.insert(ids, itemID)
-        end
-    end
-    for bagID = 0, 6 do
-        for slotID = 1, (C_Container.GetContainerNumSlots(bagID) or 0) do
-            local info = C_Container.GetContainerItemInfo(bagID, slotID)
-            if info and info.itemID and not seen[info.itemID] then
-                seen[info.itemID] = true
-                table.insert(ids, info.itemID)
+State.items = {
+    -- save items and their qualities. The key should be the spellId of the item (different qualities share the same spellId for the item)
+    ownedItemQualityCache = {},
+    -- Returns a number representing the item quality
+    GetItemQuality = function(itemID)
+        if not itemID then return nil end
+        if C_TradeSkillUI and C_TradeSkillUI.GetItemReagentQualityInfo then
+            local info = C_TradeSkillUI.GetItemReagentQualityInfo(itemID)
+            if info and (info.quality or info.qualityLevel) then
+                return info.quality or info.qualityLevel
             end
         end
-    end
-    return ids
-end
+        local _, _, quality = C_Item.GetItemInfo(itemID)
+        return quality
+    end,
+    AddOwnedItemToQualityCache = function(itemID)
+        if not itemID then return end
 
---- Returns the highest-quality owned variant while retaining the configured base item ID.
-function SpellStyler.GetOwnedItemQuality(itemID, associatedItemQualities)
-    if not itemID then return nil end
-    local candidates = {}
-    local function add(id, quality, texture)
-        if id and quality then
-            table.insert(candidates, {
-                itemID = id,
-                qualityLevel = quality,
-                texturePath = texture,
-                textureID = texture,
-            })
-        end
-    end
-    local known = {}
-    for _, record in ipairs(associatedItemQualities or {}) do
-        known[tonumber(record.itemID) or record.itemID] = record
-    end
-    local baseName = C_Item.GetItemNameByID(itemID)
-    local _, baseSpellID = C_Item.GetItemSpell(itemID)
-    for _, ownedID in ipairs(GetOwnedItemIDs()) do
-        local record = known[ownedID]
-        local ownedName = C_Item.GetItemNameByID(ownedID)
-        local _, ownedSpellID = C_Item.GetItemSpell(ownedID)
-        if ownedID == itemID or record
-            or (baseName and ownedName == baseName and ownedSpellID == baseSpellID)
-        then
-            local quality = record and record.qualityLevel or GetItemQuality(ownedID)
-            local texture = record and (record.texturePath or record.textureID) or C_Item.GetItemIconByID(ownedID)
-            add(ownedID, quality, texture)
-            if associatedItemQualities and quality and not record then
-                associatedItemQualities[#associatedItemQualities + 1] = {
-                    itemID = ownedID,
-                    qualityLevel = quality,
-                    texturePath = texture,
-                    textureID = texture,
-                }
+        local _, itemSpellID = C_Item.GetItemSpell(itemID)
+        local cacheKey = itemSpellID or itemID
+        local quality = SpellStyler.State.items.GetItemQuality(itemID)
+        local texture = C_Item.GetItemIconByID(itemID)
+        local cache = SpellStyler.State.items.ownedItemQualityCache
+        cache[cacheKey] = cache[cacheKey] or {}
+        cache[cacheKey][itemID] = {
+            itemID = itemID,
+            qualityLevel = tonumber(quality) or quality,
+            texturePath = texture,
+            textureID = texture,
+        }
+    end,
+    GetOwnedItemIDs = function()
+        local ids = {}
+        local seen = {}
+        for slotID = 1, 19 do
+            local itemID = GetInventoryItemID("player", slotID)
+            if itemID and not seen[itemID] then
+                seen[itemID] = true
+                table.insert(ids, itemID)
             end
         end
-    end
-    table.sort(candidates, function(a, b) return a.qualityLevel > b.qualityLevel end)
-    return candidates[1]
-end
+        for bagID = 0, 6 do
+            for slotID = 1, (C_Container.GetContainerNumSlots(bagID) or 0) do
+                local info = C_Container.GetContainerItemInfo(bagID, slotID)
+                if info and info.itemID and not seen[info.itemID] then
+                    seen[info.itemID] = true
+                    table.insert(ids, info.itemID)
+                end
+            end
+        end
+        return ids
+    end,
+    RebuildOwnedItemQualityCache= function()
+        SpellStyler.State.items.ownedItemQualityCache = {}
 
-function SpellStyler.GetOwnedItemIcon(itemID, associatedItemQualities, fallback)
-    local resolved = SpellStyler.GetOwnedItemQuality(itemID, associatedItemQualities)
-    return (resolved and (resolved.texturePath or resolved.textureID))
-        or fallback
-        or (itemID and C_Item.GetItemIconByID(itemID))
-end
+        for _, itemID in ipairs(SpellStyler.State.items.GetOwnedItemIDs()) do
+            SpellStyler.State.items.AddOwnedItemToQualityCache(itemID)
+        end
+    end,
+    AddOwnedItemQualityFromBagSlot = function(bagSlot)
+        if type(bagSlot) ~= "number" then return end
 
---- Resolves an item icon and draws its quality marker. Used by settings and live frames.
-function SpellStyler.RenderOwnedItemQuality(frame, itemID, associatedItemQualities)
-    if not frame or not itemID then return nil end
-    local resolved = SpellStyler.GetOwnedItemQuality(itemID, associatedItemQualities)
-    if resolved and frame.SetTexture then
-        frame:SetTexture(resolved.texturePath or resolved.textureID)
-    elseif resolved and frame.icon and frame.icon.SetTexture then
-        frame.icon:SetTexture(resolved.texturePath or resolved.textureID)
+        local itemInfo = C_Container.GetContainerItemInfo(0, bagSlot)
+        if itemInfo and itemInfo.itemID then
+            SpellStyler.State.items.AddOwnedItemToQualityCache(itemInfo.itemID)
+        end
+    end,
+    GetBestCachedItemQuality = function(itemID, spellID)
+        if not itemID and not spellID then return nil end
+
+        local cacheKey = spellID
+        if not cacheKey and itemID then
+            local _, itemSpellID = C_Item.GetItemSpell(itemID)
+            cacheKey = itemSpellID or itemID
+        end
+
+        local cachedItems = SpellStyler.State.items.ownedItemQualityCache[cacheKey]
+        local best
+        local bestCount = cachedItems and 0 or nil
+        if cachedItems then
+            for _, itemData in pairs(cachedItems) do
+                local itemCount = C_Item.GetItemCount(itemData.itemID, false, true)
+                if itemCount > 0
+                    and itemData.qualityLevel
+                    and (not best or itemData.qualityLevel > best.qualityLevel)
+                then
+                    best = itemData
+                    bestCount = itemCount
+                end
+            end
+        end
+        return best, bestCount
+    end,
+
+    -- GetOwnedItemQualityBySpellID = function(spellID)
+    --     return SpellStyler.State.items.GetBestCachedItemQuality(nil, spellID)
+    -- end,
+
+    --- Returns the highest-quality owned variant while retaining the configured base item ID.
+    GetOwnedItemQuality = function(itemID, associatedItemQualitiesOrSpellID)
+        local spellID = type(associatedItemQualitiesOrSpellID) == "number"
+            and associatedItemQualitiesOrSpellID
+            or nil
+        return SpellStyler.State.items.GetBestCachedItemQuality(itemID, spellID)
+    end,
+
+    GetOwnedItemIcon = function(itemID, associatedItemQualities, fallback)
+        local resolved = SpellStyler.State.items.GetOwnedItemQuality(itemID, associatedItemQualities)
+        return (resolved and (resolved.texturePath or resolved.textureID))
+            or fallback
+            or (itemID and C_Item.GetItemIconByID(itemID))
+    end,
+
+    --- Resolves an item icon and draws its quality marker. Used by settings and live frames.
+    RenderOwnedItemQuality = function(frame, itemID, associatedItemQualities)
+        if not frame or not itemID then return nil end
+        local resolved = SpellStyler.State.items.GetOwnedItemQuality(itemID, associatedItemQualities)
+        if resolved and frame.SetTexture then
+            frame:SetTexture(resolved.texturePath or resolved.textureID)
+        elseif resolved and frame.icon and frame.icon.SetTexture then
+            frame.icon:SetTexture(resolved.texturePath or resolved.textureID)
+        end
+        SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(itemID, frame, associatedItemQualities, true)
+        return resolved
     end
-    local qualityUtils = SpellStyler.FrameTrackerManager
-        and SpellStyler.FrameTrackerManager.utils
-    if qualityUtils and qualityUtils.ApplyItemQualityOverlay then
-        qualityUtils.ApplyItemQualityOverlay(itemID, frame, associatedItemQualities, true)
-    end
-    return resolved
-end
+
+}
+
 
 -- ============================================================================
 -- Spell data gathering
@@ -173,20 +200,15 @@ function AddSpells:GetPlayerItems()
     local seenNames = {}
     local function getQualities(itemID, itemName, spellID)
         local records = {}
-        for _, ownedID in ipairs(GetOwnedItemIDs()) do
-            local ownedName = C_Item.GetItemNameByID(ownedID)
-            local _, ownedSpellID = C_Item.GetItemSpell(ownedID)
-            if ownedID == itemID or (ownedName == itemName and ownedSpellID == spellID) then
-                local quality = GetItemQuality(ownedID)
-                if quality then
-                    local texture = C_Item.GetItemIconByID(ownedID)
-                    records[#records + 1] = {
-                        itemID = ownedID,
-                        qualityLevel = quality,
-                        texturePath = texture,
-                        textureID = texture,
-                    }
-                end
+        local cachedItems = SpellStyler.State.items.ownedItemQualityCache[spellID or itemID]
+        for _, itemData in pairs(cachedItems or {}) do
+            if itemData.qualityLevel then
+                records[#records + 1] = {
+                    itemID = itemData.itemID,
+                    qualityLevel = itemData.qualityLevel,
+                    texturePath = itemData.texturePath,
+                    textureID = itemData.textureID,
+                }
             end
         end
         return records
@@ -447,7 +469,7 @@ function AddSpells:RenderDisabledValuesView(parent)
     local function getEntryIcon(entry)
         local config = entry.config
         if entry.trackerType == "items" then
-            return SpellStyler.GetOwnedItemIcon(config.itemID, config.associatedItemQualities,
+            return SpellStyler.State.items.GetOwnedItemIcon(config.itemID, config.associatedItemQualities,
                     config.itemID and C_Item.GetItemIconByID(config.itemID))
                 or config.defaultIconTexturePath
                 or DISABLED_ICON_PATH
@@ -858,13 +880,12 @@ function AddSpells:RenderAddSpellsView(parent)
     end
 
     local function GetItemDuplicateReason(itemID, trackerConfig)
-        local resolved = SpellStyler.GetOwnedItemQuality
-            and SpellStyler.GetOwnedItemQuality(
-                itemID,
-                trackerConfig and trackerConfig.associatedItemQualities
-            )
+        local resolved = SpellStyler.State.items.GetOwnedItemQuality(
+            itemID,
+            trackerConfig and trackerConfig.associatedItemQualities
+        )
         local resolvedItemID = resolved and resolved.itemID or itemID
-        local quality = resolved and resolved.qualityLevel or GetItemQuality(resolvedItemID)
+        local quality = resolved and resolved.qualityLevel or SpellStyler.State.items.GetItemQuality(resolvedItemID)
         local count = C_Item.GetItemCount(resolvedItemID, true, true)
         return "This item is already tracked. You currently have "
             .. tostring(count or 0)
@@ -1338,7 +1359,7 @@ function AddSpells:RenderAddSpellsView(parent)
         if selectedType == "spell" then
             local existingKey, existingConfig = FindSharedSpellTracker(selectedEntry.spellID)
             if existingKey then
-                if not IsTrackerEnabled(existingConfig, selectedEntry.spellID) then
+                if not State:IsTrackerEnabled(existingConfig) then
                     State:ReenableTrackerValue(existingKey, "spells")
                     if SpellStyler.settingsContentFrame then
                         SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
@@ -1349,11 +1370,24 @@ function AddSpells:RenderAddSpellsView(parent)
         elseif selectedType == "item" and selectedEntry.itemID then
             local existingKey, existingConfig = FindMatchingItemTracker(selectedEntry.itemID)
             if existingKey then
-                if existingConfig.isEnabled == false then
+                if not State:IsTrackerEnabled(existingConfig) then
                     State:ReenableTrackerValue(existingKey, "items")
                     if SpellStyler.settingsContentFrame then
                         SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
                     end
+                end
+                return
+            end
+        elseif selectedType == "aura" then
+            local BuffManager = SpellStyler.BuffManager
+            local trackingID = C_Spell.GetBaseSpell(selectedEntry.spellID) or selectedEntry.spellID
+            local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "buffs")
+            if existingTrackerConfig and foundConfig then
+                State:SetTrackerValueConfigProperty(trackingID, "buffs", 'isEnabled', true)
+                -- If you are readding an aura, flag the aura as being applicable for the current specID
+                State:SetTrackerValueConfigProperty(trackingID, "buffs", 'auraSpecs.' .. State:GetCurrentSpecID(), true)
+                if BuffManager.buffContainers[trackingID] then
+                    BuffManager:UpdateAura(BuffManager.buffContainers[trackingID], existingTrackerConfig)
                 end
                 return
             end
@@ -1367,37 +1401,25 @@ function AddSpells:RenderAddSpellsView(parent)
 
         if selectedType == "spell" then
             trackerType = "spells"
-            local existingKey, existingByBase, baseSpellID = FindSharedSpellTracker(selectedEntry.spellID)
-
-            
-            trackingID = existingKey or selectedEntry.spellID
-            local existingTrackerConfig, foundConfig = existingByBase, existingByBase ~= nil
-            if existingTrackerConfig and foundConfig then
-                trackerConfig = existingTrackerConfig
-                if not State:IsSpellTrackerEnabled(trackerConfig) then
-                    for spellID in pairs(State:GetAssociatedSpellIDs(trackerConfig)) do
-                        State:UpdateAssociatedSpells(trackerConfig, spellID, { enabled = true })
-                    end
+            local iconTexture = selectedEntry.iconID
+            local baseSpellID = C_Spell.GetBaseSpell(selectedEntry.spellID, GetSpecialization())
+                or selectedEntry.spellID
+            trackingID = baseSpellID
+            trackerConfig = State:AddTrackerValue({
+                trackerKey              = baseSpellID,
+                baseSpellID             = baseSpellID,
+                overrideSpellID         = C_Spell.GetOverrideSpell(baseSpellID),
+                trackerType             = "spells",
+                name                    = selectedEntry.name,
+                defaultIconTexturePath  = iconTexture,
+            })
+            local function enableSpellID(spellID)
+                if spellID and (C_SpellBook.IsSpellKnown(spellID) or C_SpellBook.IsSpellInSpellBook(spellID)) then
+                    State:UpdateAssociatedSpells(trackerConfig, spellID, { enabled = true })
                 end
-                State:UpdateAssociatedSpells(trackerConfig, selectedEntry.spellID, { enabled = true })
-            else
-                local iconTexture = selectedEntry.iconID
-                trackerConfig = State:AddTrackerValue({
-                    trackerKey              = trackingID,
-                    baseSpellID             = baseSpellID,
-                    overrideSpellID         = C_Spell.GetOverrideSpell(baseSpellID),
-                    trackerType             = "spells",
-                    name                    = selectedEntry.name,
-                    defaultIconTexturePath  = iconTexture,
-                })
-                local function enableSpellID(spellID)
-                    if spellID and (C_SpellBook.IsSpellKnown(spellID) or C_SpellBook.IsSpellInSpellBook(spellID)) then
-                        State:UpdateAssociatedSpells(trackerConfig, spellID, { enabled = true })
-                    end
-                end
-                enableSpellID(baseSpellID)
-                enableSpellID(C_Spell.GetOverrideSpell(baseSpellID, GetSpecialization(), true))
             end
+            enableSpellID(baseSpellID)
+            enableSpellID(C_Spell.GetOverrideSpell(baseSpellID, GetSpecialization(), true))
         elseif selectedType == "item" then
             trackerType = "items"
 
@@ -1408,92 +1430,59 @@ function AddSpells:RenderAddSpellsView(parent)
                 local _, spellID = C_Item.GetItemSpell(itemID)
                 trackingID = selectedEntry.slotKey
 
-                local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "items")
-                if existingTrackerConfig and foundConfig then
-                    trackerConfig = existingTrackerConfig
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'isEnabled', true)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'itemID', itemID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'baseSpellID', spellID or trackingID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'overrideSpellID', spellID or trackingID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'name', selectedEntry.name)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'defaultIconTexturePath', C_Item.GetItemIconByID(itemID))
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'associatedItemQualities', selectedEntry.associatedItemQualities or {})
-                else
-                    local iconTexture = C_Item.GetItemIconByID(itemID)
-                    trackerConfig = State:AddTrackerValue({
-                        trackerKey              = trackingID,
-                        itemID                  = itemID,
-                        baseSpellID             = spellID or trackingID,
-                        overrideSpellID         = spellID or trackingID,
-                        trackerType             = "items",
-                        name                    = selectedEntry.name,
-                        defaultIconTexturePath  = iconTexture,
-                        isItem                  = true,
-                        associatedItemQualities = selectedEntry.associatedItemQualities or {},
-                    })
-                end
+                
+                local iconTexture = C_Item.GetItemIconByID(itemID)
+                trackerConfig = State:AddTrackerValue({
+                    trackerKey              = trackingID,
+                    itemID                  = itemID,
+                    baseSpellID             = spellID or trackingID,
+                    overrideSpellID         = spellID or trackingID,
+                    trackerType             = "items",
+                    name                    = selectedEntry.name,
+                    defaultIconTexturePath  = iconTexture,
+                    isItem                  = true,
+                    associatedItemQualities = selectedEntry.associatedItemQualities or {},
+                })
             else
                 -- Normal item search results use the item ID when an item has no
                 -- usable spell ID, such as some potion variants.
                 local spellName, spellID = C_Item.GetItemSpell(selectedEntry.itemID)
                 trackingID = spellID or selectedEntry.itemID
-                local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "items")
-                if existingTrackerConfig and foundConfig then
-                    trackerConfig = existingTrackerConfig
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'isEnabled', true)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'itemID', selectedEntry.itemID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'baseSpellID', spellID or selectedEntry.itemID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'overrideSpellID', spellID or selectedEntry.itemID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'name', selectedEntry.name)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'defaultIconTexturePath', selectedEntry.iconID)
-                    State:SetTrackerValueConfigProperty(trackingID, "items", 'associatedItemQualities', selectedEntry.associatedItemQualities or {})
-                else
-                    local iconTexture = selectedEntry.iconID or C_Item.GetItemIconByID(selectedEntry.itemID)
-                    trackerConfig = State:AddTrackerValue({
-                        trackerKey              = trackingID,
-                        itemID                  = selectedEntry.itemID,
-                        baseSpellID             = spellID or selectedEntry.itemID,
-                        overrideSpellID         = spellID or selectedEntry.itemID,
-                        trackerType             = "items",
-                        name                    = selectedEntry.name,
-                        defaultIconTexturePath  = iconTexture,
-                        isItem                  = true,
-                        associatedItemQualities = selectedEntry.associatedItemQualities or {},
-                    })
-                end
+
+                local iconTexture = selectedEntry.iconID or C_Item.GetItemIconByID(selectedEntry.itemID)
+                trackerConfig = State:AddTrackerValue({
+                    trackerKey              = trackingID,
+                    itemID                  = selectedEntry.itemID,
+                    baseSpellID             = spellID or selectedEntry.itemID,
+                    overrideSpellID         = spellID or selectedEntry.itemID,
+                    trackerType             = "items",
+                    name                    = selectedEntry.name,
+                    defaultIconTexturePath  = iconTexture,
+                    isItem                  = true,
+                    associatedItemQualities = selectedEntry.associatedItemQualities or {},
+                })
             end
         elseif selectedType == "aura" then
             trackerType = "buffs"
-            local BuffManager = SpellStyler.BuffManager
-            trackingID = C_Spell.GetBaseSpell(selectedEntry.spellID)
-            local existingTrackerConfig, foundConfig = State:GetSpecificTrackerValue(trackingID, "buffs")
-            local currentSpecID = State and State.GetCurrentSpecID and State:GetCurrentSpecID()
-            if existingTrackerConfig and foundConfig then
-                trackerConfig = existingTrackerConfig
-                State:SetTrackerValueConfigProperty(trackingID, "buffs", 'isEnabled', true)
-                -- If you are readding an aura, flag the aura as being applicable for the current specID
-                State:SetTrackerValueConfigProperty(trackingID, "buffs", 'auraSpecs.' .. currentSpecID, true)
-                if BuffManager.buffContainers[trackingID] then
-                    BuffManager:UpdateAura(BuffManager.buffContainers[trackingID], trackerConfig)
-                end
-            else
-                -- Track aura by baseSpellID
-                local overrideSpellID = C_Spell.GetOverrideSpell(selectedEntry.spellID)
-                -- Get icon from override spell for correct initial appearance
-                local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
-                local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedEntry.iconID
-                trackerConfig = State:AddTrackerValue({
-                    trackerKey              = trackingID,
-                    baseSpellID             = trackingID,
-                    overrideSpellID         = overrideSpellID,
-                    trackerType             = "buffs",
-                    name                    = selectedEntry.name,
-                    defaultIconTexturePath  = iconTexture,
-                    auraSpecs               = {
-                        [currentSpecID] = true
-                    }
-                })
-            end
+            
+            -- Track aura by baseSpellID
+            trackingID = C_Spell.GetBaseSpell(selectedEntry.spellID, GetSpecialization())
+                or selectedEntry.spellID
+            local overrideSpellID = C_Spell.GetOverrideSpell(selectedEntry.spellID)
+            -- Get icon from override spell for correct initial appearance
+            local overrideSpellInfo = C_Spell.GetSpellInfo(overrideSpellID)
+            local iconTexture = (overrideSpellInfo and overrideSpellInfo.iconID) or selectedEntry.iconID
+            trackerConfig = State:AddTrackerValue({
+                trackerKey              = trackingID,
+                baseSpellID             = trackingID,
+                overrideSpellID         = overrideSpellID,
+                trackerType             = "buffs",
+                name                    = selectedEntry.name,
+                defaultIconTexturePath  = iconTexture,
+                auraSpecs               = {
+                    [State:GetCurrentSpecID()] = true
+                }
+            })
         end
 
         if not trackerConfig then return end
@@ -1651,7 +1640,7 @@ function AddSpells:RenderAddSpellsView(parent)
 
             local tex = btn:CreateTexture(nil, "ARTWORK")
             tex:SetAllPoints()
-            tex:SetTexture(SpellStyler.GetOwnedItemIcon(item.itemID, item.associatedItemQualities, item.iconID))
+            tex:SetTexture(SpellStyler.State.items.GetOwnedItemIcon(item.itemID, item.associatedItemQualities, item.iconID))
             tex:SetTexCoord(0, 1, 0, 1)
             SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(item.itemID, btn, item.associatedItemQualities, true)
 
@@ -1836,14 +1825,14 @@ function AddSpells:RenderAddSpellsView(parent)
         end
 
         if found then
-            if entryType == "item" and found.itemID and SpellStyler.GetOwnedItemQuality then
+            if entryType == "item" and found.itemID then
                 found.associatedItemQualities = found.associatedItemQualities or {}
-                SpellStyler.GetOwnedItemQuality(found.itemID, found.associatedItemQualities)
+                SpellStyler.State.items.GetOwnedItemQuality(found.itemID, found.associatedItemQualities)
             end
             previewEntry, previewType = found, entryType
             UpdateAddButtonLabel(entryType)
             previewTex:SetTexture(entryType == "item"
-                and SpellStyler.GetOwnedItemIcon(
+                and SpellStyler.State.items.GetOwnedItemIcon(
                     found.itemID,
                     found.associatedItemQualities,
                     found.iconID

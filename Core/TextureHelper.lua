@@ -403,120 +403,7 @@ texScanFrame:SetScript("OnEvent", function(self, event, ...)
         if key == "L" and IsShiftKeyDown() and IsControlKeyDown() then
         end
         if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-            -- local stateItems = {
-            --     [1291894] = 270162,
-            --     [6262] = 6262
-            -- }
-            -- local continuableContainer = ContinuableContainer:Create()
-            -- local itemObjects = {}
-
-            -- for _, itemID in pairs(stateItems) do
-            --     local item = Item:CreateFromItemID(itemID)
-            --     itemObjects[itemID] = item
-            --     continuableContainer:AddContinuable(item)
-            -- end
-
-            -- local immediateItems = {}
-            -- for stateKey, itemID in pairs(stateItems) do
-            --     local config = SpellStyler.State
-            --         and SpellStyler.State:GetSpecificTrackerValue(stateKey, "items")
-            --     immediateItems[itemID] = {
-            --         stateKey = stateKey,
-            --         itemID = itemID,
-            --         stateConfigFound = config ~= nil,
-            --         shouldHideEmptyItemIcon = config
-            --             and SpellStyler.FrameTrackerManager
-            --             and SpellStyler.FrameTrackerManager.utils.ShouldHideEmptyItemIcon(
-            --                 config
-            --             ),
-            --         config = config
-            --     }
-            -- end
-            -- DevTool:AddData({
-            --     phase = "immediate",
-            --     stateItems = stateItems,
-            --     items = immediateItems,
-            -- }, "ShouldHideEmptyItemIcon")
-
-            -- continuableContainer:ContinueOnLoad(function()
-            --     local loadedItems = {}
-
-            --     for stateKey, itemID in pairs(stateItems) do
-            --         local itemName, itemLink, itemQuality, itemLevel,
-            --             itemMinLevel, itemType, itemSubType, itemStackCount,
-            --             itemEquipLoc, itemTexture, sellPrice, classID,
-            --             subclassID, bindType, expansionID, setID,
-            --             isCraftingReagent, itemDescription =
-            --             C_Item.GetItemInfo(itemID)
-
-            --         local detailedItemLevel, previewLevel, sparseItemLevel =
-            --             C_Item.GetDetailedItemLevelInfo(itemLink or itemID)
-
-            --         local itemObject = itemObjects[itemID]
-            --         local instantItemID, instantItemType, instantItemSubType,
-            --             instantItemEquipLoc, instantItemIcon, instantClassID,
-            --             instantSubclassID = C_Item.GetItemInfoInstant(itemID)
-            --         local itemCount = C_Item.GetItemCount(itemID, false, true)
-            --         local itemCountIncludingBank = C_Item.GetItemCount(itemID, true, true)
-            --         local config = SpellStyler.State
-            --             and SpellStyler.State:GetSpecificTrackerValue(stateKey, "items")
-            --         local resolvedItemID = config
-            --             and SpellStyler.FrameTrackerManager
-            --             and SpellStyler.FrameTrackerManager.utils.GetCurrentItemID(
-            --                 config,
-            --                 itemID
-            --             )
-            --         local diagnosticItemID = resolvedItemID or itemID
-            --         local _, _, _, _, _, diagnosticClassID =
-            --             C_Item.GetItemInfoInstant(diagnosticItemID)
-            --         local _, _, _, _, _, _, _, diagnosticItemStackCount =
-            --             C_Item.GetItemInfo(diagnosticItemID)
-            --         local diagnosticItemCount =
-            --             C_Item.GetItemCount(diagnosticItemID, false, true)
-            --         local diagnosticItemCountIncludingBank =
-            --             C_Item.GetItemCount(diagnosticItemID, true, true)
-            --         local shouldHide = config
-            --             and SpellStyler.FrameTrackerManager
-            --             and SpellStyler.FrameTrackerManager.utils.ShouldHideEmptyItemIcon(
-            --                 config
-            --             )
-
-            --         loadedItems[itemID] = {
-            --             stateKey = stateKey,
-            --             inputItemID = itemID,
-            --             resolvedItemID = resolvedItemID,
-            --             shouldHideEmptyItemIcon = shouldHide,
-            --             isConsumable = C_Item.IsConsumableItem(itemID),
-            --             itemStackCount = itemStackCount,
-            --             isStackable = tonumber(itemStackCount) and itemStackCount > 1,
-            --             itemCount = itemCount,
-            --             itemCountIncludingBank = itemCountIncludingBank,
-            --             itemInfoClassID = classID,
-            --             resolvedItemStackCount = diagnosticItemStackCount,
-            --             resolvedIsStackable = tonumber(diagnosticItemStackCount)
-            --                 and diagnosticItemStackCount > 1,
-            --             resolvedItemCount = diagnosticItemCount,
-            --             resolvedItemCountIncludingBank = diagnosticItemCountIncludingBank,
-            --             resolvedItemInfoClassID = diagnosticClassID,
-            --             instantItemID = instantItemID,
-            --             instantItemType = instantItemType,
-            --             instantItemSubType = instantItemSubType,
-            --             instantItemEquipLoc = instantItemEquipLoc,
-            --             instantItemIcon = instantItemIcon,
-            --             instantClassID = instantClassID,
-            --             instantSubclassID = instantSubclassID,
-            --             itemEquipLoc = itemEquipLoc,
-            --             itemIcon = C_Item.GetItemIconByID(itemID),
-            --             itemObject = itemObject,
-            --             config = config
-            --         }
-            --     end
-
-            --     DevTool:AddData({
-            --         stateItems = stateItems,
-            --         items = loadedItems,
-            --     }, "ShouldHideEmptyItemIcon")
-            -- end)
+            
         end
     end)
     texScanFrame:SetScript("OnKeyUp", function(self, key) end)
@@ -608,3 +495,14 @@ SLASH_SS_PREVIEWHIDE1 = "/sspreviewhide"
 SlashCmdList["SS_PREVIEWHIDE"] = function()
     if previewFrame then previewFrame:Hide() end
 end
+
+-- local _, SpellStyler = ...
+-- if NumyFunctionProfiler and not SpellStyler._numyProfilerWrapped then
+--     NumyFunctionProfiler:WrapModules(
+--         "SpellStyler",
+--         "SpellStyler",
+--         SpellStyler,
+--         4
+--     )
+--     SpellStyler._numyProfilerWrapped = true
+-- end
