@@ -69,6 +69,7 @@ FrameTrackerManager.lifecycleController = {
     _ExecuteDrive = function(frame, flags, opts, sources)
         opts = opts or {}
         local config, foundConfig = State:GetSpecificTrackerValue(frame.meta.trackerKey, frame.meta.trackerType)
+        if not foundConfig then return end
         local isItem = frame.meta.isItem
         local resolvedItem, currentItemCount
         if isItem then

@@ -761,13 +761,12 @@ function ConditionalEngine:EvaluateAll()
 
     local specDatabase = State:GetDataBase_V2()
     if not specDatabase then return end
-
+    
     for _, trackerType in ipairs({ "spells", "items" }) do
         local trackerTypeDatabase = specDatabase[trackerType]
         if trackerTypeDatabase then
             for baseSpellID, trackerValue in pairs(trackerTypeDatabase) do
                 -- check if the database for the spell/frame has any conditionas associated to it
-
                 local specialVisibilityConditions = trackerValue.specialVisibilityConditions
                 if specialVisibilityConditions and #specialVisibilityConditions > 0 then
                     local customFrame = FrameTrackerManager.SpellStyler_frames[trackerType]

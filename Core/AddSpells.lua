@@ -990,6 +990,14 @@ function AddSpells:RenderAddSpellsView(parent)
         end
     end
 
+    local function IsSpellKnownForTracking(spellID)
+        if not spellID then return false end
+        local baseSpellID = C_Spell.GetBaseSpell(spellID, GetSpecialization()) or spellID
+        local overrideSpellID = C_Spell.GetOverrideSpell(baseSpellID, GetSpecialization())
+        return C_SpellBook.IsSpellKnown(baseSpellID)
+            or (overrideSpellID and C_SpellBook.IsSpellKnown(overrideSpellID))
+    end
+
     local function UpdateAddButtonLabel(entryType)
         activeAddType = entryType
         if not addBtn then return end
@@ -1058,7 +1066,10 @@ function AddSpells:RenderAddSpellsView(parent)
                 trackerConfig = auraConfig
                 isAlreadyTracked = auraConfig ~= nil and auraConfig.isEnabled ~= false
             end
-            if isAlreadyTracked then
+            if entryType == "spell" and not IsSpellKnownForTracking(entry.spellID) then
+                addDisabledReason = "This spell is not known."
+                UpdateAddButtonState(false)
+            elseif isAlreadyTracked then
                 addDisabledReason = entryType == "aura"
                     and "This aura is already tracked."
                     or entryType == "item"
@@ -1363,6 +1374,7 @@ function AddSpells:RenderAddSpellsView(parent)
                     State:ReenableTrackerValue(existingKey, "spells")
                     if SpellStyler.settingsContentFrame then
                         SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+                        SpellStyler.IconSettingsRenderer:SelectIcon(existingKey, "spells")
                     end
                 end
                 return
@@ -1374,6 +1386,7 @@ function AddSpells:RenderAddSpellsView(parent)
                     State:ReenableTrackerValue(existingKey, "items")
                     if SpellStyler.settingsContentFrame then
                         SpellStyler.IconSettingsRenderer:RenderIconControlView(SpellStyler.settingsContentFrame)
+                        SpellStyler.IconSettingsRenderer:SelectIcon(existingKey, "items")
                     end
                 end
                 return
@@ -1529,6 +1542,7 @@ function AddSpells:RenderAddSpellsView(parent)
             if ISR and ISR.EnableDraggingForAllFrames then
                 ISR:EnableDraggingForAllFrames()
             end
+            SpellStyler.IconSettingsRenderer:SelectIcon(trackingID, trackerType)
         end
     end)
 
@@ -1874,7 +1888,10 @@ function AddSpells:RenderAddSpellsView(parent)
                 )
                 isAlreadyTracked = trackerConfig ~= nil and trackerConfig.isEnabled ~= false
             end
-            if isAlreadyTracked then
+            if entryType == "spell" and not IsSpellKnownForTracking(found.spellID) then
+                addDisabledReason = "This spell is not known."
+                UpdateAddButtonState(false)
+            elseif isAlreadyTracked then
                 if entryType ~= "spell" or not matchedByOverride then
                     addDisabledReason = entryType == "aura"
                         and "This aura is already tracked."

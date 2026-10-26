@@ -365,3 +365,7 @@ Version 3.2.0
 	- Additional performance updates - reduces the number of API calls when processing even for tracked values and changes the events used for tracking item quality and count.
 	- Adds an additional status bar property that was needed to provided the intended full control for direction of the progress animation
 	- The add spells menu no longer distinguishes between direct or associated matches - if the spell or its override/base is tracked, it cant be duplicate added. (The only difference being the info in the tooltip)
+
+Version 3.2.1
+	- Updates the add spells to disable adding a spell that is not known
+	- Updates the database normalization to properly set state for new characters

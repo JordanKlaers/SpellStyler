@@ -403,7 +403,11 @@ texScanFrame:SetScript("OnEvent", function(self, event, ...)
         if key == "L" and IsShiftKeyDown() and IsControlKeyDown() then
         end
         if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-            
+        --     DevTool:AddData({
+        --         donk = SpellStyler.State:GetDataBase_V2(),
+        --         SpellStyler_DB = SpellStyler_DB,
+        --         SpellStyler_CharDB = SpellStyler_CharDB
+        --     }, "specDB")
         end
     end)
     texScanFrame:SetScript("OnKeyUp", function(self, key) end)

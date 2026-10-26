@@ -375,16 +375,19 @@ function AddNewTrackerValueConfig(data)
     end
 
     if data.trackerType == 'spells' then
-        base.associatedSpellIDs[tostring(data.baseSpellID)] = {
+        base.associatedSpellIDs[tonumber(data.baseSpellID) or data.baseSpellID] = {
             enabled = true,
             iconTexturePath = '',
             iconColor = { r=1, g=1, b=1, a=1 },
         }
-        base.associatedSpellIDs[tostring(C_Spell.GetOverrideSpell(data.baseSpellID, GetSpecialization(), true))] = {
-            enabled = true,
-            iconTexturePath = '',
-            iconColor = { r=1, g=1, b=1, a=1 },
-        }
+        local overrideSpellID = C_Spell.GetOverrideSpell(data.baseSpellID, GetSpecialization(), true)
+        if overrideSpellID then
+            base.associatedSpellIDs[tonumber(overrideSpellID) or overrideSpellID] = {
+                enabled = true,
+                iconTexturePath = '',
+                iconColor = { r=1, g=1, b=1, a=1 },
+            }
+        end
     end
     return base
 end
@@ -561,12 +564,23 @@ function State:GetAssociatedSpellID(trackerConfig, spellID, shouldCreate)
     local associatedSpellIDs = trackerConfig and trackerConfig.associatedSpellIDs
     if type(associatedSpellIDs) ~= "table" or not spellID then return nil end
 
-    local spellKey = tonumber(spellID) or spellID
+    local numericSpellID = tonumber(spellID)
+    local spellKey = numericSpellID or spellID
     local association = associatedSpellIDs[spellKey]
+    if not association and numericSpellID then
+        association = associatedSpellIDs[tostring(numericSpellID)]
+        if association then
+            associatedSpellIDs[tostring(numericSpellID)] = nil
+            associatedSpellIDs[spellKey] = association
+        end
+    end
     if association or not shouldCreate then return association end
 
     local baseSpellID = C_Spell.GetBaseSpell(spellKey)
-    local baseAssociation = baseSpellID and associatedSpellIDs[baseSpellID]
+    local baseAssociation = baseSpellID and (
+        associatedSpellIDs[baseSpellID]
+        or associatedSpellIDs[tostring(baseSpellID)]
+    )
     if baseAssociation then
         association = DeepCopy(baseAssociation)
         association.enabled = true
@@ -1114,132 +1128,6 @@ function State:MigrateDatabase()
             Ensure all tracker entries have the correct datastructure and all default values filled
             Convert legacy settings and backfill missing configuration fields.
         ----------------------------------------------------]]
-        local specDB = State:GetCurrentSpecDatabase()
-
-        for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
-            
-            for profileName, profileDatabase in pairs(specDB.profiles) do
-                local trackerValues = profileDatabase[trackerType] or {}
-                for configKey in pairs(SpellStyler.TrackerConfigFactory.definitions or {}) do
-                    trackerValues[configKey] = nil
-                end
-                for trackerKey, trackerValue in pairs(trackerValues) do
-                    if trackerType == "items" then
-                        local itemID = tonumber(trackerValue.itemID)
-                        if itemID and itemID > 0 then
-                            trackerValue.itemID = itemID
-                        else
-                            local keyItemID = tonumber(trackerKey)
-                            local instantItemID = keyItemID
-                                and C_Item.GetItemInfoInstant(keyItemID)
-                            if instantItemID then
-                                trackerValue.itemID = tonumber(instantItemID)
-                            end
-                        end
-                    end
-                    trackerValue.statusBar = trackerValue.statusBar or {}
-                    trackerValue.visualChargeBar = trackerValue.visualChargeBar or {}
-                    trackerValue.iconSettings = trackerValue.iconSettings or {}
-
-                    if not trackerValue.statusBar.reverseFill then
-                        trackerValue.statusBar.reverseFill = false
-                    end
-                    -- Ensure proper base spellID if it doesnt exist
-                    if not trackerValue.baseSpellID then
-                        trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID or trackerValue.overrideSpellID or trackerKey)
-                    end
-                    if trackerType == "spells" then
-                        NormalizeAssociatedSpellIDs(trackerValue)
-                    end
-                    -- Change key from "barFillDirection" to "fillOrEmpty"
-                    if trackerValue.statusBar
-                        and trackerValue.statusBar.barFillDirection ~= nil
-                        and trackerValue.statusBar.fillOrEmpty == nil
-                    then
-                        trackerValue.statusBar.fillOrEmpty = trackerValue.statusBar.barFillDirection
-                        trackerValue.statusBar.barFillDirection = nil
-                    end
-
-
-                    if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar and trackerValue.totemBar.attemptToTrack then
-                        trackerValue.statusBar.includeTotemDuration = true
-                    end
-                    --[[----------------------------------------------------
-                    Legacy: countText.renderAsStatusBar -> visualChargeBar.displayState
-                    This migration ensures users who had the old checkbox get proper displayState values
-                    ----------------------------------------------------]]
-                    if trackerValue.countText and trackerValue.countText.renderAsStatusBar ~= nil then
-                        -- Initialize visualChargeBar if it doesn't exist
-                        if not trackerValue.visualChargeBar then
-                            trackerValue.visualChargeBar = {}
-                        end
-                        -- Only migrate if displayState hasn't been set yet
-                        if not trackerValue.visualChargeBar.displayState then
-                            if trackerValue.countText.renderAsStatusBar == true then
-                                trackerValue.visualChargeBar.displayState = "always"
-                            else
-                                trackerValue.visualChargeBar.displayState = "never"
-                            end
-                        end
-                        -- Clean up the old field
-                        trackerValue.countText.renderAsStatusBar = nil
-                    end
-                    if trackerType == 'buffs' then
-                        if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
-                        if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
-                        if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
-                        if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
-                        if trackerValue.iconSettings.iconDisplayState ~= 'active' and trackerValue.iconSettings.iconDisplayState ~= 'never' then trackerValue.iconSettings.iconDisplayState = 'active' end
-                        local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
-                        if not trackerValue.auraSpecs then
-                            trackerValue.auraSpecs = {}
-                        end
-                        if next(trackerValue.auraSpecs) == nil then
-                            for _, spec in ipairs(classAndSpecData.specs) do
-                                trackerValue.auraSpecs[spec.specId] = classAndSpecData.currentSpecID == spec.specId
-                            end
-                        end
-                        local isEnabledForAnyAura = false
-                        for _, spec in ipairs(classAndSpecData.specs) do
-                            isEnabledForAnyAura = isEnabledForAnyAura or trackerValue.auraSpecs[spec.specId]
-                        end
-                        if not isEnabledForAnyAura and trackerValue.isEnabled then
-                            trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
-                        end
-
-
-                        local filters = {}
-                        local unit
-                        if trackerValue.isNPCDebuff == true then
-                            filters[AuraUtil.AuraFilters.Harmful] = true
-                            unit = 'target'
-                        else
-                            filters[AuraUtil.AuraFilters.Helpful] = true
-                            unit = 'player'
-                        end
-                        if trackerValue.auraConfig == nil then
-                            trackerValue.auraConfig = {
-                                filters = filters,
-                                unit = unit
-                            }
-                        else
-                            trackerValue.auraConfig.filters = trackerValue.auraConfig.filters or {}
-                            if not next(trackerValue.auraConfig.filters) then
-                                trackerValue.auraConfig.filters = filters
-                            end
-                            if trackerValue.auraConfig.unit == '' or trackerValue.auraConfig.unit == nil then
-                                trackerValue.auraConfig.unit = unit
-                            end
-                        end
-                    end
-                    local defaults = SpellStyler.TrackerConfigFactory:Create(trackerType)
-                    defaults.baseSpellID = trackerValue.baseSpellID
-                    defaults.defaultIconTexturePath = trackerValue.defaultIconTexturePath
-                    DeepMergeDefaults(trackerValue, defaults)
-                end
-            end
-        end
-
         if not specDB.profiles then
             specDB.profiles = {
                 default = CreateDefaultProfileData(specDB),
@@ -1250,6 +1138,128 @@ function State:MigrateDatabase()
                 talentLoadouts = {},
             }
         else
+            for _, trackerType in ipairs({ "buffs", "spells", "items" }) do
+                for profileName, profileDatabase in pairs(specDB.profiles) do
+                    local trackerValues = profileDatabase[trackerType] or {}
+                    for configKey in pairs(SpellStyler.TrackerConfigFactory.definitions or {}) do
+                        trackerValues[configKey] = nil
+                    end
+                    for trackerKey, trackerValue in pairs(trackerValues) do
+                        if trackerType == "items" then
+                            local itemID = tonumber(trackerValue.itemID)
+                            if itemID and itemID > 0 then
+                                trackerValue.itemID = itemID
+                            else
+                                local keyItemID = tonumber(trackerKey)
+                                local instantItemID = keyItemID
+                                    and C_Item.GetItemInfoInstant(keyItemID)
+                                if instantItemID then
+                                    trackerValue.itemID = tonumber(instantItemID)
+                                end
+                            end
+                        end
+                        trackerValue.statusBar = trackerValue.statusBar or {}
+                        trackerValue.visualChargeBar = trackerValue.visualChargeBar or {}
+                        trackerValue.iconSettings = trackerValue.iconSettings or {}
+
+                        if not trackerValue.statusBar.reverseFill then
+                            trackerValue.statusBar.reverseFill = false
+                        end
+                        -- Ensure proper base spellID if it doesnt exist
+                        if not trackerValue.baseSpellID then
+                            trackerValue.baseSpellID = C_Spell.GetBaseSpell(trackerValue.rootSpellID or trackerValue.overrideSpellID or trackerKey)
+                        end
+                        if trackerType == "spells" then
+                            NormalizeAssociatedSpellIDs(trackerValue)
+                        end
+                        -- Change key from "barFillDirection" to "fillOrEmpty"
+                        if trackerValue.statusBar
+                            and trackerValue.statusBar.barFillDirection ~= nil
+                            and trackerValue.statusBar.fillOrEmpty == nil
+                        then
+                            trackerValue.statusBar.fillOrEmpty = trackerValue.statusBar.barFillDirection
+                            trackerValue.statusBar.barFillDirection = nil
+                        end
+
+
+                        if trackerValue.statusBar.includeTotemDuration == nil and trackerValue.totemBar and trackerValue.totemBar.attemptToTrack then
+                            trackerValue.statusBar.includeTotemDuration = true
+                        end
+                        --[[----------------------------------------------------
+                        Legacy: countText.renderAsStatusBar -> visualChargeBar.displayState
+                        This migration ensures users who had the old checkbox get proper displayState values
+                        ----------------------------------------------------]]
+                        if trackerValue.countText and trackerValue.countText.renderAsStatusBar ~= nil then
+                            -- Initialize visualChargeBar if it doesn't exist
+                            if not trackerValue.visualChargeBar then
+                                trackerValue.visualChargeBar = {}
+                            end
+                            -- Only migrate if displayState hasn't been set yet
+                            if not trackerValue.visualChargeBar.displayState then
+                                if trackerValue.countText.renderAsStatusBar == true then
+                                    trackerValue.visualChargeBar.displayState = "always"
+                                else
+                                    trackerValue.visualChargeBar.displayState = "never"
+                                end
+                            end
+                            -- Clean up the old field
+                            trackerValue.countText.renderAsStatusBar = nil
+                        end
+                        if trackerType == 'buffs' then
+                            if trackerValue.statusBar.displayState == 'inactive' then trackerValue.statusBar.displayState = 'never' end
+                            if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
+                            if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
+                            if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
+                            if trackerValue.iconSettings.iconDisplayState ~= 'active' and trackerValue.iconSettings.iconDisplayState ~= 'never' then trackerValue.iconSettings.iconDisplayState = 'active' end
+                            local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
+                            if not trackerValue.auraSpecs then
+                                trackerValue.auraSpecs = {}
+                            end
+                            if next(trackerValue.auraSpecs) == nil then
+                                for _, spec in ipairs(classAndSpecData.specs) do
+                                    trackerValue.auraSpecs[spec.specId] = classAndSpecData.currentSpecID == spec.specId
+                                end
+                            end
+                            local isEnabledForAnyAura = false
+                            for _, spec in ipairs(classAndSpecData.specs) do
+                                isEnabledForAnyAura = isEnabledForAnyAura or trackerValue.auraSpecs[spec.specId]
+                            end
+                            if not isEnabledForAnyAura and trackerValue.isEnabled then
+                                trackerValue.auraSpecs[classAndSpecData.currentSpecID] = true
+                            end
+
+
+                            local filters = {}
+                            local unit
+                            if trackerValue.isNPCDebuff == true then
+                                filters[AuraUtil.AuraFilters.Harmful] = true
+                                unit = 'target'
+                            else
+                                filters[AuraUtil.AuraFilters.Helpful] = true
+                                unit = 'player'
+                            end
+                            if trackerValue.auraConfig == nil then
+                                trackerValue.auraConfig = {
+                                    filters = filters,
+                                    unit = unit
+                                }
+                            else
+                                trackerValue.auraConfig.filters = trackerValue.auraConfig.filters or {}
+                                if not next(trackerValue.auraConfig.filters) then
+                                    trackerValue.auraConfig.filters = filters
+                                end
+                                if trackerValue.auraConfig.unit == '' or trackerValue.auraConfig.unit == nil then
+                                    trackerValue.auraConfig.unit = unit
+                                end
+                            end
+                        end
+                        local defaults = SpellStyler.TrackerConfigFactory:Create(trackerType)
+                        defaults.baseSpellID = trackerValue.baseSpellID
+                        defaults.defaultIconTexturePath = trackerValue.defaultIconTexturePath
+                        DeepMergeDefaults(trackerValue, defaults)
+                    end
+                end
+            end
             specDB.profileSettings = specDB.profileSettings or {
                 mode = "single",
                 singleProfile = "default",
@@ -1265,17 +1275,17 @@ function State:MigrateDatabase()
         -- default profile. Do not retain the legacy collections afterward:
         -- they are duplicate tracker state and can be mistaken for the
         -- current profile by migration or debugging code.
-        -- for _, key in ipairs({
-        --     "buffs",
-        --     "essential",
-        --     "utility",
-        --     "spells",
-        --     "items",
-        --     "docks",
-        --     "globalSettings",
-        -- }) do
-        --     specDB[key] = nil
-        -- end
+        for _, key in ipairs({
+            "buffs",
+            "essential",
+            "utility",
+            "spells",
+            "items",
+            "docks",
+            "globalSettings",
+        }) do
+            specDB[key] = nil
+        end
 
         if specID == currentSpecID then
             State:ReconcileTalentLoadouts(specID, specDB, true)
@@ -1401,7 +1411,7 @@ function State:HandleTalentProfileUpdate()
 
     local previousProfile = self._lastActiveProfileName
         or self:GetActiveProfileName(specDB)
-    local loadoutData = specDB.profileSettings.talentLoadouts[loadout.id]
+    local loadoutData = specDB.profileSettings and specDB.profileSettings.talentLoadouts and specDB.profileSettings.talentLoadouts[loadout.id]
     if not loadoutData then
         if not self:CanRegisterTalentLoadouts() then
             return false
