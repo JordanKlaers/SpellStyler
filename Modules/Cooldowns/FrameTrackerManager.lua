@@ -1194,20 +1194,27 @@ FrameTrackerManager.frameController = {
     end,
 
     UpdateActiveSpells = function()
-        for _, customFrame in pairs(FrameTrackerManager.SpellStyler_frames["spells"]) do
-            local baseSpellID = customFrame.meta and customFrame.meta.baseSpellID
-            if baseSpellID then
-                local cooldownInfo = C_Spell.GetSpellCooldown(C_Spell.GetOverrideSpell(baseSpellID))
-                if cooldownInfo and cooldownInfo.isActive then
-                    FrameTrackerManager.lifecycleController.DriveFrameUpdate(
-                        customFrame,
-                        {
-                            resolveDuration = true,
-                            syncChargeText = true
-                        },
-                        nil,
-                        "spellUpdateCooldown_updateOtherSpellsOnCooldown"
-                    )
+        for _, frames in ipairs({
+            FrameTrackerManager.SpellStyler_frames["spells"] or {},
+            FrameTrackerManager.SpellStyler_frames["items"] or {}
+        }) do
+            for _, customFrame in pairs(frames) do
+                local baseSpellID = customFrame.meta and customFrame.meta.baseSpellID
+                if baseSpellID then
+                    local cooldownInfo = C_Spell.GetSpellCooldown(C_Spell.GetOverrideSpell(baseSpellID, GetSpecialization()))
+                    local chargeCooldownInfo = C_Spell.GetSpellCharges(C_Spell.GetOverrideSpell(baseSpellID, GetSpecialization()))
+
+                    if (cooldownInfo and cooldownInfo.isActive) or (chargeCooldownInfo and chargeCooldownInfo.isActive) then
+                        FrameTrackerManager.lifecycleController.DriveFrameUpdate(
+                            customFrame,
+                            {
+                                resolveDuration = true,
+                                syncChargeText = true
+                            },
+                            nil,
+                            "spellUpdateCooldown_updateOtherSpellsOnCooldown"
+                        )
+                    end
                 end
             end
         end
