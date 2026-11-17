@@ -10,6 +10,21 @@ local State = SpellStyler.State
 BuffManager.buffContainers = {}
 BuffManager.buffSlots = {}
 
+function BuffManager:GetUIParentProxy()
+    if BuffManager.uiParentProxy then
+        return BuffManager.uiParentProxy
+    end
+
+    local proxy = _G.UIParentProxy
+    if not proxy then
+        proxy = CreateFrame("Frame", "UIParentProxy", UIParent)
+        proxy:SetAllPoints(UIParent)
+    end
+
+    BuffManager.uiParentProxy = proxy
+    return proxy
+end
+
 
 
 function BuffManager:CreateStatusBar(frame, key, trackerConfig)
@@ -119,8 +134,9 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 			return
 		end
 		-- Create container frame
+		local uiParentProxy = BuffManager:GetUIParentProxy()
 		local auraContainer = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
-		auraContainer:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+		auraContainer:SetPoint("CENTER", uiParentProxy, "CENTER", 0, 0)
 
 		local options = {
 			initializeFrame = function(button, isPlaceholder, buffC)
@@ -382,9 +398,9 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 		-- Position the slot frame using buffConfig position
 		local posX = buffConfig.position and buffConfig.position.x or 0
 		local posY = buffConfig.position and buffConfig.position.y or 0
-		pcall(function()
+		local success, error = pcall(function()
 			slotFrame:SetScale(buffConfig.scale or 1)
-			slotFrame:SetPoint("CENTER", UIParent, "CENTER", posX / (buffConfig.scale or 1), posY / (buffConfig.scale or 1))
+			slotFrame:SetPoint("CENTER", uiParentProxy, "CENTER", posX / (buffConfig.scale or 1), posY / (buffConfig.scale or 1))
 		end)
 
 		
@@ -392,7 +408,7 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 		-- Create placeholder frame for dragging in settings menu
 		local placeHolder = CreateFrame("Button", nil, UIParent, "BackdropTemplate")
 		options.initializeFrame(placeHolder, true)
-		placeHolder:SetPoint("CENTER", UIParent, "CENTER", posX / (buffConfig.scale or 1), posY / (buffConfig.scale or 1))
+		placeHolder:SetPoint("CENTER", uiParentProxy, "CENTER", posX / (buffConfig.scale or 1), posY / (buffConfig.scale or 1))
 
 		
 		-- Hide placeholder by default
@@ -484,8 +500,9 @@ function BuffManager:UpdateAura(aura, trackerValue)
 		cooldownTextY = trackerValue.cooldownText.y,
 		countText = trackerValue.countText
 	}
+	local uiParentProxy = BuffManager:GetUIParentProxy()
 	
-	local function update(frame, isPlaceholder)
+	local function update(frame, isPlaceholder, auraContainer)
 		if isPlaceholder and trackerValue.isEnabled and trackerValue.auraSpecs[currentSpecID] and (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown()) then
 			frame:Show()
 		elseif isPlaceholder and (not trackerValue.isEnabled or not trackerValue.auraSpecs[currentSpecID] or not (SpellStyler.settingsMenu and SpellStyler.settingsMenu:IsShown())) then
@@ -497,7 +514,13 @@ function BuffManager:UpdateAura(aura, trackerValue)
 		frame:SetScale(inputs.scale)
 		frame:SetFrameStrata(inputs.frameStrata)
 		frame:SetFrameLevel(inputs.frameStrataLevel)
-		frame:SetPoint("CENTER", UIParent, "CENTER", inputs.posX / inputs.scale, inputs.posY / inputs.scale)
+		if auraContainer then
+			auraContainer:SetAlpha(inputs.opacity)
+			auraContainer:SetPoint("CENTER", uiParentProxy, "CENTER", inputs.posX / inputs.scale, inputs.posY / inputs.scale)
+			frame:SetPoint("CENTER", uiParentProxy, "CENTER", inputs.posX / inputs.scale, inputs.posY / inputs.scale)
+		else
+			frame:SetAlpha(inputs.opacity)
+		end
 		
 		-- Icon Properties
 		if frame.icon then
@@ -648,7 +671,7 @@ function BuffManager:UpdateAura(aura, trackerValue)
 		end
 	end
 	
-	update(aura.slotFrame, false)
+	update(aura.slotFrame, false, aura.auraContainer)
 	update(aura.placeHolder, true)
 
 	local candidateFilters = {
@@ -822,8 +845,22 @@ function BuffManager:EnablePlaceholderDragging(enable)
                 -- Check if dragging is disabled in settings
                 local isDraggingDisabled = SpellStyler.State:GetTrackerValueConfigProperty(baseSpellID, 'buffs', 'iconSettings.disableDragging')
                 if not isDraggingDisabled then
-                    -- Use the same dragging system as spells/items
-                    SpellStyler.IconSettingsRenderer:EnableDraggingForSpecificFrame(containerData.placeHolder)
+                    local auraContainer = containerData.auraContainer
+                    SpellStyler.IconSettingsRenderer:EnableDraggingForSpecificFrame(
+                        containerData.placeHolder,
+                        function()
+                            auraContainer:SetAlpha(0)
+                        end,
+                        function()
+                            local currentConfig = SpellStyler.State:GetSpecificTrackerValue(baseSpellID, 'buffs')
+                            auraContainer:SetAlpha(
+                                currentConfig
+                                    and currentConfig.iconSettings
+                                    and currentConfig.iconSettings.opacity
+                                    or 1
+                            )
+                        end
+                    )
                 end
             else
                 -- Disable dragging first

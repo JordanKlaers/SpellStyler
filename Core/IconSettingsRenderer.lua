@@ -4429,7 +4429,7 @@ function IconSettingsRenderer:EnableDraggingForAllFrames()
     end
 end
 
-function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
+function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame, onDragStartCallback, onDragStopCallback)
     if frame and not frame._inContainer then
         local trackerKey = frame.meta.trackerKey
         local trackerType = frame.meta.trackerType
@@ -4450,6 +4450,9 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
                 y = savedPos.y
             }
             self:StartMoving()
+            if onDragStartCallback then
+                onDragStartCallback(self)
+            end
             -- Notify settings panel that this icon was selected
             if onFrameClickCallback then
                 onFrameClickCallback(trackerKey, trackerType)
@@ -4521,6 +4524,9 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame)
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.relativeAnchorPoint", "CENTER")
             
             RefreshTrackerVisuals(trackerKey, trackerType)
+            if onDragStopCallback then
+                onDragStopCallback(self)
+            end
         end
         
         local function GetTrackerHoverName(frame)

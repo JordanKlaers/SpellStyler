@@ -403,11 +403,15 @@ texScanFrame:SetScript("OnEvent", function(self, event, ...)
         if key == "L" and IsShiftKeyDown() and IsControlKeyDown() then
         end
         if key == "X" and IsShiftKeyDown() and IsControlKeyDown() then
-        --     DevTool:AddData({
-        --         donk = SpellStyler.State:GetDataBase_V2(),
-        --         SpellStyler_DB = SpellStyler_DB,
-        --         SpellStyler_CharDB = SpellStyler_CharDB
-        --     }, "specDB")
+            local ok, willPlay, handle = pcall(PlaySoundFile, 14712, "Master")
+
+            if not ok then
+                print("PlaySoundFile raised an error")
+            elseif willPlay == false then
+                print("Sound was not found or could not be played")
+            else
+                print("Sound accepted by the client")
+            end
         end
     end)
     texScanFrame:SetScript("OnKeyUp", function(self, key) end)

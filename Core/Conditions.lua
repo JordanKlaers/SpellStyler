@@ -35,7 +35,7 @@ local PAREN_COLORS = {
 }
 
 -- ─── Misc constants ──────────────────────────────────────────────────────────
-local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges", "buff", "UnitHealth" }
+local CONDITION_TYPES = { "ComboPoints", "IsSpellUsable", "Charges", "UnitHealth" }
 local COMPARISON_OPTIONS = {
     { label = "less than",             value = "<"  },
     { label = "less than or equal to", value = "<=" },

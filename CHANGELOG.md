@@ -373,3 +373,7 @@ Version 3.2.1
 Version 3.2.2
 	- Updates spells with charges to properly apply/update tracking information in response to other spells casts. Such as one spell giving a charge or reducing cooldown of another spell that has charges.
 	- Updates Items to properly apply cooldown information in response to other casts. For example, if you have two on use trinkets, now the trinket that was not cast will show its cooldown that takes effect when you have two on use trinkets.
+
+Version 3.2.3
+	- Updates dragging for auras to no longer anchor to the UIPArent. Behaves the exact same. Another quirky api update from blizzard.
+	- Removes auras from the conditionals since they are no longer supported.
