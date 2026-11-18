@@ -159,7 +159,7 @@ local TrackerDefinitions = {
     }, _, excludedFromTemplate),
     iconSettings = {
         disableDragging = false,
-        iconDisplayState = "always",
+        iconDisplayState = "available",
         width = 48,
         height = 48,
         opacity = __(1, SPELLS_AND_ITEMS),
@@ -240,7 +240,10 @@ local TrackerDefinitions = {
         maxValue = 5,
     },
     auraConfig = __({
-        filters = {},
+        filters = {
+            [AuraUtil.AuraFilters.Player] = true,
+            [AuraUtil.AuraFilters.Helpful] = true,
+        },
         unit = "player",
     }, AURAS_ONLY),
     auraSpecs = __({}, AURAS_ONLY, excludedFromTemplate),

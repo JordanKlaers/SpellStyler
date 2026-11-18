@@ -269,7 +269,6 @@ function IconSettingsRenderer:CreateDropdown(parent, config, anchor)
 
     UIDropDownMenu_Initialize(dropdown, function(self, level)
         local LSM = isFontDropdown and LibStub and LibStub("LibSharedMedia-3.0", true) or nil
-        
         for _, opt in ipairs(config.options) do
             local info = UIDropDownMenu_CreateInfo()
             info.text = opt.label
@@ -713,7 +712,7 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
         RADIAL_DISPLAY_OPTIONS = {
-            { label = "Show when active", value = "active" },
+            { label = "Show when active", value = "available" },
             { label = "Show Never", value = "never" },
         }
     else
@@ -1093,7 +1092,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
         RADIAL_DISPLAY_OPTIONS = {
-            { label = "Show when active", value = "active" },
+            { label = "Show when active", value = "available" },
             { label = "Show Never", value = "never" },
         }
     else

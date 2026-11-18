@@ -377,3 +377,7 @@ Version 3.2.2
 Version 3.2.3
 	- Updates dragging for auras to no longer anchor to the UIPArent. Behaves the exact same. Another quirky api update from blizzard.
 	- Removes auras from the conditionals since they are no longer supported.
+
+Version 3.2.4
+	- Updates auras to set a proper default for icon display state so the setting is prepopulated in the menu after creating
+	- Updates aura filter formatting to disallow invalid values

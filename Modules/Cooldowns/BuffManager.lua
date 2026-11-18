@@ -114,11 +114,16 @@ end
 function BuffManager:BuildAuraFilterString(trackerValue)
 	local filterParts = {}
 	local filters = trackerValue.auraConfig and trackerValue.auraConfig.filters or {}
+	local validFilters = {}
+
+	for _, filterValue in pairs(AuraUtil.AuraFilters) do
+		validFilters[filterValue] = true
+	end
 
 	for filterValue, shouldInclude in pairs(filters) do
-		if shouldInclude == true then
+		if validFilters[filterValue] and shouldInclude == true then
 			table.insert(filterParts, filterValue)
-		elseif shouldInclude == false then
+		elseif validFilters[filterValue] and shouldInclude == false then
 			table.insert(filterParts, "!" .. filterValue)
 		end
 	end
@@ -391,7 +396,6 @@ function BuffManager:CreateSingleAuraContainer(baseSpellID, buffConfig)
 
 		local auraType = BuffManager:BuildAuraFilterString(buffConfig)
 		local unitToTrack = buffConfig.auraConfig and buffConfig.auraConfig.unit
-		
 		-- Add slot and position the container
 		local slotFrame = auraContainer:AddAuraSlot(buffConfig.name, auraType, options)
 		

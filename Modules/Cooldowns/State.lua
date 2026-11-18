@@ -1245,7 +1245,25 @@ function State:MigrateDatabase()
                                 }
                             else
                                 trackerValue.auraConfig.filters = trackerValue.auraConfig.filters or {}
-                                if not next(trackerValue.auraConfig.filters) then
+                                local normalizedFilters = {}
+                                local filterValuesByLowerName = {}
+                                for _, filterValue in pairs(AuraUtil.AuraFilters) do
+                                    if type(filterValue) == "string" then
+                                        filterValuesByLowerName[string.lower(filterValue)] = filterValue
+                                    end
+                                end
+                                for filterValue, shouldInclude in pairs(trackerValue.auraConfig.filters) do
+                                    local canonicalFilter
+                                    if type(filterValue) == "string" then
+                                        canonicalFilter = filterValuesByLowerName[string.lower(filterValue)]
+                                    end
+                                    if canonicalFilter then
+                                        normalizedFilters[canonicalFilter] = shouldInclude
+                                    end
+                                end
+                                if next(normalizedFilters) then
+                                    trackerValue.auraConfig.filters = normalizedFilters
+                                else
                                     trackerValue.auraConfig.filters = filters
                                 end
                                 if trackerValue.auraConfig.unit == '' or trackerValue.auraConfig.unit == nil then
