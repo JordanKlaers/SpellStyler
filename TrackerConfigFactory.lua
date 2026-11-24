@@ -36,6 +36,16 @@ local function MergeInto(target, source)
     end
 end
 
+local function NewSoundSettings()
+    return {
+        trigger = "onCast",
+        targetSoundPath = "",
+        delay = 0,
+        channel = "Master",
+        muteOriginalSpellSound = false,
+    }
+end
+
 local function ReadPath(object, path)
     local current = object
     for key in string.gmatch(path, "[^.]+") do
@@ -172,6 +182,7 @@ local TrackerDefinitions = {
         borderColor = __({ r = 1, g = 1, b = 1, a = 0 }, SPELLS_AND_ITEMS),
         iconTexturePath = "",
     },
+    sound = __({ manuallyMutedSounds = {} }, SPELLS_AND_ITEMS, excludedFromTemplate),
     cooldownText = {
         display = true,
         size = 14,
@@ -248,7 +259,7 @@ local TrackerDefinitions = {
     }, AURAS_ONLY),
     auraSpecs = __({}, AURAS_ONLY, excludedFromTemplate),
     isNPCDebuff = __(false, AURAS_ONLY),
-    additionalBuffIDs = __({}, AURAS_ONLY),
+    additionalBuffIDs = __({}, AURAS_ONLY), excludedFromTemplate,
     associatedSpellIDs = __({}, SPELLS_AND_ITEMS, excludedFromTemplate),
     chargeBasedDisplay = __({
         enabled = false,
@@ -315,6 +326,20 @@ end
 function TrackerConfigFactory:Create(trackerType, targetObject)
     local config = Materialize(self.definitions, trackerType)
     MergeInto(config, targetObject)
+    if trackerType == "spells" or trackerType == "items" then
+        config.sound = config.sound or { manuallyMutedSounds = {} }
+        config.sound.manuallyMutedSounds = config.sound.manuallyMutedSounds or {}
+        local soundSpellIDs = config.associatedSpellIDs or {}
+        if trackerType == "items" and next(soundSpellIDs) == nil then
+            local itemSpellID = targetObject and targetObject.baseSpellID
+            if itemSpellID then
+                soundSpellIDs = { [tonumber(itemSpellID) or itemSpellID] = true }
+            end
+        end
+        for spellID in pairs(soundSpellIDs) do
+            config.sound[spellID] = config.sound[spellID] or NewSoundSettings()
+        end
+    end
     config.trackerType = trackerType
     return config
 end

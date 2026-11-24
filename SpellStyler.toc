@@ -16,6 +16,10 @@ Libs\LibSharedMedia-3.0\LibSharedMedia-3.0.lua
 Libs\LibDeflate\LibDeflate.lua
 Libs\LibFlyPaper-2.0\LibFlyPaper-2.0.lua
 
+
+Modules\Cooldowns\spell_sounds.lua
+
+
 # ============================================================================
 # Modules
 # ============================================================================
@@ -26,6 +30,7 @@ Modules\Cooldowns\GlowAnimation.lua
 Modules\Cooldowns\Util.lua
 Modules\Cooldowns\Containers.lua
 Modules\Cooldowns\FrameTrackerManager.lua
+Modules\Cooldowns\SoundManager.lua
 Modules\Cooldowns\BuffManager.lua
 
 # ============================================================================
@@ -35,7 +40,9 @@ Core\ProfileSettingsRenderer.lua
 Core\Settings.lua
 Core\AddSpells.lua
 Core\IconSettingsRenderer.lua
+Core\CloneSettings.lua
 Core\TexturePreviewRenderer.lua
+Core\SoundPreviewRenderer.lua
 Core\HelpContentRenderer.lua
 Core\ContainerSettings.lua
 Core\Conditions.lua

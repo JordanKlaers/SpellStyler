@@ -17,6 +17,9 @@ local function RegisterView(name, frame)
 end
 
 local function SwitchToView(name)
+    if SpellStyler.SoundPreviewRenderer then
+        SpellStyler.SoundPreviewRenderer:Hide()
+    end
     for _, f in pairs(views) do f:Hide() end
     if views[name] then
         views[name]:Show()

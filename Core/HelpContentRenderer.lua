@@ -23,17 +23,22 @@ function HelpContentRenderer:RenderHelpView(parentFrame)
     helpText:SetWordWrap(true)
     helpText:SetText(
         "|cFFFFD700Adding Spells|r\n\n" ..
-        "Spells are added manually using the |cFFFFD700plus icon|r from the spells menu. Search by ID or name.\n\n" ..
-        "|cFFFFD700Multi-Icon Settings|r\n\n" ..
-        "The multi-icon settings button allows you to select multiple spells or buffs at once to apply properties to each one at the same time.\n\n" ..
-        "|cFFFFD700Conditional Overrides|r\n\n" ..
-        "For conditional overrides, start by creating a condition in the |cFFFFD700conditions menu|r. Once created with a unique name, in the spells menu, the |cFFFFD700'conditional property overrides'|r of the sub menu can be used to set which properties to update. Add a new condition, select which properties to change, and which conditional to use to apply those properties. Please reach out on the discord if you have more conditions you'd like me to explore adding.\n\n" ..
-        "|cFFFFD700Charge/Count Based Display|r\n\n" ..
-        "The Charge/Count based display uses a positioning trick to allow you to display your spell or buff based on the current charges.\n\n" ..
+        "Add content to track via the |cFFFFD700Spells|r tab, then click the |cFFFFD700Add|r button in the top left.\n\n" ..
+        "|cFFFFD700Re-enabling Values|r\n\n" ..
+        "Re-enable values from the |cFFFFD700Spells|r tab by clicking the |cFFFFD700Disabled Values|r button on the left.\n\n" ..
         "|cFFFFD700Copying Settings|r\n\n" ..
-        "Drag a |cFFFFD700sub-header|r and drop it over another spell or buff to copy the settings to that other ability.\n\n" ..
+        "Copy settings from a template or another tracked value onto one or more other entries.\n" ..
+        "Drag a sub menu header and drop over an icon in the left column to copy that section between tracker entries\n\n" ..
+        "|cFFFFD700Creating Templates|r\n\n" ..
+        "Create a template by selecting a tracked value and creating a template from that value's settings. A template stores the full current settings.\n\n" ..
+        "|cFFFFD700Containers|r\n\n" ..
+        "Place values in a container from the |cFFFFD700Container|r tab. Functionality is limited, but it includes a collapsible setting to hide values that are on cooldown or unavailable to cast.\n\n" ..
+        "|cFFFFD700Conditional Property Overrides|r\n\n" ..
+        "Some properties can be controlled conditionally. Create a condition on the |cFFFFD700Conditions|r tab. Then, in the spells menu, open the |cFFFFD700Conditional Property Overrides|r section to choose the condition to use and the properties to modify.\n\n" ..
+        "|cFFFFD700Profiles|r\n\n" ..
+        "Enable profiles from the |cFFFFD700Profiles|r tab. You can use a single profile for a specialization, or automatically apply different profiles when swapping between talent loadouts for that specialization.\n\n" ..
         "|cFFFFD700Support|r\n\n" ..
-        "Please reach out in the discord if you have any questions, requests, or bugs!"
+        "Please reach out in the discord if you have any questions, requests, or bugs!\nhttps://discord.gg/MKZUeDQEbM"
     )
 
     -- Resize the scroll child after layout so the scroll range is correct

@@ -369,27 +369,25 @@ function AddSpells:RenderDisabledValuesView(parent)
     container:EnableMouse(true)
     parent.currentControlsContainer = container
 
-    local selectedEntry
-    local selectedButton
+    local selectedEntries = {}
+    local selectedButtons = {}
+    local selectedCount = 0
 
     local title = container:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", container, "TOPLEFT", 12, -4)
+    title:SetPoint("TOPLEFT", container, "TOPLEFT", 4, -4)
     title:SetText("|cFFFFD700Disabled Values|r")
 
     local note = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     note:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
-    note:SetText("Select a preexisting value to reenable")
+    note:SetPoint("RIGHT", container, "RIGHT", -4, 0)
+    note:SetWordWrap(true)
+    note:SetJustifyH("LEFT")
+    note:SetText("Select a value to reenable; hold Shift to select multiple")
     note:SetTextColor(0.8, 0.8, 0.8)
-    local subNote = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    subNote:SetPoint("TOPLEFT", note, "BOTTOMLEFT", 0, -10)
-    subNote:SetPoint("RIGHT", container, "RIGHT", -10, 0)
-    subNote:SetJustifyH("LEFT")
-    subNote:SetText("IDs may overlap between entries. Ensure you have the correct entry enabled before considering deletion.")
-    subNote:SetTextColor(0.8, 0.8, 0.8)
 
     local reenableButton = CreateFrame("Button", nil, container, "UIPanelButtonTemplate")
     reenableButton:SetSize(100, 24)
-    reenableButton:SetPoint("TOPLEFT", subNote, "BOTTOMLEFT", 0, -12)
+    reenableButton:SetPoint("TOPLEFT", note, "BOTTOMLEFT", 0, -12)
     reenableButton:SetText("reenable")
     reenableButton:Disable()
 
@@ -398,6 +396,18 @@ function AddSpells:RenderDisabledValuesView(parent)
     deleteButton:SetPoint("LEFT", reenableButton, "RIGHT", 8, 0)
     deleteButton:SetText("permenantly delete")
     deleteButton:Disable()
+
+    local reenableButtonOverlay = CreateFrame("Frame", nil, container)
+    reenableButtonOverlay:SetAllPoints(reenableButton)
+    reenableButtonOverlay:SetFrameStrata(reenableButton:GetFrameStrata())
+    reenableButtonOverlay:SetFrameLevel(reenableButton:GetFrameLevel() + 10)
+    reenableButtonOverlay:EnableMouse(true)
+
+    local deleteButtonOverlay = CreateFrame("Frame", nil, container)
+    deleteButtonOverlay:SetAllPoints(deleteButton)
+    deleteButtonOverlay:SetFrameStrata(deleteButton:GetFrameStrata())
+    deleteButtonOverlay:SetFrameLevel(deleteButton:GetFrameLevel() + 10)
+    deleteButtonOverlay:EnableMouse(true)
 
     local confirmPopup = CreateFrame("Frame", nil, container, "BackdropTemplate")
     confirmPopup:SetSize(230, 82)
@@ -435,6 +445,11 @@ function AddSpells:RenderDisabledValuesView(parent)
     gridSF:SetPoint("TOPLEFT", reenableButton, "BOTTOMLEFT", 0, -18)
     gridSF:SetPoint("TOPRIGHT", container, "TOPRIGHT", -12, 0)
     gridSF:SetPoint("BOTTOM", container, "BOTTOM", 0, 10)
+    local gridScrollBar = _G[gridSF:GetName() and (gridSF:GetName() .. "ScrollBar") or nil] or gridSF.ScrollBar
+    if gridScrollBar then
+        gridScrollBar:Hide()
+        gridScrollBar.Show = function() end
+    end
 
     local gridChild = CreateFrame("Frame", nil, gridSF)
     gridSF:SetScrollChild(gridChild)
@@ -563,15 +578,62 @@ function AddSpells:RenderDisabledValuesView(parent)
         return matches
     end
 
-    local function selectEntry(entry, button)
-        if selectedButton then
-            selectedButton:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+    local function getSelectionKey(entry)
+        return tostring(entry.trackerType) .. ":" .. tostring(entry.trackerKey)
+    end
+
+    local function updateActionButtons()
+        if selectedCount > 0 then
+            reenableButton:Enable()
+            deleteButton:Enable()
+            reenableButtonOverlay:Hide()
+            deleteButtonOverlay:Hide()
+        else
+            reenableButton:Disable()
+            deleteButton:Disable()
+            reenableButtonOverlay:Show()
+            deleteButtonOverlay:Show()
         end
-        selectedEntry = entry
-        selectedButton = button
-        selectedButton:SetBackdropBorderColor(1, 0.82, 0, 1)
-        reenableButton:Enable()
-        deleteButton:Enable()
+    end
+
+    local function clearSelection()
+        for key, button in pairs(selectedButtons) do
+            button.selectionBorder:Hide()
+            selectedButtons[key] = nil
+        end
+        for key in pairs(selectedEntries) do
+            selectedEntries[key] = nil
+        end
+        selectedCount = 0
+    end
+
+    local function selectEntry(entry, button)
+        local selectionKey = getSelectionKey(entry)
+        if IsShiftKeyDown() then
+            if selectedEntries[selectionKey] then
+                selectedEntries[selectionKey] = nil
+                selectedButtons[selectionKey] = nil
+                button.selectionBorder:Hide()
+                selectedCount = selectedCount - 1
+            else
+                selectedEntries[selectionKey] = entry
+                selectedButtons[selectionKey] = button
+                button.selectionBorder:Show()
+                selectedCount = selectedCount + 1
+            end
+        else
+            if selectedCount == 1 and selectedEntries[selectionKey] then
+                clearSelection()
+                updateActionButtons()
+                return
+            end
+            clearSelection()
+            selectedEntries[selectionKey] = entry
+            selectedButtons[selectionKey] = button
+            button.selectionBorder:Show()
+            selectedCount = 1
+        end
+        updateActionButtons()
     end
 
     local function refreshSettingsView()
@@ -581,27 +643,31 @@ function AddSpells:RenderDisabledValuesView(parent)
     end
 
     reenableButton:SetScript("OnClick", function()
-        if not selectedEntry then return end
-        SpellStyler.State:ReenableTrackerValue(selectedEntry.trackerKey, selectedEntry.trackerType)
+        if selectedCount == 0 then return end
+        for _, entry in pairs(selectedEntries) do
+            SpellStyler.State:ReenableTrackerValue(entry.trackerKey, entry.trackerType)
+        end
         refreshSettingsView()
     end)
 
     deleteButton:SetScript("OnClick", function()
-        if selectedEntry then
+        if selectedCount > 0 then
+            confirmText:SetText(selectedCount == 1
+                and "Permanently delete this value?"
+                or string.format("Permanently delete %d values?", selectedCount))
             confirmPopup:Show()
         end
     end)
 
     confirmButton:SetScript("OnClick", function()
-        if not selectedEntry then return end
+        if selectedCount == 0 then return end
         confirmPopup:Hide()
-        if SpellStyler.State:IsTrackerValueDisabled(
-            selectedEntry.trackerKey,
-            selectedEntry.trackerType
-        ) then
-            SpellStyler.State:RemoveTrackerValue(selectedEntry.trackerKey, selectedEntry.trackerType)
+        for _, entry in pairs(selectedEntries) do
+            if SpellStyler.State:IsTrackerValueDisabled(entry.trackerKey, entry.trackerType) then
+                SpellStyler.State:RemoveTrackerValue(entry.trackerKey, entry.trackerType)
+            end
         end
-        refreshSettingsView()
+        AddSpells:RenderDisabledValuesView(parent)
     end)
 
     local currentYOffset = 0
@@ -621,7 +687,7 @@ function AddSpells:RenderDisabledValuesView(parent)
                     "TOPLEFT",
                     gridChild,
                     "TOPLEFT",
-                    ((index - 1) % iconsPerRow) * (iconSize + iconPadding),
+                    3 + ((index - 1) % iconsPerRow) * (iconSize + iconPadding),
                     -currentYOffset - math.floor((index - 1) / iconsPerRow) * (iconSize + iconPadding)
                 )
                 button:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
@@ -632,6 +698,19 @@ function AddSpells:RenderDisabledValuesView(parent)
                 texture:SetTexture(getEntryIcon(entry))
                 SpellStyler.FrameTrackerManager.utils.ApplyItemQualityOverlay(entry.config.itemID, button,
                     entry.config.associatedItemQualities, entry.config.shouldShowQualityEmblem)
+
+                local selectionBorder = CreateFrame("Frame", nil, button, "BackdropTemplate")
+                selectionBorder:SetPoint("TOPLEFT", button, "TOPLEFT", -2, 2)
+                selectionBorder:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", 2, -2)
+                selectionBorder:SetFrameLevel(button:GetFrameLevel() + 1)
+                selectionBorder:EnableMouse(false)
+                selectionBorder:SetBackdrop({
+                    edgeFile = "Interface\\Buttons\\WHITE8x8",
+                    edgeSize = 2,
+                })
+                selectionBorder:SetBackdropBorderColor(1, 0.82, 0, 1)
+                selectionBorder:Hide()
+                button.selectionBorder = selectionBorder
 
                 button:SetScript("OnClick", function()
                     selectEntry(entry, button)

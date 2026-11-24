@@ -19,7 +19,19 @@ IconSettingsRenderer.keyboardFrame = nil
 -- References to position input fields so arrow keys can update them
 local _iconPositionInputs = { x = nil, y = nil }
 local _barPositionInputs = { x = nil, y = nil }
+local _iconSizeInputs = { width = nil, height = nil }
+local _iconSizeInputsByTracker = {}
 local _selectedSpellVariations = {}
+local _selectedSoundSpellIDs = {}
+
+local function DeepCopy(value)
+    if type(value) ~= "table" then return value end
+    local copy = {}
+    for key, child in pairs(value) do
+        copy[DeepCopy(key)] = DeepCopy(child)
+    end
+    return copy
+end
 
 -- Callback for when frames are clicked in layout mode
 local onFrameClickCallback = nil
@@ -30,6 +42,376 @@ local function GetCurrentSpellDisplay(trackerConfig)
     local spellInfo = currentSpellID and C_Spell.GetSpellInfo(currentSpellID)
     return (spellInfo and spellInfo.name) or (trackerConfig and trackerConfig.name),
         (spellInfo and spellInfo.iconID) or (trackerConfig and trackerConfig.defaultIconTexturePath)
+end
+
+function IconSettingsRenderer:RenderSoundSection(container, lastControl, uniqueID, trackerType, rerender, config)
+    local trackerConfig = State:GetSpecificTrackerValue(uniqueID, trackerType)
+    local associatedSpellIDs = trackerConfig and trackerConfig.associatedSpellIDs or {}
+    local isItem = trackerType == "items" or (trackerConfig and trackerConfig.isItem)
+    local soundSpellIDs = {}
+    if isItem then
+        local itemSpellID = config.getValue(uniqueID, "baseSpellID")
+        if itemSpellID then
+            soundSpellIDs[1] = tonumber(itemSpellID) or itemSpellID
+        end
+    else
+        for spellID in pairs(associatedSpellIDs) do
+            soundSpellIDs[#soundSpellIDs + 1] = tonumber(spellID) or spellID
+        end
+    end
+    if #soundSpellIDs == 0 then
+        local baseSpellID = config.getValue(uniqueID, "baseSpellID")
+        if baseSpellID then soundSpellIDs[1] = tonumber(baseSpellID) or baseSpellID end
+    end
+    table.sort(soundSpellIDs, function(left, right) return tostring(left) < tostring(right) end)
+
+    local soundSelectionKey = tostring(trackerType) .. ":" .. tostring(uniqueID)
+    local selectedSpellID = _selectedSoundSpellIDs[soundSelectionKey] or soundSpellIDs[1]
+    if not _selectedSoundSpellIDs[soundSelectionKey] then
+        local currentSpellID = config.getValue(uniqueID, "baseSpellID")
+            and C_Spell.GetOverrideSpell(config.getValue(uniqueID, "baseSpellID"), GetSpecialization(), true)
+        if currentSpellID then
+            currentSpellID = tonumber(currentSpellID) or currentSpellID
+            for _, spellID in ipairs(soundSpellIDs) do
+                if tostring(spellID) == tostring(currentSpellID) then
+                    selectedSpellID = spellID
+                    break
+                end
+            end
+        end
+    end
+
+    local function SoundPath(key)
+        return "sound." .. tostring(selectedSpellID) .. "." .. key
+    end
+
+    local soundConfig = config.getValue(uniqueID, "sound." .. tostring(selectedSpellID)) or {}
+    local currentAnchor = lastControl
+
+    local function AddRow(labelText, height)
+        local row = CreateFrame("Frame", nil, container)
+        row:SetSize(290, height or 30)
+        row:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -5)
+        local label = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        label:SetPoint("LEFT")
+        label:SetText(labelText)
+        label:SetTextColor(0.8, 0.8, 0.8)
+        currentAnchor = row
+        return row
+    end
+
+    if not isItem then
+        local associatedRow = AddRow("Configure sounds for:")
+        local associatedDropdown = CreateFrame("Frame", nil, associatedRow, "UIDropDownMenuTemplate")
+        associatedDropdown:SetPoint("RIGHT", 18, -2)
+        UIDropDownMenu_SetWidth(associatedDropdown, 135)
+        UIDropDownMenu_Initialize(associatedDropdown, function(self, level)
+            for _, spellID in ipairs(soundSpellIDs) do
+                local info = UIDropDownMenu_CreateInfo()
+                local spellInfo = C_Spell.GetSpellInfo(spellID)
+                info.text = (spellInfo and spellInfo.name or tostring(spellID))
+                    .. " (" .. tostring(spellID) .. ")"
+                info.value = spellID
+                info.checked = tostring(selectedSpellID) == tostring(spellID)
+                info.func = function()
+                    selectedSpellID = spellID
+                    _selectedSoundSpellIDs[soundSelectionKey] = spellID
+                    rerender()
+                end
+                UIDropDownMenu_AddButton(info, level)
+            end
+        end)
+        local selectedInfo = C_Spell.GetSpellInfo(selectedSpellID)
+        UIDropDownMenu_SetText(
+            associatedDropdown,
+            (selectedInfo and selectedInfo.name or tostring(selectedSpellID))
+                .. " (" .. tostring(selectedSpellID) .. ")"
+        )
+    end
+
+    local pathRow = AddRow("Custom Sound Path:")
+    local pathInput = CreateFrame("EditBox", nil, pathRow, "InputBoxTemplate")
+    pathInput:SetSize(165, 20)
+    pathInput:SetPoint("RIGHT")
+    pathInput:SetAutoFocus(false)
+    pathInput:SetMaxLetters(1000)
+    pathInput:SetText(tostring(soundConfig.targetSoundPath or ""))
+    local function CommitPath(self)
+        config.setValue(uniqueID, SoundPath("targetSoundPath"), self:GetText())
+        SpellStyler.State:AddCustomSound(self:GetText())
+    end
+    pathInput:SetScript("OnEnterPressed", function(self) self:ClearFocus(); CommitPath(self) end)
+    pathInput:SetScript("OnEditFocusLost", CommitPath)
+
+    local chooseRow = AddRow(" ")
+    local chooseButton = CreateFrame("Button", nil, chooseRow, "UIPanelButtonTemplate")
+    chooseButton:SetSize(185, 22)
+    chooseButton:SetPoint("RIGHT")
+    chooseButton:SetText("Choose pre-existing sound")
+    chooseButton:SetScript("OnClick", function()
+        SpellStyler.SoundPreviewRenderer:Show(function(soundPath)
+            config.setValue(uniqueID, SoundPath("targetSoundPath"), soundPath)
+            if type(soundPath) == "string" then
+                SpellStyler.State:AddCustomSound(soundPath)
+            end
+            rerender()
+        end)
+    end)
+
+    local channelRow = AddRow("Channel:")
+    local channelDropdown = CreateFrame("Frame", nil, channelRow, "UIDropDownMenuTemplate")
+    channelDropdown:SetPoint("RIGHT", 18, -2)
+    UIDropDownMenu_SetWidth(channelDropdown, 135)
+    local channels = { "Master", "SFX", "Music", "Ambience", "Dialog" }
+    UIDropDownMenu_Initialize(channelDropdown, function(self, level)
+        for _, channel in ipairs(channels) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = channel
+            info.value = channel
+            info.checked = soundConfig.channel == channel
+            info.func = function()
+                config.setValue(uniqueID, SoundPath("channel"), channel)
+                soundConfig.channel = channel
+                UIDropDownMenu_SetText(channelDropdown, channel)
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+    UIDropDownMenu_SetText(channelDropdown, soundConfig.channel or "Master")
+
+    local triggerRow = AddRow("Trigger:")
+    local triggerDropdown = CreateFrame("Frame", nil, triggerRow, "UIDropDownMenuTemplate")
+    triggerDropdown:SetPoint("RIGHT", 18, -2)
+    UIDropDownMenu_SetWidth(triggerDropdown, 135)
+    local triggers = {
+        { label = "On Cast", value = "onCast" },
+        { label = "On Charge Gain/Cooldown Complete", value = "onChargeGain" },
+    }
+    UIDropDownMenu_Initialize(triggerDropdown, function(self, level)
+        for _, trigger in ipairs(triggers) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text = trigger.label
+            info.value = trigger.value
+            info.checked = soundConfig.trigger == trigger.value
+            info.func = function()
+                config.setValue(uniqueID, SoundPath("trigger"), trigger.value)
+                soundConfig.trigger = trigger.value
+                UIDropDownMenu_SetText(triggerDropdown, trigger.label)
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+    local triggerLabel = soundConfig.trigger == "onChargeGain" and triggers[2].label or triggers[1].label
+    UIDropDownMenu_SetText(triggerDropdown, triggerLabel)
+
+    local delayRow = AddRow("Delay after trigger:")
+    local delayInput = CreateFrame("EditBox", nil, delayRow, "InputBoxTemplate")
+    delayInput:SetSize(80, 20)
+    delayInput:SetPoint("RIGHT")
+    delayInput:SetAutoFocus(false)
+    delayInput:SetNumeric(true)
+    delayInput:SetText(tostring(soundConfig.delay or 0))
+    local function CommitDelay(self)
+        config.setValue(uniqueID, SoundPath("delay"), math.max(0, tonumber(self:GetText()) or 0))
+    end
+    delayInput:SetScript("OnEnterPressed", function(self) self:ClearFocus(); CommitDelay(self) end)
+    delayInput:SetScript("OnEditFocusLost", CommitDelay)
+
+    local muteRow = AddRow("Mute spell:")
+    local muteButton = CreateFrame("Button", nil, muteRow, "UIPanelButtonTemplate")
+    muteButton:SetSize(100, 22)
+    muteButton:SetPoint("RIGHT")
+    muteButton:SetText("Mute spell")
+    muteButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText("Add all sounds associated to this spell to the mute list below")
+        GameTooltip:Show()
+    end)
+    muteButton:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    muteButton:SetScript("OnClick", function()
+        local values = config.getValue(uniqueID, "sound.manuallyMutedSounds")
+        if type(values) ~= "table" then values = {} end
+        local existing = {}
+        for _, value in ipairs(values) do
+            existing[tonumber(value) or value] = true
+        end
+        local sounds = SpellStyler.SpellSoundMap[tonumber(selectedSpellID) or selectedSpellID]
+        if type(sounds) ~= "table" then sounds = { sounds } end
+        local added = false
+        for _, soundID in ipairs(sounds) do
+            if soundID and not existing[soundID]
+                and not State:IsSoundManuallyMutedElsewhere(uniqueID, trackerType, soundID)
+            then
+                table.insert(values, soundID)
+                existing[soundID] = true
+                added = true
+            end
+        end
+        if added then
+            config.setValue(uniqueID, "sound.manuallyMutedSounds", values)
+            rerender()
+        end
+    end)
+
+    local additionalRow = AddRow("Additional spell sounds to mute:", 30)
+    local muteInput = CreateFrame("EditBox", nil, additionalRow, "InputBoxTemplate")
+    muteInput:SetSize(100, 20)
+    muteInput:SetPoint("RIGHT")
+    muteInput:SetAutoFocus(false)
+    muteInput:SetMaxLetters(1000)
+    muteInput:SetScript("OnEnterPressed", function(self)
+        local values = config.getValue(uniqueID, "sound.manuallyMutedSounds")
+        if type(values) ~= "table" then values = {} end
+        local existing = {}
+        for _, value in ipairs(values) do
+            existing[tonumber(value) or value] = true
+        end
+
+        local added = false
+        local text = string.gsub(self:GetText(), ",", " ")
+        for token in string.gmatch(text, "%S+") do
+            local soundID = tonumber(token)
+            if soundID and not existing[soundID]
+                and not State:IsSoundManuallyMutedElsewhere(uniqueID, trackerType, soundID)
+            then
+                table.insert(values, soundID)
+                existing[soundID] = true
+                added = true
+            end
+        end
+        if added then
+            config.setValue(uniqueID, "sound.manuallyMutedSounds", values)
+            rerender()
+        end
+        self:SetText("")
+    end)
+    currentAnchor = additionalRow
+    local manuallyMutedSounds = config.getValue(uniqueID, "sound.manuallyMutedSounds")
+    if type(manuallyMutedSounds) ~= "table" then manuallyMutedSounds = {} end
+    if #manuallyMutedSounds > 0 then
+        local muteNote = CreateFrame("Frame", nil, container)
+        muteNote:SetSize(290, 18)
+        muteNote:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -2)
+        local muteNoteText = muteNote:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        muteNoteText:SetPoint("LEFT")
+        muteNoteText:SetText("Click play to check what sound is muted")
+        muteNoteText:SetTextColor(0.7, 0.7, 0.7)
+        currentAnchor = muteNote
+
+        local divider = container:CreateTexture(nil, "ARTWORK")
+        divider:SetSize(290, 1)
+        divider:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -2)
+        divider:SetColorTexture(0.4, 0.4, 0.4, 1)
+        currentAnchor = divider
+    end
+    local mutedListScroll
+    local mutedListChild
+    local mutedListY = 0
+    local mutedListWidth = 290
+    if #manuallyMutedSounds > 5 then
+        mutedListScroll = CreateFrame("ScrollFrame", nil, container, "UIPanelScrollFrameTemplate")
+        mutedListScroll:SetSize(290, 110)
+        mutedListScroll:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -2)
+        for _, scrollChild in ipairs({ mutedListScroll:GetChildren() }) do
+            scrollChild:Hide()
+            scrollChild:SetAlpha(0)
+        end
+        mutedListScroll:EnableMouseWheel(true)
+        mutedListScroll:SetScript("OnMouseWheel", function(frame, delta)
+            frame:SetVerticalScroll(math.max(0, math.min(
+                frame:GetVerticalScrollRange(),
+                frame:GetVerticalScroll() - delta * 30
+            )))
+        end)
+        mutedListChild = CreateFrame("Frame", nil, mutedListScroll)
+        mutedListChild:SetSize(mutedListWidth, 1)
+        mutedListScroll:SetScrollChild(mutedListChild)
+        currentAnchor = mutedListScroll
+    end
+    for _, soundID in ipairs(manuallyMutedSounds) do
+        local valueRow = CreateFrame("Frame", nil, mutedListChild or container)
+        valueRow:SetSize(mutedListWidth, 22)
+        if mutedListScroll then
+            valueRow:SetPoint("TOPLEFT", 0, -mutedListY)
+        else
+            valueRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -2)
+        end
+        local valueLabel = valueRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        valueLabel:SetPoint("TOPLEFT")
+        valueLabel:SetSize(mutedListWidth - 70, 22)
+        local fileName = SpellStyler.SpellSoundFileNames
+            and SpellStyler.SpellSoundFileNames[tonumber(soundID)]
+            or "unknown filename"
+        local displayName = tostring(fileName):match("([^\\/]*)$") or tostring(fileName)
+        displayName = displayName:gsub("%.[^%.]+$", "")
+        valueLabel:SetText(displayName)
+        valueLabel:SetJustifyH("LEFT")
+        valueLabel:SetWordWrap(true)
+        local rowHeight = math.max(22, valueLabel:GetStringHeight() + 2)
+        valueRow:SetHeight(rowHeight)
+        valueLabel:SetHeight(rowHeight)
+        valueLabel:SetTextColor(0.7, 0.7, 0.7)
+        local play = CreateFrame("Button", nil, valueRow, "UIPanelButtonTemplate")
+        play:SetSize(42, 18)
+        play:SetPoint("RIGHT", -22, 0)
+        play:SetText("Play")
+        local isHeld = false
+        local function Remute()
+            if not isHeld then return end
+            isHeld = false
+            if SpellStyler.SoundManager then
+                SpellStyler.SoundManager:MuteSounds({ [soundID] = true })
+            else
+                MuteSoundFile(soundID)
+            end
+        end
+        play:SetScript("OnMouseDown", function()
+            if isHeld then return end
+            isHeld = true
+            if SpellStyler.SoundManager then
+                SpellStyler.SoundManager:UnmuteSounds({ [soundID] = true })
+            else
+                UnmuteSoundFile(soundID)
+            end
+            pcall(PlaySoundFile, soundID, "Master")
+        end)
+        play:SetScript("OnMouseUp", Remute)
+        play:SetScript("OnHide", Remute)
+
+        local remove = CreateFrame("Button", nil, valueRow)
+        remove:SetSize(18, 18)
+        remove:SetPoint("RIGHT")
+        remove:SetText("X")
+        remove:SetNormalFontObject("GameFontNormalSmall")
+        remove:SetScript("OnClick", function()
+            local values = {}
+            local currentValues = config.getValue(uniqueID, "sound.manuallyMutedSounds")
+            if type(currentValues) ~= "table" then currentValues = {} end
+            for _, value in ipairs(currentValues) do
+                if value ~= soundID then table.insert(values, value) end
+            end
+            if SpellStyler.SoundManager then
+                SpellStyler.SoundManager:UnmuteSounds({ [soundID] = true })
+            end
+            config.setValue(uniqueID, "sound.manuallyMutedSounds", values)
+            rerender()
+        end)
+        if mutedListScroll then
+            mutedListY = mutedListY + rowHeight + 2
+        else
+            currentAnchor = valueRow
+        end
+    end
+    if mutedListScroll then
+        mutedListChild:SetHeight(math.max(mutedListY, 1))
+    end
+    return currentAnchor
+end
+
+local function GetTrackerInputKey(trackerKey, trackerType)
+    return tostring(trackerType) .. ":" .. tostring(trackerKey)
 end
 
 local function GetSortedAssociatedSpellIDs(trackerConfig)
@@ -109,6 +491,9 @@ end
 -- Scrolls the icon column to make the button visible, opens its config panel,
 -- and enables arrow-key position shifting for it.
 function IconSettingsRenderer:SelectIcon(uniqueID, trackerType)
+    if SpellStyler.SoundPreviewRenderer then
+        SpellStyler.SoundPreviewRenderer:Hide()
+    end
     -- Update selection state and render the config panel
     _lastSelectedIcon = { trackerKey = uniqueID, trackerType = trackerType }
     self:RenderConfigControlsForSpecificIcon({ 
@@ -182,7 +567,7 @@ end
 local function CreateTextInput(parent, config, anchor)
     config = config or {}
 
-    -- Row container — anchors where the old label did, returned for chaining
+    -- Row container Ã¢â‚¬â€ anchors where the old label did, returned for chaining
     local row = CreateFrame("Frame", nil, parent)
     row:SetSize(290, 30)
     row:SetPoint(config.anchorPoint or "TOPLEFT", anchor, config.relativePoint or "BOTTOMLEFT", config.offsetX or 0, config.offsetY or -1)
@@ -244,7 +629,7 @@ end
 function IconSettingsRenderer:CreateDropdown(parent, config, anchor)
     config = config or {}
 
-    -- Row container — anchors where the old label did, returned for chaining
+    -- Row container Ã¢â‚¬â€ anchors where the old label did, returned for chaining
     local row = CreateFrame("Frame", nil, parent)
     row:SetSize(290, 30)
     row:SetPoint(config.anchorPoint or "TOPLEFT", anchor, config.relativePoint or "BOTTOMLEFT", config.offsetX or 0, config.offsetY or -1)
@@ -907,6 +1292,9 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
     table.insert(inputs, {
         type = "textinput",
         label = "Scale:",
+        numeric = true,
+        min = 0.0001,
+        max = 10000,
         getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".scale") or 1.0 end,
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".scale", value) end,
     })
@@ -969,13 +1357,12 @@ function IconSettingsRenderer:RenderTargetAnchorDropdown(container, lastControl,
     dropdown:SetPoint("RIGHT", row, "RIGHT", 18, 0)
     UIDropDownMenu_SetWidth(dropdown, 140)
     
-    -- Store reference to config and IDs (uniqueID/trackerType are nil in multi-icon mode)
+    -- Store reference to config and IDs for the selected tracker.
     dropdown.uniqueID = uniqueID
     dropdown.trackerType = trackerType
     dropdown.config = config
     
-    -- In multi-icon mode, we use a placeholder uniqueID for getValue lookups
-    local lookupID = uniqueID or 0
+    local lookupID = uniqueID
     
     UIDropDownMenu_Initialize(dropdown, function(self, level)
         local currentValue = config.getValue(lookupID, "position.relativeToFrame")
@@ -1253,11 +1640,17 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     applyButton:SetText("Apply")
                     applyButton:SetScript("OnClick", function()
                         local template = selectedName and templates[selectedName]
-                        local trackerConfig = State:GetSpecificTrackerValue(uid, tType)
-                        local factory = SpellStyler.TrackerConfigFactory
-                        if template and trackerConfig and factory then
-                            factory:ApplyTemplate(tType, trackerConfig, template)
-                            RefreshTrackerVisuals(uid, tType)
+                        if template and State then
+                            State:CopySettings(
+                                { template = template },
+                                nil,
+                                {
+                                    {
+                                        trackerKey = uid,
+                                        trackerType = tType,
+                                    },
+                                }
+                            )
                             if rerender then
                                 rerender()
                             end
@@ -1294,7 +1687,7 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 type = "dropdown",
                 label = "Icon Display State:",
                 options = RADIAL_DISPLAY_OPTIONS,
-                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconDisplayState") or "always" end,
+                getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.iconDisplayState") or "available" end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.iconDisplayState", value) end,
             })
             table.insert(sections, {
@@ -1329,9 +1722,18 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                         label:SetTextColor(0.8, 0.8, 0.8)
 
                         checkbox:SetScript("OnClick", function(self)
+                            local previousSoundMeta = trackerConfig.sound
+                                and DeepCopy(trackerConfig.sound)
                             State:SetTrackerSpellEnabled(uid, tType, spellID, self:GetChecked() == true)
                             local hasEnabledVersion = State:IsSpellTrackerEnabled(trackerConfig)
                             local frame = SpellStyler.FrameTrackerManager:GetTrackerFrame(uid, tType)
+                            if SpellStyler.SoundManager then
+                                if hasEnabledVersion then
+                                    SpellStyler.SoundManager:RefreshTrackerSounds(trackerConfig, previousSoundMeta)
+                                else
+                                    SpellStyler.SoundManager:UnmuteTrackerSounds(previousSoundMeta)
+                                end
+                            end
                             if hasEnabledVersion and frame then
                                 RefreshTrackerVisuals(uid, tType)
                             elseif frame then
@@ -1544,14 +1946,20 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             table.insert(sections, {
                 type = "textinput",
                 label = "Width:",
+                path = "iconSettings.width",
                 numeric = true,
+                min = 0,
+                max = 10000,
                 getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.width") or 48 end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.width", value) end,
             })
             table.insert(sections, {
                 type = "textinput",
                 label = "Height:",
+                path = "iconSettings.height",
                 numeric = true,
+                min = 0,
+                max = 10000,
                 getValue = function(self) return config.getValue(self.uniqueID, "iconSettings.height") or 48 end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "iconSettings.height", value) end,
             })
@@ -1588,8 +1996,8 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                 type = "textinput",
                 label = "Scale:",
                 numeric = true,
+                min = 0.0001,
                 max = 10000,
-                min = -10000,
                 getValue = function(self) return config.getValue(self.uniqueID, "scale") or 1.0 end,
                 setValue = function(self, value) config.setValue(self.uniqueID, "scale", value) end,
             })
@@ -1724,6 +2132,22 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
                     type = "customRender",
                     render = function(container, lastControl, uid, tType, rerender)
                         return IconSettingsRenderer:RenderAuraConfigurationSection(container, lastControl, uid, tType, rerender, config)
+                    end
+                }
+            }
+        })
+    end
+
+    if config.trackerType ~= 'buffs' then
+        table.insert(configSections, {
+            type = "header",
+            text = "Sounds",
+            state = 'collapsed',
+            section = {
+                {
+                    type = "customRender",
+                    render = function(container, lastControl, uid, tType, rerender)
+                        return IconSettingsRenderer:RenderSoundSection(container, lastControl, uid, tType, rerender, config)
                     end
                 }
             }
@@ -2299,7 +2723,7 @@ end
 function IconSettingsRenderer:RenderAuraConfigurationSection(container, lastControl, uniqueID, trackerType, rerender, config)
     local currentAnchor = IconSettingsRenderer:RenderAdditionalSpellIDsInput(container, lastControl, uniqueID, trackerType, rerender, config)
 
-    -- ── Aura filters (tri-state) ─────────────────────────────────────────────
+    -- Ã¢â€â‚¬Ã¢â€â‚¬ Aura filters (tri-state) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     local filtersHeader = container:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     filtersHeader:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -10)
     filtersHeader:SetText("Aura Filters:")
@@ -2414,7 +2838,7 @@ function IconSettingsRenderer:RenderAuraConfigurationSection(container, lastCont
         end
     end
 
-    -- ── Unit token input ─────────────────────────────────────────────────────
+    -- Ã¢â€â‚¬Ã¢â€â‚¬ Unit token input Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     local unitRow = CreateFrame("Frame", nil, container)
     unitRow:SetSize(290, 30)
     unitRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -10)
@@ -2566,7 +2990,7 @@ end
 -- ============================================================================
 
 -- Helper function to build charge bar input definitions
--- Used by both single-icon and multi-icon renderers
+-- Used by the single-icon renderer.
 local function GetChargeBarInputDefinitions(config)
     local options = config.trackerType ~= buffs and {
         { label = "Always", value = "always" },
@@ -2676,7 +3100,7 @@ end
 function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastControl, uniqueID, trackerType, rerender)
     local conditions = SpellStyler.State:GetSpecialVisibilityConditions(uniqueID, trackerType)
 
-    -- ── "Add" row ──────────────────────────────────────────────────────────
+    -- Ã¢â€â‚¬Ã¢â€â‚¬ "Add" row Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     local addRow = CreateFrame("Frame", nil, container)
     addRow:SetSize(290, 28)
     addRow:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -10)
@@ -2713,7 +3137,6 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
 
     local currentAnchor = dividerAnchor
 
-    -- ── Per-condition entries ──────────────────────────────────────────────
     local uidKey = tostring(uniqueID)
     _conditionEntryStates[uidKey] = _conditionEntryStates[uidKey] or {}
 
@@ -2777,7 +3200,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
         currentAnchor = subHeaderBg
 
         if isExpanded then
-            -- ── Property overrides ─────────────────────────────────────────────
+            -- Ã¢â€â‚¬Ã¢â€â‚¬ Property overrides Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             local overrides = cond.propertyOverrides or {}
 
             local BOX_W    = 252  -- bordered box width; delete btn floats to the right
@@ -2790,7 +3213,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 local propertyOverrideIndex = j
                 local propDef   = _PROP_DEF_BY_PATH[override.property]
 
-                -- ── Bordered container for this override ───────────────────────
+                -- Ã¢â€â‚¬Ã¢â€â‚¬ Bordered container for this override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
                 local overrideBox = CreateFrame("Frame", nil, container, "BackdropTemplate")
                 overrideBox:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -6)
                 overrideBox:SetSize(290, BOX_H)
@@ -2803,7 +3226,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 overrideBox:SetBackdropColor(0.07, 0.07, 0.14, 0.75)
                 overrideBox:SetBackdropBorderColor(0.32, 0.32, 0.52, 0.85)
 
-                -- Delete button – floats to the right of the box (matches sub-header pattern)
+                -- Delete button Ã¢â‚¬â€œ floats to the right of the box (matches sub-header pattern)
                 local delOverrideBtn = CreateFrame("Button", nil, container, "UIPanelCloseButton")
                 delOverrideBtn:SetSize(20, 20)
                 delOverrideBtn:SetPoint("TOPRIGHT", overrideBox, "TOPRIGHT", -4, -4)
@@ -2826,7 +3249,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                     rerender()
                 end)
 
-                -- ── Row 1: "Set property:" ─────────────────────────────────────
+                -- Ã¢â€â‚¬Ã¢â€â‚¬ Row 1: "Set property:" Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
                 local propLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 propLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -BOX_PAD)
                 propLabel:SetText("Set property:")
@@ -2877,7 +3300,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 end)
                 RefreshPropDropdown()
 
-                -- ── Row 2: Value input (label from propDef.inputLabel or "Set value:") ────
+                -- Ã¢â€â‚¬Ã¢â€â‚¬ Row 2: Value input (label from propDef.inputLabel or "Set value:") Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
                 local valLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 valLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -(BOX_PAD + ROW_H + ROW_GAP) - 5)
                 valLabel:SetText((propDef and propDef.inputLabel) or "Set value:")
@@ -2980,7 +3403,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
 
                 end
 
-                -- ── Row 3: Duration input ──────────────────────────────────────
+                -- Ã¢â€â‚¬Ã¢â€â‚¬ Row 3: Duration input Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
                 local durationLabel = overrideBox:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
                 durationLabel:SetPoint("TOPLEFT", overrideBox, "TOPLEFT", BOX_PAD, -(BOX_PAD + ROW_H + ROW_GAP + ROW_H + ROW_GAP))
                 durationLabel:SetWidth(170)
@@ -3047,7 +3470,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
                 currentAnchor = overrideBox
             end
 
-            -- ── Plus button to add a new property override ─────────────────────
+            -- Ã¢â€â‚¬Ã¢â€â‚¬ Plus button to add a new property override Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             local plusRow = CreateFrame("Frame", nil, container)
             plusRow:SetSize(290, 26)
             plusRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -4)
@@ -3074,7 +3497,7 @@ function IconSettingsRenderer:RenderPropertyOverrideCreator(container, lastContr
 
             currentAnchor = plusRow
 
-            -- ── "When condition is true:" conditional selector ─────────────────
+            -- Ã¢â€â‚¬Ã¢â€â‚¬ "When condition is true:" conditional selector Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             local condTriggerRow = CreateFrame("Frame", nil, container)
             condTriggerRow:SetSize(290, 30)
             condTriggerRow:SetPoint("TOPLEFT", currentAnchor, "BOTTOMLEFT", 0, -8)
@@ -3224,6 +3647,8 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
         end
     end
     if IconSettingsRenderer.keyboardFrame then IconSettingsRenderer.keyboardFrame:EnableKeyboard(false) end
+    _iconSizeInputs.width = nil
+    _iconSizeInputs.height = nil
     
     -- Clear all old controls from scroll child
     -- Collect all children and regions first to avoid iteration issues during removal
@@ -3296,7 +3721,19 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 RefreshTrackerVisuals(trackerKey, trackerType)
                 return
             end
-            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, path, value) 
+            local previousSoundMeta
+            if SpellStyler.SoundManager
+                and (path == "sound" or string.sub(path, 1, 6) == "sound.") then
+                local previousConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
+                previousSoundMeta = previousConfig and previousConfig.sound
+                    and DeepCopy(previousConfig.sound)
+            end
+            SpellStyler.State:SetTrackerValueConfigProperty(trackerKey, trackerType, path, value)
+            if SpellStyler.SoundManager
+                and (path == "sound" or string.sub(path, 1, 6) == "sound.") then
+                local trackerConfig = SpellStyler.State:GetSpecificTrackerValue(trackerKey, trackerType)
+                SpellStyler.SoundManager:RefreshTrackerSounds(trackerConfig, previousSoundMeta)
+            end
         end
     }
     
@@ -3412,7 +3849,17 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             confirmPopup:Hide()
             if pendingAction == "reset" then
                 pendingAction = nil
+                local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
+                local previousSoundMeta = trackerConfig and trackerConfig.sound
+                    and DeepCopy(trackerConfig.sound)
+                if SpellStyler.SoundManager then
+                    SpellStyler.SoundManager:UnmuteTrackerSounds(previousSoundMeta)
+                end
                 SpellStyler.State:ResetTrackerValueConfig(trackerKey, trackerType)
+                trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
+                if SpellStyler.SoundManager then
+                    SpellStyler.SoundManager:MuteTrackerSounds(trackerConfig)
+                end
                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                 return
             end
@@ -3420,14 +3867,22 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
             pendingAction = nil
             local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
             if not trackerConfig then return end
+            local previousSoundMeta = trackerConfig.sound
+                and DeepCopy(trackerConfig.sound)
 
             if trackerType == "spells" then
                 trackerConfig.isEnabled = false
                 for _, association in pairs(State:GetAssociatedSpellIDs(trackerConfig)) do
                     association.enabled = false
                 end
+                if SpellStyler.SoundManager then
+                    SpellStyler.SoundManager:UnmuteTrackerSounds(previousSoundMeta)
+                end
             else
                 State:SetTrackerValueConfigProperty(trackerKey, trackerType, "isEnabled", false)
+            end
+            if trackerType ~= "spells" and SpellStyler.SoundManager then
+                SpellStyler.SoundManager:UnmuteTrackerSounds(previousSoundMeta)
             end
 
             if SpellStyler.FrameTrackerManager then
@@ -3572,14 +4027,19 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
 					if iconBtn:IsMouseOver() then
 						local targetTrackerKey  = iconBtn.trackerKey
 						local targetTrackerType = iconBtn.trackerType
-						local copyInfo = {
-							targetTrackerKey = targetTrackerKey,
-							targetTrackerType = targetTrackerType,
-							sourceTrackerKey = sourceTrackerKey,
-							sourceTrackerType = sourceTrackerType,
-							category = category
-						}
-						SpellStyler.State:CopySettings(copyInfo)
+						SpellStyler.State:CopySettings(
+							{
+								trackerKey = sourceTrackerKey,
+								trackerType = sourceTrackerType,
+							},
+							category,
+							{
+								{
+									trackerKey = targetTrackerKey,
+									trackerType = targetTrackerType,
+								},
+							}
+						)
 					end
 					-- Always clear glow on drop
 					if iconBtn.glowBorder then
@@ -3614,6 +4074,19 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         controlFrame = label
                     elseif controlDef.type == "textinput" then
                         local label, input = CreateTextInput(parent, controlDef, lastControl)
+                        if controlDef.path == "iconSettings.width" then
+                            _iconSizeInputs.width = input
+                        elseif controlDef.path == "iconSettings.height" then
+                            _iconSizeInputs.height = input
+                        end
+                        local sizeInputs = _iconSizeInputsByTracker[GetTrackerInputKey(trackerKey, trackerType)]
+                            or { width = nil, height = nil }
+                        if controlDef.path == "iconSettings.width" then
+                            sizeInputs.width = input
+                        elseif controlDef.path == "iconSettings.height" then
+                            sizeInputs.height = input
+                        end
+                        _iconSizeInputsByTracker[GetTrackerInputKey(trackerKey, trackerType)] = sizeInputs
                         controlFrame = label
                     elseif controlDef.type == "colorpicker" then
                         local label, btn = CreateColorPicker(parent, controlDef, lastControl)
@@ -3715,422 +4188,7 @@ function IconSettingsRenderer:getTrackerTypeForID(uniqueID)
 	return ""	
 end
 
-
 -- ============================================================================
--- MULTI-ICON SETTINGS RENDERER
--- Renders a settings panel that applies config changes to multiple icons.
--- ============================================================================
-
--- Persisted across section-toggle re-renders
-local _multiSectionStates   = {}
-local _multiSelectedIconIDs = {}   -- key = "uid_trackerType" -> { uniqueID, trackerType }
-local _multiValues          = {}   -- key = dot-path -> value, acts as the "current" state for the multi panel
-
-function IconSettingsRenderer:RenderMultiIconSettingsView(options)
-    -- Support both old signature (parentFrame) and new signature (options table)
-    if type(options) ~= "table" or options.GetObjectType then
-        -- Called with parentFrame directly (old style) - wrap it in options table
-        options = { parentFrame = options }
-    end
-    
-    -- Render directly into scrollChild (YELLOW) instead of nested containers
-    local parent = options.parentFrame or settingsScrollChild
-    if not parent then return end
-    self:HideSelectedIconHeader()
-    
-    -- Initialize section states if not already present
-    options.sectionStates = options.sectionStates or _multiSectionStates
-
-    -- Disable arrow-key shifting (not applicable in multi mode)
-    if IconSettingsRenderer.keyboardFrame then
-        IconSettingsRenderer.keyboardFrame:EnableKeyboard(false)
-    end
-    _lastSelectedIcon = nil
-
-    -- Clear all old controls from scroll child
-    -- Collect all children and regions first to avoid iteration issues during removal
-    local childrenToRemove = {}
-    for _, child in ipairs({parent:GetChildren()}) do
-        table.insert(childrenToRemove, child)
-    end
-    
-    local regionsToRemove = {}
-    for _, region in ipairs({parent:GetRegions()}) do
-        if region:IsObjectType("FontString") or region:IsObjectType("Texture") then
-            table.insert(regionsToRemove, region)
-        end
-    end
-    
-    -- Now remove all children
-    for _, child in ipairs(childrenToRemove) do
-        child:Hide()
-        child:SetParent(nil)
-    end
-    
-    -- And clear all regions
-    for _, region in ipairs(regionsToRemove) do
-        region:Hide()
-        if region:IsObjectType("FontString") then
-            region:SetText("")
-        end
-    end
-    
-    parent.currentControlsContainer = nil
-
-    -- ── Header ──────────────────────────────────────────────────────────────
-   local header = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    header:SetPoint("TOPLEFT", 0, -12)
-    header:SetText("Multi Icon Settings")
-    header:SetTextColor(1, 0.82, 0)
-
-    local subtitle = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    subtitle:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
-    subtitle:SetText("Changes apply to all selected icons below")
-    subtitle:SetTextColor(0.6, 0.6, 0.6)
-
-    -- ── Multi-select icon picker ─────────────────────────────────────────────
-    local dropLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    dropLabel:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -12)
-    dropLabel:SetText("Apply to Icons:")
-    dropLabel:SetTextColor(0.8, 0.8, 0.8)
-
-    local dropBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    dropBtn:SetPoint("TOPLEFT", dropLabel, "BOTTOMLEFT", 0, -4)
-    dropBtn:SetSize(220, 22)
-
-    local function UpdateDropBtnText()
-        local count = 0
-        for _ in pairs(_multiSelectedIconIDs) do count = count + 1 end
-        dropBtn:SetText(count .. " icon" .. (count == 1 and "" or "s") .. " selected")
-    end
-    UpdateDropBtnText()
-
-    -- Floating dropdown panel parented to UIParent so it is never clipped
-    -- No global name: avoids "already exists" errors on section-toggle re-renders
-    local dropPanel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-    dropPanel:SetSize(260, 220)  -- height adjusted dynamically in RebuildDropList
-    dropPanel:SetFrameStrata("TOOLTIP")
-    dropPanel:SetBackdrop({
-        bgFile   = "Interface\\Buttons\\WHITE8x8",
-        edgeFile = "Interface\\Buttons\\WHITE8x8",
-        edgeSize = 1,
-    })
-    dropPanel:SetBackdropColor(0.08, 0.08, 0.08, 0.97)
-    dropPanel:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-    dropPanel:Hide()
-
-    -- Scroll area inside the dropdown panel (fixed; only the child is rebuilt)
-    local dpScroll = CreateFrame("ScrollFrame", nil, dropPanel, "UIPanelScrollFrameTemplate")
-    dpScroll:SetPoint("TOPLEFT", 4, -4)
-    dpScroll:SetPoint("BOTTOMRIGHT", -24, 4)
-
-    -- currentScrollChild tracks the live child so we can hide it on rebuild
-    local currentScrollChild = nil
-
-    -- Rebuilds the checkbox list from the current tracker state.
-    -- Called every time the panel is opened so additions/removals are reflected.
-    local function RebuildDropList()
-        -- Fetch fresh icon list
-        local freshIcons = {}
-        if SpellStyler.State and SpellStyler.State.getTrackerValuesListForSettings then
-            local trackerList = SpellStyler.State:getTrackerValuesListForSettings()
-            for _, entry in ipairs(trackerList) do
-                if not entry.isHeader then
-                    table.insert(freshIcons, entry)
-                end
-            end
-        end
-
-        -- Hide the previous scroll child (WoW has no frame:Destroy)
-        if currentScrollChild then
-            currentScrollChild:Hide()
-            currentScrollChild:SetParent(nil)
-            currentScrollChild = nil
-        end
-
-        -- Resize panel to fit content (capped at 220px)
-        local panelHeight = math.min(#freshIcons * 26 + 28 + 12, 220)
-        dropPanel:SetHeight(panelHeight)
-
-        local dpScrollChild = CreateFrame("Frame", nil, dpScroll)
-        dpScrollChild:SetSize(230, math.max(#freshIcons * 26 + 28 + 10, 10))
-        dpScroll:SetScrollChild(dpScrollChild)
-        currentScrollChild = dpScrollChild
-
-        -- "Select All" / "Clear All" buttons
-        local checkboxRefs = {}
-
-        local selectAllBtn = CreateFrame("Button", nil, dpScrollChild, "UIPanelButtonTemplate")
-        selectAllBtn:SetSize(90, 18)
-        selectAllBtn:SetPoint("TOPLEFT", 4, -4)
-        selectAllBtn:SetText("Select All")
-
-        local clearAllBtn = CreateFrame("Button", nil, dpScrollChild, "UIPanelButtonTemplate")
-        clearAllBtn:SetSize(80, 18)
-        clearAllBtn:SetPoint("LEFT", selectAllBtn, "RIGHT", 6, 0)
-        clearAllBtn:SetText("Clear All")
-
-        -- One checkbox per icon
-        for i, entry in ipairs(freshIcons) do
-            local key = tostring(entry.uniqueID) .. "_" .. (entry.trackerType or "")
-            local cb = CreateFrame("CheckButton", nil, dpScrollChild, "UICheckButtonTemplate")
-            cb:SetSize(20, 20)
-            cb:SetPoint("TOPLEFT", 4, -(i - 1) * 26 - 28)  -- 28 = height of the two header buttons
-            cb:SetChecked(_multiSelectedIconIDs[key] ~= nil)
-            local lbl = dpScrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            lbl:SetPoint("LEFT", cb, "RIGHT", 2, 0)
-            lbl:SetText((entry.name or tostring(entry.uniqueID)) .. " |cff888888(" .. (entry.trackerType or "?") .. ")|r")
-            lbl:SetTextColor(0.9, 0.9, 0.9)
-            cb:SetScript("OnClick", function(self)
-                if self:GetChecked() then
-                    _multiSelectedIconIDs[key] = { uniqueID = entry.uniqueID, trackerType = entry.trackerType }
-                else
-                    _multiSelectedIconIDs[key] = nil
-                end
-                UpdateDropBtnText()
-            end)
-            checkboxRefs[key] = { cb = cb, entry = entry }
-        end
-
-        selectAllBtn:SetScript("OnClick", function()
-            for key, ref in pairs(checkboxRefs) do
-                ref.cb:SetChecked(true)
-                _multiSelectedIconIDs[key] = { uniqueID = ref.entry.uniqueID, trackerType = ref.entry.trackerType }
-            end
-            UpdateDropBtnText()
-        end)
-        clearAllBtn:SetScript("OnClick", function()
-            for key, ref in pairs(checkboxRefs) do
-                ref.cb:SetChecked(false)
-                _multiSelectedIconIDs[key] = nil
-            end
-            UpdateDropBtnText()
-        end)
-    end
-
-    dropBtn:SetScript("OnClick", function(self)
-        if dropPanel:IsShown() then
-            dropPanel:Hide()
-        else
-            RebuildDropList()  -- refresh list before showing
-            dropPanel:ClearAllPoints()
-            dropPanel:SetPoint("TOPLEFT", self, "BOTTOMLEFT", 0, -2)
-            dropPanel:Show()
-        end
-    end)
-
-    -- Hide the dropdown panel when the scroll child is hidden
-    parent:SetScript("OnHide", function() dropPanel:Hide() end)
-
-    -- ── Config for multi-icon control rendering ─────────────────────────────
-    -- getValue reads from the shared _multiValues scratch table so controls
-    -- always show the last value the user committed (instead of always showing
-    -- each control's hard-coded default).
-    -- setValue writes to _multiValues and fans out to every selected icon.
-    local config = {
-        trackerType = "spells",
-        getValue = function(uid, path)
-            return _multiValues[path]  -- nil on first open → controls show their own defaults
-        end,
-        setValue = function(uid, path, value)
-            -- Store in scratch table so getValue reflects the new value immediately
-            _multiValues[path] = value
-            -- Apply to every selected icon
-            for _, iconEntry in pairs(_multiSelectedIconIDs) do
-                SpellStyler.State:SetTrackerValueConfigProperty(
-                    iconEntry.uniqueID, iconEntry.trackerType, path, value)
-            end
-        end,
-    }
-    config.configInputs = IconSettingsRenderer:GetIconConfigInputs(config)
-
-    -- ── Section rendering ────────────────────────────────────────────────────
-    local lastControl = dropBtn
-    local sectionIndex = 0
-
-    for _, inputDef in ipairs(config.configInputs) do
-        if inputDef.type == "header" then
-            sectionIndex = sectionIndex + 1
-            if options.sectionStates[sectionIndex] == nil then
-                options.sectionStates[sectionIndex] = inputDef.state or "collapsed"
-            end
-            local isExpanded = (options.sectionStates[sectionIndex] == "expanded")
-            local sectionContent = inputDef.section or inputDef.sectionContent or {}
-
-            local headerFrameBg = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-            headerFrameBg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, inputDef.anchorOffsetY or -20)
-            headerFrameBg:SetSize(300, 25)
-            local headerTexture = headerFrameBg:CreateTexture(nil, "BACKGROUND")
-            headerTexture:SetAllPoints(headerFrameBg)
-            headerTexture:SetTexture(isExpanded
-                and "Interface\\AddOns\\SpellStyler\\Media\\Textures\\bar_full_minus_cropped"
-                or  "Interface\\AddOns\\SpellStyler\\Media\\Textures\\bar_full_plus_cropped")
-
-            local headerBtn = CreateFrame("Button", nil, headerFrameBg)
-            headerBtn:SetAllPoints(headerFrameBg)
-            local headerText = headerBtn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-            headerText:SetPoint("LEFT", headerFrameBg, "LEFT", 15, 0)
-            headerText:SetText(inputDef.text or "")
-            headerText:SetTextColor(1, 0.82, 0)
-
-            local capturedIdx = sectionIndex
-            headerBtn:SetScript("OnClick", function()
-                options.sectionStates[capturedIdx] = (options.sectionStates[capturedIdx] == "expanded") and "collapsed" or "expanded"
-                IconSettingsRenderer:RenderMultiIconSettingsView(options)
-            end)
-            headerBtn:SetScript("OnEnter", function() headerText:SetTextColor(1, 1, 0.5) end)
-            headerBtn:SetScript("OnLeave", function() headerText:SetTextColor(1, 0.82, 0) end)
-
-            lastControl = headerFrameBg
-
-            if isExpanded then
-                for _, controlDef in ipairs(sectionContent) do
-                    -- Handle custom renders
-                    if controlDef.type == "customRender" then
-                        -- Check if this is the Charge Bar section (by checking the header text)
-                        if inputDef.text == "Count/Charge Bar" then
-                            -- Build the charge bar inputs using the helper function
-                            local chargeBarInputs = GetChargeBarInputDefinitions(config)
-                            
-                            -- Render each input using the multi-icon control rendering logic
-                            for _, chargeInputDef in ipairs(chargeBarInputs) do
-                                chargeInputDef.uniqueID = nil  -- no single uniqueID in multi mode
-                                
-                                local controlFrame = nil
-                                if chargeInputDef.type == "dropdown" then
-                                    local row = IconSettingsRenderer:CreateDropdown(parent, chargeInputDef, lastControl)
-                                    controlFrame = row
-                                elseif chargeInputDef.type == "textinput" then
-                                    local row = CreateTextInput(parent, chargeInputDef, lastControl)
-                                    controlFrame = row
-                                elseif chargeInputDef.type == "colorpicker" then
-                                    local row = CreateColorPicker(parent, chargeInputDef, lastControl)
-                                    controlFrame = row
-                                elseif chargeInputDef.type == "checkbox" then
-                                    local checkbox = CreateCheckbox(parent, chargeInputDef, lastControl)
-                                    controlFrame = checkbox
-                                elseif chargeInputDef.type == "positionbuttons" then
-                                    -- Set up getX/setX/getY/setY methods based on pathPrefix
-                                    local pathPrefix = chargeInputDef.pathPrefix or (chargeInputDef.isBarPosition and "statusBar" or "position")
-                                    local isBarPosition = chargeInputDef.isBarPosition or false
-                                    chargeInputDef.getX = function(self) return _multiValues[pathPrefix .. ".x"] or 0 end
-                                    chargeInputDef.getY = function(self) return _multiValues[pathPrefix .. ".y"] or 0 end
-                                    chargeInputDef.setX = function(self, value)
-                                        _multiValues[pathPrefix .. ".x"] = value
-                                        for _, iconEntry in pairs(_multiSelectedIconIDs) do
-                                            SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".x", value)
-                                        end
-                                    end
-                                    chargeInputDef.setY = function(self, value)
-                                        _multiValues[pathPrefix .. ".y"] = value
-                                        for _, iconEntry in pairs(_multiSelectedIconIDs) do
-                                            SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".y", value)
-                                        end
-                                    end
-                                    local row = CreatePositionInputs(parent, chargeInputDef, lastControl, isBarPosition)
-                                    controlFrame = row
-                                elseif chargeInputDef.type == "label" then
-                                    local label = CreateLabel(parent, chargeInputDef, lastControl)
-                                    controlFrame = label
-                                end
-                                
-                                if controlFrame then
-                                    lastControl = controlFrame
-                                end
-                            end
-                        elseif inputDef.text == "Anchor" then
-                            -- Render anchor dropdown in multi-icon mode
-                            -- Pass nil for uniqueID and trackerType since we're in multi mode
-                            local anchorRow = IconSettingsRenderer:RenderTargetAnchorDropdown(parent, lastControl, nil, nil, config)
-                            if anchorRow then
-                                lastControl = anchorRow
-                            end
-                        else
-                            -- Other custom renders are not available in multi-mode
-                            local msg = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-                            msg:SetPoint("TOPLEFT", lastControl, "BOTTOMLEFT", 0, -10)
-                            msg:SetText("|cFF888888This section is not available in multi-icon mode|r")
-                            msg:SetTextColor(0.5, 0.5, 0.5)
-                            lastControl = msg
-                        end
-                    elseif controlDef.type == "button" then
-                        -- Skip buttons (like Mock Cooldown) - not meaningful in multi mode
-                    else
-                        controlDef.uniqueID = nil  -- no single uniqueID in multi mode
-
-                        local controlFrame = nil
-                        if controlDef.type == "dropdown" then
-                            local row = IconSettingsRenderer:CreateDropdown(parent, controlDef, lastControl)
-                            controlFrame = row
-                        elseif controlDef.type == "textinput" then
-                            local row = CreateTextInput(parent, controlDef, lastControl)
-                            controlFrame = row
-                        elseif controlDef.type == "colorpicker" then
-                            local row = CreateColorPicker(parent, controlDef, lastControl)
-                            controlFrame = row
-                        elseif controlDef.type == "checkbox" then
-                            local checkbox = CreateCheckbox(parent, controlDef, lastControl)
-                            controlFrame = checkbox
-                        elseif controlDef.type == "positionbuttons" then
-                            -- Set up getX/setX/getY/setY methods based on pathPrefix (if provided) or isBarPosition
-                            local pathPrefix = controlDef.pathPrefix or (controlDef.isBarPosition and "statusBar" or "position")
-                            local isBarPosition = controlDef.isBarPosition or false
-                            controlDef.getX = function(self) return _multiValues[pathPrefix .. ".x"] or 0 end
-                            controlDef.getY = function(self) return _multiValues[pathPrefix .. ".y"] or 0 end
-                            controlDef.setX = function(self, value)
-                                _multiValues[pathPrefix .. ".x"] = value
-                                for _, iconEntry in pairs(_multiSelectedIconIDs) do
-                                    SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".x", value)
-                                end
-                            end
-                            controlDef.setY = function(self, value)
-                                _multiValues[pathPrefix .. ".y"] = value
-                                for _, iconEntry in pairs(_multiSelectedIconIDs) do
-                                    SpellStyler.State:SetTrackerValueConfigProperty(iconEntry.uniqueID, iconEntry.trackerType, pathPrefix .. ".y", value)
-                                end
-                            end
-                            local row = CreatePositionInputs(parent, controlDef, lastControl, isBarPosition)
-                            controlFrame = row
-                        elseif controlDef.type == "label" then
-                            local label = CreateLabel(parent, controlDef, lastControl)
-                            controlFrame = label
-                        end
-
-                        if controlFrame then
-                            lastControl = controlFrame
-                        end
-                    end
-                end
-            end
-        end
-    end
-
-    -- Dynamic panel height based on last control position
-    C_Timer.After(0, function()
-        if not parent:IsShown() then 
-            return 
-        end
-        
-        -- Calculate height based on where lastControl ended up
-        local contentHeight = 100  -- default minimum
-        if lastControl then
-            local parentTop = parent:GetTop() or 0
-            local lastControlBottom = lastControl:GetBottom() or 0
-            contentHeight = math.abs(parentTop - lastControlBottom)
-        end
-        
-        local finalHeight = math.max(contentHeight + 60, 400)
-        
-        -- Update scroll child height directly
-        if options.onHeightUpdated then
-            options.onHeightUpdated(finalHeight)
-        end
-    end)
-end
-
-
-
-
 function IconSettingsRenderer:RenderIconControlView(containerFrame)
 	local iconSize, minPadding = 40, 4
     self:HideSelectedIconHeader()
@@ -4241,7 +4299,7 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
         local separatorGap = 6  -- space above and below the separator line
 
         -- Calculate total scroll child height: toolbar buttons + separator + entries
-        local totalHeight = iconPadding + iconSize + minPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap
+        local totalHeight = iconPadding + iconSize + minPadding + iconSize + separatorGap + 1 + separatorGap
         for _, entry in ipairs(trackerList) do
             if entry.isHeader then
                 totalHeight = totalHeight + headerHeight + headerPaddingBottom
@@ -4262,33 +4320,21 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
             end)
         end
 
-        -- Multi-icon settings button (below the plus button)
-        local multiBtn = CreateFrame("Button", nil, iconScrollChild)
-        multiBtn:SetSize(iconSize, iconSize)
-        multiBtn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, -(iconPadding + iconSize + minPadding))
-        local multiTex = multiBtn:CreateTexture(nil, "ARTWORK")
-        multiTex:SetAllPoints(multiBtn)
-        multiTex:SetTexture("Interface\\AddOns\\SpellStyler\\Media\\Textures\\multi")
-        multiBtn:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:SetText("Multi-Icon Settings", 1, 1, 1)
-            GameTooltip:AddLine("Apply settings to multiple icons at once", 0.7, 0.7, 0.7)
-            GameTooltip:Show()
-        end)
-        multiBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
-        multiBtn:SetScript("OnClick", function()
-            _lastSelectedIcon = nil
-            IconSettingsRenderer:RenderMultiIconSettingsView({
-                parentFrame = settingsScrollChild,
-                onHeightUpdated = function(newHeight)
-                    if settingsScrollChild then
-                        settingsScrollChild:SetHeight(newHeight)
-                    end
-                end
-            })
-        end)
+        -- Clone settings button (below the plus button)
+        if SpellStyler.CloneSettings then
+            SpellStyler.CloneSettings:CreateToolbarButton(
+                iconScrollChild,
+                iconSize,
+                iconPadding,
+                iconPadding + iconSize + minPadding,
+                function()
+                    return settingsScrollChild
+                end,
+                containerFrame
+            )
+        end
 
-        -- Disabled values button (below the multi-icon settings button)
+        -- Disabled values button (below the clone settings button)
         local disabledBtn = CreateFrame("Button", nil, iconScrollChild)
         disabledBtn:SetSize(iconSize, iconSize)
         disabledBtn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, -(iconPadding + iconSize + minPadding + iconSize + minPadding))
@@ -4333,6 +4379,9 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
                 btn:SetParent(iconScrollChild)
                 btn:SetPoint("TOPLEFT", iconScrollChild, "TOPLEFT", iconPadding, yOffset)
                 btn:SetScript("OnClick", function(self)
+                    if SpellStyler.SoundPreviewRenderer then
+                        SpellStyler.SoundPreviewRenderer:Hide()
+                    end
                     _lastSelectedIcon = {
                         trackerType = entry.trackerType,
                         trackerKey = entry.trackerKey
@@ -4371,11 +4420,31 @@ function IconSettingsRenderer:RenderIconControlView(containerFrame)
     
 
     local scrollChild = CreateFrame("Frame", nil, settingsPanelScrollFrame, "BackdropTemplate")
-    scrollChild:SetSize(settingsPanel:GetWidth() - 20, settingsPanel:GetHeight() - 20)
+    scrollChild:SetSize(settingsPanelScrollFrame:GetWidth(), settingsPanelScrollFrame:GetHeight())
     settingsPanelScrollFrame:SetScrollChild(scrollChild)
+    settingsPanelScrollFrame:SetScript("OnSizeChanged", function(self)
+        local viewportWidth = self:GetWidth()
+        local viewportHeight = self:GetHeight()
+        if viewportWidth > 0 then
+            scrollChild:SetWidth(viewportWidth)
+        end
+        if viewportHeight > 0 and scrollChild:GetHeight() < viewportHeight then
+            scrollChild:SetHeight(viewportHeight)
+        end
+    end)
+    C_Timer.After(0, function()
+        local viewportWidth = settingsPanelScrollFrame:GetWidth()
+        local viewportHeight = settingsPanelScrollFrame:GetHeight()
+        if viewportWidth > 0 then
+            scrollChild:SetWidth(viewportWidth)
+        end
+        if viewportHeight > 0 and scrollChild:GetHeight() < viewportHeight then
+            scrollChild:SetHeight(viewportHeight)
+        end
+    end)
     -- YELLOW border for debugging
     scrollChild:SetBackdrop({edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 2})
-    scrollChild:SetBackdropBorderColor(0, 0, 0, 0)
+    scrollChild:SetBackdropBorderColor(1, 1, 1, 1)
     
     -- Store reference for height updates and content rendering
     settingsScrollChild = scrollChild
@@ -4437,6 +4506,8 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame, onDragStartC
         -- Enable dragging for base frame
         frame:EnableMouse(true)
         frame:RegisterForDrag("LeftButton")
+        local GetDraggedPosition
+        local UpdatePositionInputs
         
         local dragStart = function(self)
             -- Save original anchor configuration before StartMoving() clears it
@@ -4449,6 +4520,10 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame, onDragStartC
                 y = savedPos.y
             }
             self:StartMoving()
+            self:SetScript("OnUpdate", function(currentFrame)
+                local offsetX, offsetY = GetDraggedPosition(currentFrame)
+                UpdatePositionInputs(offsetX, offsetY)
+            end)
             if onDragStartCallback then
                 onDragStartCallback(self)
             end
@@ -4457,70 +4532,69 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame, onDragStartC
                 onFrameClickCallback(trackerKey, trackerType)
             end
         end
-        local dragEnd = function(self)
-            self:StopMovingOrSizing()
-            
-            -- Use the frame's actual resulting center (not the cursor position) since
-            -- StartMoving/StopMovingOrSizing keeps the grabbed point under the cursor,
-            -- not the frame's center. Using the cursor directly caused the icon to
-            -- snap so its center landed under the mouse regardless of grab point.
-            -- GetCenter() returns coordinates in the frame's own pre-scale local space,
-            -- so it must be multiplied by the frame's own scale to get a value in the
-            -- same screen-space basis as UIParent:GetCenter(). SetFramePosition divides
-            -- pos.x/pos.y by this same scale when reapplying the saved position, so the
-            -- stored value must be this multiplied (unscaled/"screen") offset.
-            local frameScale = self:GetScale() or 1
-            local frameCenterX, frameCenterY = self:GetCenter()
+
+        GetDraggedPosition = function(currentFrame)
+            local frameScale = currentFrame:GetScale() or 1
+            local frameCenterX, frameCenterY = currentFrame:GetCenter()
             local uiX, uiY = UIParent:GetCenter()
             local offsetX = (frameCenterX * frameScale) - uiX
-            local offsetY = (frameCenterY * frameScale) - uiY
-            
-            -- offsetY needs adjustment for statusBar chain
-            local adjustedOffsetY = offsetY
-            
-            local anchorModeData = self.meta and self.meta.anchorModeData
+            local adjustedOffsetY = (frameCenterY * frameScale) - uiY
+            local anchorModeData = currentFrame.meta and currentFrame.meta.anchorModeData
 
             if anchorModeData and (anchorModeData.type == "both" or anchorModeData.type == "barA") then
-                -- Frame is anchored CENTER to BarA texture TOP, need to calculate root position
-                if anchorModeData.type == "both" and self.chargeAnchorBarA and self.chargeAnchorBarB then
-                    -- Both bars: need to account for both texture heights
-                    local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
-                    local _, barBTextureHeight = self.chargeAnchorBarB:GetStatusBarTexture():GetSize()
-                    local _, barAHeight        = self.chargeAnchorBarA:GetSize()
-                    local _, barBHeight        = self.chargeAnchorBarB:GetSize()
-                    
-                    local barAPoint = anchorModeData.pointA or "BOTTOM"
-                    if barAPoint == "TOP" then
+                if anchorModeData.type == "both" and currentFrame.chargeAnchorBarA and currentFrame.chargeAnchorBarB then
+                    local _, barATextureHeight = currentFrame.chargeAnchorBarA:GetStatusBarTexture():GetSize()
+                    local _, barBTextureHeight = currentFrame.chargeAnchorBarB:GetStatusBarTexture():GetSize()
+                    local _, barAHeight = currentFrame.chargeAnchorBarA:GetSize()
+                    local _, barBHeight = currentFrame.chargeAnchorBarB:GetSize()
+
+                    if (anchorModeData.pointA or "BOTTOM") == "TOP" then
                         adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
                     else
                         adjustedOffsetY = adjustedOffsetY - barATextureHeight
                     end
-                    
-                    
-                    local barBPoint = anchorModeData.point
-                    if barBPoint == "TOP" then
+
+                    if anchorModeData.point == "TOP" then
                         adjustedOffsetY = adjustedOffsetY + barBHeight - barBTextureHeight
                     else
                         adjustedOffsetY = adjustedOffsetY - barBTextureHeight
                     end
-                elseif anchorModeData.type == "barA" and self.chargeAnchorBarA then
-                    local _, barATextureHeight = self.chargeAnchorBarA:GetStatusBarTexture():GetSize()
-                    local _, barAHeight        = self.chargeAnchorBarA:GetSize()
+                elseif anchorModeData.type == "barA" and currentFrame.chargeAnchorBarA then
+                    local _, barATextureHeight = currentFrame.chargeAnchorBarA:GetStatusBarTexture():GetSize()
+                    local _, barAHeight = currentFrame.chargeAnchorBarA:GetSize()
 
-                    local barAPoint = anchorModeData.point
-                    if barAPoint == "TOP" then
+                    if anchorModeData.point == "TOP" then
                         adjustedOffsetY = adjustedOffsetY + barAHeight - barATextureHeight
                     else
                         adjustedOffsetY = adjustedOffsetY - barATextureHeight
                     end
                 end
             end
+
+            return offsetX, adjustedOffsetY
+        end
+
+        UpdatePositionInputs = function(offsetX, offsetY)
+            if _iconPositionInputs.x then
+                _iconPositionInputs.x:SetText(tostring(offsetX))
+            end
+            if _iconPositionInputs.y then
+                _iconPositionInputs.y:SetText(tostring(offsetY))
+            end
+        end
+
+        local dragEnd = function(self)
+            self:StopMovingOrSizing()
+            local offsetX, adjustedOffsetY = GetDraggedPosition(self)
+            self:SetScript("OnUpdate", nil)
             
             -- Save position using CENTER anchor point (frame's CENTER to UIParent's CENTER)
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.x", offsetX)
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.y", adjustedOffsetY)
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.anchorPoint", "CENTER")
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "position.relativeAnchorPoint", "CENTER")
+
+            UpdatePositionInputs(offsetX, adjustedOffsetY)
             
             RefreshTrackerVisuals(trackerKey, trackerType)
             if onDragStopCallback then
@@ -4577,12 +4651,28 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame, onDragStartC
             
             -- Calculate new size (scroll up = increase, scroll down = decrease)
             local sizeChange = delta * 2
-            local newWidth = math.max(16, math.min(200, currentWidth + sizeChange))
-            local newHeight = math.max(16, math.min(200, currentHeight + sizeChange))
+            local newWidth = math.max(0, math.min(10000, currentWidth + sizeChange))
+            local newHeight = math.max(0, math.min(10000, currentHeight + sizeChange))
             
             -- Apply new size
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.width", newWidth)
             State:SetTrackerValueConfigProperty(trackerKey, trackerType, "iconSettings.height", newHeight)
+
+            local sizeInputs = _iconSizeInputsByTracker[GetTrackerInputKey(trackerKey, trackerType)]
+                or _iconSizeInputs
+                DevTool:AddData({
+                    sizeInputs = sizeInputs,
+                    _iconSizeInputsByTracker = _iconSizeInputsByTracker,
+                    GetTrackerInputKey = GetTrackerInputKey(trackerKey, trackerType),
+                    trackerKey = trackerKey,
+                    trackerType = trackerType
+                }, "size inputs")
+            if sizeInputs.width then
+                sizeInputs.width:SetText(tostring(newWidth))
+            end
+            if sizeInputs.height then
+                sizeInputs.height:SetText(tostring(newHeight))
+            end
             
             -- Update tooltip with new size
             if GameTooltip:IsOwned(self) then

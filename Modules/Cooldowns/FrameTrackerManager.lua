@@ -907,6 +907,9 @@ FrameTrackerManager.frameController = {
             if not frame.isVariantFrame then
                 FrameTrackerManager.frameController.DestroyTrackerFrame(trackerKey, trackerType)
             end
+
+            -- If the whole tracker is disabled, then all sounds controlled by it must be reset to the original
+
             return
         end
         
@@ -1405,6 +1408,10 @@ FrameTrackerManager.frameController = {
         if not frames then return end
         local frame = frames[trackerKey]
         if not frame then return end
+        if SpellStyler.SoundManager then
+            local trackerConfig = State:GetSpecificTrackerValue(trackerKey, trackerType)
+            SpellStyler.SoundManager:UnmuteTrackerSounds(trackerConfig)
+        end
 
         -- Helper to destroy a single frame (base or variant)
         local function DestroyFrame(f)
@@ -2290,6 +2297,9 @@ FrameTrackerManager.FrameBuilder = {
         
         -- Apply initial properties to base and variant frames
         FrameTrackerManager.frameController.ApplyStaticFrameProperties(trackerKey, trackerType)
+        if SpellStyler.SoundManager then
+            SpellStyler.SoundManager:MuteTrackerSounds(trackerConfig)
+        end
         return baseFrame
     end,
 
@@ -2609,7 +2619,8 @@ FrameTrackerManager.FrameBuilder = {
             isDurationActive = false,
             mockCooldownActive = false,
             currentAuraInstanceID = 0,
-            customTexture = data.trackerConfig.iconSettings.iconTexturePath ~= '' and data.trackerConfig.iconSettings.iconTexturePath ~= nil and data.trackerConfig.iconSettings.iconTexturePath or nil
+            customTexture = data.trackerConfig.iconSettings.iconTexturePath ~= '' and data.trackerConfig.iconSettings.iconTexturePath ~= nil and data.trackerConfig.iconSettings.iconTexturePath or nil,
+            sound = data.trackerConfig.sound
         }
         
         -- Store trackerType at top level for easy access (used by mouse anchor ticker)
@@ -4102,13 +4113,14 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             FrameTrackerManager.utils.BatchThrottle('UpdateActiveSpells', FrameTrackerManager.frameController.UpdateActiveSpells)
 
             local matches = FrameTrackerManager.utils.MatchTrackerFrames(spellID)
-            local match = matches[1]
+            local match = matches and matches[1]
             if match then
                 FrameTrackerManager.lastSpellCast = {
                     spellID = spellID,
                     timestamp = GetTime(),
                     frame = match.customFrame
                 }
+
                 FrameTrackerManager.totemController.MatchTotemEvent('UNIT_SPELLCAST_SUCCEEDED for totem tracker')
             end
             -- Detect talent changes (spell 384255 is the talent change spell)
@@ -4136,6 +4148,13 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
                 if match then
                     for _, frameMatch in ipairs(matches) do
+                        DevTool:AddData({
+                            sound = frameMatch.customFrame.meta.sound,
+                            id = spellID,
+                            trigger = "onCast"
+                        }, "should play sound: " .. spellID)
+                        SpellStyler.SoundManager:PlaySound(frameMatch.customFrame.meta.sound, spellID, "onCast")
+
                         -- Skip if mock cooldown is active
                         if not frameMatch.customFrame.meta.mockCooldownActive then
                             FrameTrackerManager.lifecycleController.DriveFrameUpdate(
@@ -4177,6 +4196,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             for _, match in ipairs(frameMatchData) do
                 -- Skip if mock cooldown is active
                 if not match.customFrame.meta.mockCooldownActive then
+                    SpellStyler.SoundManager:PlaySound(match.customFrame.meta.sound, spellID, "onChargeGain")
                     FrameTrackerManager.lifecycleController.DriveFrameUpdate(
                         match.customFrame,
                         {

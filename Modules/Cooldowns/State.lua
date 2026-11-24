@@ -3,6 +3,34 @@ SpellStyler.State = SpellStyler.State or {}
 local State = SpellStyler.State
 local FrameTrackerManager  -- lazily resolved on first use (avoids load-order nil)
 
+local function NormalizeIconDisplayState(value, trackerType)
+    if type(value) ~= "string" then
+        return "available"
+    end
+
+    local normalized = value:lower()
+    if normalized == "active" then
+        normalized = "available"
+    end
+
+    if trackerType == "buffs" then
+        if normalized == "always" then
+            normalized = "available"
+        end
+        return normalized == "never" and "never" or "available"
+    end
+
+    if normalized == "always"
+        or normalized == "cooldown"
+        or normalized == "available"
+        or normalized == "never"
+    then
+        return normalized
+    end
+
+    return "available"
+end
+
 --[[====================================================
 TABLE AND NESTED-VALUE UTILITIES
 Shared copying, default merging, and configuration-path access.
@@ -25,6 +53,36 @@ local function DeepCopy(orig)
         copy = orig
     end
     return copy
+end
+
+local SOUND_DEFAULTS = {
+    trigger = "onCast",
+    targetSoundPath = "",
+    delay = 0,
+    channel = "Master",
+}
+
+local SOUND_KEYS = {
+    trigger = true,
+    targetSoundPath = true,
+    delay = true,
+    channel = true,
+    muteOriginalSpellSound = true,
+    additionalMuteSounds = true,
+}
+
+local function NewSoundSettings(source)
+    local settings = DeepCopy(SOUND_DEFAULTS)
+    for key in pairs(SOUND_KEYS) do
+        if type(source) == "table" and source[key] ~= nil then
+            settings[key] = DeepCopy(source[key])
+        end
+    end
+    if settings.trigger == "" then settings.trigger = SOUND_DEFAULTS.trigger end
+    if settings.channel == "" then settings.channel = SOUND_DEFAULTS.channel end
+    settings.additionalMuteSounds = nil
+    settings.muteOriginalSpellSound = nil
+    return settings
 end
 
 --[[----------------------------------------------------
@@ -62,14 +120,23 @@ function State:AccessNestedValue(tbl, path, value, action)
 		return
 	end
     for i = 1, #keys - 1 do        
-        if current[keys[i]] == nil then
-            current[keys[i]] = {}
+        local key = keys[i]
+        local numericKey = tonumber(key)
+        if current[key] == nil and numericKey and current[numericKey] ~= nil then
+            key = numericKey
         end
-        current = current[keys[i]]
+        if current[key] == nil then
+            current[key] = {}
+        end
+        current = current[key]
     end
     
     -- Handle the final key with resolution
     local finalKey = keys[#keys]
+    local numericFinalKey = tonumber(finalKey)
+    if current[finalKey] == nil and numericFinalKey and current[numericFinalKey] ~= nil then
+        finalKey = numericFinalKey
+    end
     if (action == 'set') then
         current[finalKey] = value
     elseif (action == 'get') then
@@ -364,32 +431,32 @@ end
 local AddNewTrackerValueConfig
 
 --[[----------------------------------------------------
-Adding a tracker, resetting its settings, and backfilling older saved data all
-use this constructor for the current configuration defaults. It returns a
+Adding a tracker and resetting its settings use this constructor for the
+current configuration defaults. It returns a
 configuration object; the caller decides where to store or merge it.
 ----------------------------------------------------]]
 function AddNewTrackerValueConfig(data)
-    local base = SpellStyler.TrackerConfigFactory:Create(data.trackerType)
+    local factoryData = {}
     for key, value in pairs(data) do
-        base[key] = value
+        factoryData[key] = value
     end
-
     if data.trackerType == 'spells' then
-        base.associatedSpellIDs[tonumber(data.baseSpellID) or data.baseSpellID] = {
+        factoryData.associatedSpellIDs = factoryData.associatedSpellIDs or {}
+        factoryData.associatedSpellIDs[tonumber(data.baseSpellID) or data.baseSpellID] = {
             enabled = true,
             iconTexturePath = '',
             iconColor = { r=1, g=1, b=1, a=1 },
         }
         local overrideSpellID = C_Spell.GetOverrideSpell(data.baseSpellID, GetSpecialization(), true)
         if overrideSpellID then
-            base.associatedSpellIDs[tonumber(overrideSpellID) or overrideSpellID] = {
+            factoryData.associatedSpellIDs[tonumber(overrideSpellID) or overrideSpellID] = {
                 enabled = true,
                 iconTexturePath = '',
                 iconColor = { r=1, g=1, b=1, a=1 },
             }
         end
     end
-    return base
+    return SpellStyler.TrackerConfigFactory:Create(data.trackerType, factoryData)
 end
 
 --[[----------------------------------------------------
@@ -509,6 +576,69 @@ function State:GetCustomTextures()
     return SpellStyler_DB.customTextures
 end
 
+local function NormalizeCustomSoundPath(soundPath)
+    if type(soundPath) ~= "string" then
+        return soundPath
+    end
+    return string.gsub(soundPath, "/", "\\")
+end
+
+local function GetCustomSoundKey(soundPath)
+    if type(soundPath) == "string" then
+        return string.lower(NormalizeCustomSoundPath(soundPath))
+    end
+    return type(soundPath) .. ":" .. tostring(soundPath)
+end
+
+function State:AddCustomSound(soundPath)
+    if (type(soundPath) ~= "string" and type(soundPath) ~= "number")
+        or soundPath == ""
+    then
+        return
+    end
+    soundPath = NormalizeCustomSoundPath(soundPath)
+    SpellStyler_DB = SpellStyler_DB or {}
+    SpellStyler_DB.customSounds = SpellStyler_DB.customSounds or {}
+    for _, existingPath in ipairs(SpellStyler_DB.customSounds) do
+        if GetCustomSoundKey(existingPath) == GetCustomSoundKey(soundPath) then return end
+    end
+    table.insert(SpellStyler_DB.customSounds, soundPath)
+end
+
+function State:GetCustomSounds()
+    SpellStyler_DB = SpellStyler_DB or {}
+    SpellStyler_DB.customSounds = SpellStyler_DB.customSounds or {}
+
+    local uniqueSounds = {}
+    local writeIndex = 1
+    for _, soundPath in ipairs(SpellStyler_DB.customSounds) do
+        soundPath = NormalizeCustomSoundPath(soundPath)
+        local soundKey = GetCustomSoundKey(soundPath)
+        if uniqueSounds[soundKey] == nil then
+            uniqueSounds[soundKey] = true
+            SpellStyler_DB.customSounds[writeIndex] = soundPath
+            writeIndex = writeIndex + 1
+        end
+    end
+    for index = writeIndex, #SpellStyler_DB.customSounds do
+        SpellStyler_DB.customSounds[index] = nil
+    end
+    return SpellStyler_DB.customSounds
+end
+
+function State:RemoveCustomSound(soundPath)
+    if not SpellStyler_DB or type(SpellStyler_DB.customSounds) ~= "table" then
+        return
+    end
+    local soundKey = GetCustomSoundKey(soundPath)
+    for index = #SpellStyler_DB.customSounds, 1, -1 do
+        if GetCustomSoundKey(SpellStyler_DB.customSounds[index]) == soundKey then
+            table.remove(SpellStyler_DB.customSounds, index)
+            return
+        end
+    end
+end
+
 local DEFAULT_ICON_COLOR = { r = 1, g = 1, b = 1, a = 1 }
 local ASSOCIATED_SPELL_KEYS = {
     enabled = true,
@@ -527,6 +657,130 @@ local function NewAssociatedSpell(trackerConfig)
         iconTexturePath = "",
         iconColor = DeepCopy((trackerConfig and trackerConfig.iconColor) or DEFAULT_ICON_COLOR),
     }
+end
+
+local function ResolveSoundSpellID(trackerConfig)
+    if not trackerConfig or not trackerConfig.baseSpellID then return end
+    local overrideSpellID = C_Spell.GetOverrideSpell(
+        trackerConfig.baseSpellID,
+        GetSpecialization(),
+        true
+    )
+    return tonumber(overrideSpellID) or tonumber(trackerConfig.baseSpellID) or trackerConfig.baseSpellID
+end
+
+function State:NormalizeSoundSettings(trackerConfig)
+    if type(trackerConfig) ~= "table" then return end
+
+    local savedSound = type(trackerConfig.sound) == "table" and trackerConfig.sound or {}
+    local soundBySpellID = {}
+    soundBySpellID.manuallyMutedSounds = {}
+    local function AddManualSound(soundID)
+        if tonumber(soundID) then
+            soundID = tonumber(soundID)
+            for _, existingID in ipairs(soundBySpellID.manuallyMutedSounds) do
+                if existingID == soundID then return end
+            end
+            table.insert(soundBySpellID.manuallyMutedSounds, soundID)
+        end
+    end
+    local function AddManualSounds(sounds)
+        if type(sounds) ~= "table" then
+            AddManualSound(sounds)
+            return
+        end
+        for _, soundID in ipairs(sounds) do
+            AddManualSound(soundID)
+        end
+    end
+    AddManualSounds(savedSound.manuallyMutedSounds)
+    AddManualSounds(savedSound.additionalMuteSounds)
+    local currentSpellID = ResolveSoundSpellID(trackerConfig)
+    if savedSound.muteOriginalSpellSound and currentSpellID then
+        AddManualSounds(SpellStyler.SpellSoundMap[tonumber(currentSpellID) or currentSpellID])
+    end
+    local hasLegacySoundKeys = false
+    for key in pairs(SOUND_KEYS) do
+        if savedSound[key] ~= nil then
+            hasLegacySoundKeys = true
+            break
+        end
+    end
+
+    if hasLegacySoundKeys then
+        local currentSpellID = ResolveSoundSpellID(trackerConfig)
+        if currentSpellID then
+            soundBySpellID[currentSpellID] = NewSoundSettings(savedSound)
+        end
+    end
+
+    for spellID, settings in pairs(savedSound) do
+        local numericSpellID = tonumber(spellID)
+        if numericSpellID then
+            soundBySpellID[numericSpellID] = NewSoundSettings(settings)
+            if type(settings) == "table" then
+                AddManualSounds(settings.additionalMuteSounds)
+                if settings.muteOriginalSpellSound then
+                    AddManualSounds(SpellStyler.SpellSoundMap[numericSpellID])
+                end
+            end
+        end
+    end
+
+    for spellID in pairs(trackerConfig.associatedSpellIDs or {}) do
+        local numericSpellID = tonumber(spellID) or spellID
+        soundBySpellID[numericSpellID] = NewSoundSettings(soundBySpellID[numericSpellID])
+    end
+
+    if currentSpellID then
+        soundBySpellID[currentSpellID] = NewSoundSettings(soundBySpellID[currentSpellID])
+    end
+
+    trackerConfig.sound = soundBySpellID
+end
+
+local function EnsureSoundSettingsForSpell(trackerConfig, spellID)
+    if type(trackerConfig) ~= "table" or not spellID then return end
+    if type(trackerConfig.sound) ~= "table" then
+        trackerConfig.sound = {
+            manuallyMutedSounds = {},
+        }
+    end
+    trackerConfig.sound.manuallyMutedSounds =
+        trackerConfig.sound.manuallyMutedSounds or {}
+    local numericSpellID = tonumber(spellID) or spellID
+    trackerConfig.sound[numericSpellID] =
+        trackerConfig.sound[numericSpellID] or NewSoundSettings()
+end
+
+function State:IsSoundManuallyMutedElsewhere(trackerKey, trackerType, soundID)
+    soundID = tonumber(soundID)
+    if not soundID then return false end
+
+    for _, otherTrackerType in ipairs({ "spells", "items" }) do
+        DevTool:AddData({
+            trackers = self:GetAllTrackerValues(otherTrackerType)
+        }, "otherTrackerType: ".. otherTrackerType)
+        for otherTrackerKey, trackerConfig in pairs(self:GetAllTrackerValues(otherTrackerType) or {}) do
+            if not (otherTrackerType == trackerType and tostring(otherTrackerKey) == tostring(trackerKey)) then
+                DevTool:AddData({
+                    otherTrackerKey = otherTrackerKey,
+                    trackerConfig = trackerConfig
+                }, "what the fuck")
+                local sound = trackerConfig and trackerConfig.sound
+                local manuallyMutedSounds = type(sound) == "table"
+                    and sound.manuallyMutedSounds
+                if type(manuallyMutedSounds) == "table" then
+                    for _, otherSoundID in ipairs(manuallyMutedSounds) do
+                        if tonumber(otherSoundID) == soundID then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return false
 end
 
 local CUSTOM_TEXTURE_KEYS = {
@@ -574,7 +828,9 @@ function State:GetAssociatedSpellID(trackerConfig, spellID, shouldCreate)
             associatedSpellIDs[spellKey] = association
         end
     end
-    if association or not shouldCreate then return association end
+    if association or not shouldCreate then
+        return association
+    end
 
     local baseSpellID = C_Spell.GetBaseSpell(spellKey)
     local baseAssociation = baseSpellID and (
@@ -588,6 +844,7 @@ function State:GetAssociatedSpellID(trackerConfig, spellID, shouldCreate)
         association = NewAssociatedSpell(trackerConfig)
     end
     associatedSpellIDs[spellKey] = association
+    EnsureSoundSettingsForSpell(trackerConfig, spellKey)
     return association
 end
 
@@ -919,6 +1176,12 @@ function State:ReenableTrackerValue(trackerKey, trackerType)
         SpellStyler.FrameTrackerManager.lifecycleController.CreateItemAndSpellTrackerFrames()
     else
         SpellStyler.BuffManager:CreateBuffContainers()
+        if SpellStyler.settingsMenu
+            and SpellStyler.settingsMenu:IsShown()
+            and SpellStyler.BuffManager.EnablePlaceholderDragging
+        then
+            SpellStyler.BuffManager:EnablePlaceholderDragging(true)
+        end
     end
 end
 
@@ -959,34 +1222,102 @@ the settings menu, copy that category's fields from the source tracker to the
 target. Deep-copy each block and save through the normal property setter so
 the two trackers do not share settings tables and live visuals are refreshed.
 ----------------------------------------------------]]
-function State:CopySettings(copyInfo)
-    local keys = {}
-    if copyInfo.category == 'Icon Settings' then
-        keys = {'iconSettings'}
-    elseif copyInfo.category == 'Spell Cooldown / Buff Duration' or copyInfo.category == 'Spell/Item Cooldown Duration' then
-        keys = {'cooldownText', 'statusBar'}
-    elseif copyInfo.category == 'Charge/Count based display' then
-        keys = {'chargeBasedDisplay'}
-    elseif copyInfo.category == 'Glow notification' then
-        keys = {'glowNotification'}
-    elseif copyInfo.category == 'Spell Charges / Buff Stacks' then
-        keys = {'countText', 'visualChargeBar'}
-    elseif copyInfo.category == 'Totem Tracking' then
-        keys = {'totemBar'}
-    elseif copyInfo.category == 'Custom Label (Accessibility)' then
-        keys = {'customLabel'}
+local COPY_SECTION_PREFIXES = {
+    ["Icon Settings"] = { "iconColor", "scale", "position", "iconSettings", "shouldShowQualityEmblem" },
+    ["Aura Configuration"] = { "auraConfig", "isNPCDebuff", "additionalBuffIDs" },
+    ["Aura configuration"] = { "auraConfig", "isNPCDebuff", "additionalBuffIDs" },
+    ["Aura / Cooldown Duration"] = { "cooldownText", "statusBar" },
+    ["Spell Cooldown / Buff Duration"] = { "cooldownText", "statusBar" },
+    ["Spell/Item Cooldown Duration"] = { "cooldownText", "statusBar" },
+    ["Aura Duration"] = { "cooldownText", "statusBar" },
+    ["Cooldown Duration"] = { "cooldownText", "statusBar" },
+    ["Conditional Property Overrides"] = { "specialVisibilityConditions" },
+    ["Charge Based Display"] = { "chargeBasedDisplay" },
+    ["Charge based display"] = { "chargeBasedDisplay" },
+    ["Glow Notification"] = { "glowNotification" },
+    ["Glow notification"] = { "glowNotification" },
+    ["Aura Stacks / Charges"] = { "countText", "visualChargeBar" },
+    ["Spell Charges / Buff Stacks"] = { "countText", "visualChargeBar" },
+    ["Aura stacks"] = { "countText", "visualChargeBar" },
+    ["Charges"] = { "countText", "visualChargeBar" },
+    ["Custom Label"] = { "customLabel" },
+    ["Custom Label (Accessibility)"] = { "customLabel" },
+    ["Sounds"] = {},
+}
+
+local function IsCopyPathIncluded(path, prefixes)
+    if not prefixes then return true end
+    for _, prefix in ipairs(prefixes) do
+        if path == prefix or path:sub(1, #prefix + 1) == prefix .. "." then
+            return true
+        end
+    end
+    return false
+end
+
+local function FilterCopyTemplate(template, prefixes, path, output)
+    for key, value in pairs(template or {}) do
+        local childPath = path and (path .. "." .. key) or key
+        if type(value) == "table" then
+            local childOutput = {}
+            FilterCopyTemplate(value, prefixes, childPath, childOutput)
+            if next(childOutput) then
+                output[key] = childOutput
+            end
+        elseif IsCopyPathIncluded(childPath, prefixes) then
+            output[key] = DeepCopy(value)
+        end
+    end
+end
+
+function State:CopySettings(source, sections, targets)
+    local factory = SpellStyler.TrackerConfigFactory
+    if not factory or type(source) ~= "table" or type(targets) ~= "table" then
+        return false
     end
 
-    local sourceConfig = State:GetSpecificTrackerValue(copyInfo.sourceTrackerKey, copyInfo.sourceTrackerType)
-    
-    --[[----------------------------------------------------
-    Deep-copy each key from source to target
-    Each key gets its own independent table to prevent shared references
-    ----------------------------------------------------]]
-    for _, key in ipairs(keys) do
-        local valueCopy = DeepCopy(sourceConfig[key])
-        State:SetTrackerValueConfigProperty(copyInfo.targetTrackerKey, copyInfo.targetTrackerType, key, valueCopy)
+    if type(sections) == "string" then
+        sections = COPY_SECTION_PREFIXES[sections]
+        if not sections or #sections == 0 then
+            return false
+        end
     end
+
+    local sourceTemplate = source.template
+    if not sourceTemplate and source.trackerKey and source.trackerType then
+        local sourceConfig = self:GetSpecificTrackerValue(source.trackerKey, source.trackerType)
+        if not sourceConfig then return false end
+        sourceTemplate = factory:ExtractTemplate(source.trackerType, sourceConfig)
+    end
+    if type(sourceTemplate) ~= "table" then return false end
+
+    local template = sourceTemplate
+    if type(sections) == "table" and #sections > 0 then
+        template = {}
+        FilterCopyTemplate(sourceTemplate, sections, nil, template)
+    end
+
+    for _, target in pairs(targets) do
+        local targetConfig = self:GetSpecificTrackerValue(target.trackerKey, target.trackerType)
+        if targetConfig then
+            factory:ApplyTemplate(target.trackerType, targetConfig, template)
+            if target.trackerType == "buffs" then
+                local buffManager = SpellStyler.BuffManager
+                local containerData = buffManager and buffManager.buffContainers[target.trackerKey]
+                if containerData then
+                    buffManager:UpdateAura(containerData, targetConfig)
+                end
+            elseif SpellStyler.FrameTrackerManager
+                and SpellStyler.FrameTrackerManager.frameController
+            then
+                SpellStyler.FrameTrackerManager.frameController.ApplyStaticFrameProperties(
+                    target.trackerKey,
+                    target.trackerType
+                )
+            end
+        end
+    end
+    return true
 end
 
 --[[====================================================
@@ -1007,8 +1338,6 @@ enabledSpellIDs into numeric-keyed associatedSpellIDs. Existing values win,
 legacy values fill missing fields, then defaults complete every association.
     ----------------------------------------------------]]
 local function NormalizeAssociatedSpellIDs(trackerValue)
-    if trackerValue.isItem then return end
-
     if type(trackerValue.associatedSpellIDs) ~= "table" then
         trackerValue.associatedSpellIDs = {}
     end
@@ -1161,6 +1490,10 @@ function State:MigrateDatabase()
                         trackerValue.statusBar = trackerValue.statusBar or {}
                         trackerValue.visualChargeBar = trackerValue.visualChargeBar or {}
                         trackerValue.iconSettings = trackerValue.iconSettings or {}
+                        trackerValue.iconSettings.iconDisplayState = NormalizeIconDisplayState(
+                            trackerValue.iconSettings.iconDisplayState,
+                            trackerType
+                        )
 
                         if not trackerValue.statusBar.reverseFill then
                             trackerValue.statusBar.reverseFill = false
@@ -1172,6 +1505,7 @@ function State:MigrateDatabase()
                         if trackerType == "spells" then
                             NormalizeAssociatedSpellIDs(trackerValue)
                         end
+                        State:NormalizeSoundSettings(trackerValue)
                         -- Change key from "barFillDirection" to "fillOrEmpty"
                         if trackerValue.statusBar
                             and trackerValue.statusBar.barFillDirection ~= nil
@@ -1210,7 +1544,6 @@ function State:MigrateDatabase()
                             if trackerValue.statusBar.displayState == 'always' then trackerValue.statusBar.displayState = 'active' end
                             if trackerValue.visualChargeBar.displayState == 'inactive' then trackerValue.visualChargeBar.displayState = 'never' end
                             if trackerValue.visualChargeBar.displayState == 'always' then trackerValue.visualChargeBar.displayState = 'active' end
-                            if trackerValue.iconSettings.iconDisplayState ~= 'active' and trackerValue.iconSettings.iconDisplayState ~= 'never' then trackerValue.iconSettings.iconDisplayState = 'active' end
                             local classAndSpecData = SpellStyler.State:GetClassAndSpecInfo()
                             if not trackerValue.auraSpecs then
                                 trackerValue.auraSpecs = {}
