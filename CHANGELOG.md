@@ -400,3 +400,6 @@ Version 3.3.0
 
 Version 3.3.1
 	- Updates cooldown bling and desaturation on cooldown settings
+
+Version 3.3.2
+	- Updates a few additional settings that were not working as expected
