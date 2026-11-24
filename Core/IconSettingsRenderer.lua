@@ -1093,6 +1093,7 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
     local includeMockCooldown = options.includeMockCooldown ~= false  -- default true
     local includeDisplayState = options.includeDisplayState ~= false  -- default true
     local isBarPosition = options.isBarPosition or false
+    local rerender = options.rerender
     
     local RADIAL_DISPLAY_OPTIONS = {}
     if config.trackerType == 'buffs' then
@@ -1183,16 +1184,6 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".customBarTexture", value) end,
     })
     
-    -- Skip "only render bar" for buffs
-    if config.trackerType ~= 'buffs' then
-        table.insert(inputs, {
-            type = "checkbox",
-            label = "Only Render Bar (no border/background):",
-            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar") or false end,
-            setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".onlyRenderBar", value) end,
-        })
-    end
-    
     table.insert(inputs, {
         type = "dropdown",
         label = "Bar Orientation:",
@@ -1215,16 +1206,6 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".fillOrEmpty", value) end,
     })
     
-    table.insert(inputs, {
-        type = "dropdown",
-        label = "Progress Direction:",
-        options = {
-            { label = "Standard", value = "standard" },
-            { label = "Reverse",  value = "reverse" },
-        },
-        getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".progressDirection") or "standard" end,
-        setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".progressDirection", value) end,
-    })
     table.insert(inputs, {
         type = "checkbox",
         label = "Reverse Fill:",
@@ -1268,8 +1249,28 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
     -- Skip background, glow, border colors and border scale for buffs
     if config.trackerType ~= 'buffs' then
         table.insert(inputs, {
+            type = "checkbox",
+            label = "Only Render Bar (no border/background):",
+            rerenderOnChange = true,
+            getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar") or false end,
+            setValue = function(self, value)
+                config.setValue(self.uniqueID, pathPrefix .. ".onlyRenderBar", value)
+                if rerender then
+                    rerender()
+                elseif self.rerender then
+                    self.rerender()
+                end
+            end,
+        })
+
+        local function shouldRenderBarDecoration(self)
+            return not config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar")
+        end
+
+        table.insert(inputs, {
             type = "colorpicker",
             label = "Background Color:",
+            shouldRender = shouldRenderBarDecoration,
             getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".backgroundColor") or {r=0.2, g=0.2, b=0.2, a=0.6} end,
             setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".backgroundColor", value) end,
         })
@@ -1277,6 +1278,7 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         table.insert(inputs, {
             type = "colorpicker",
             label = "Glow Color:",
+            shouldRender = shouldRenderBarDecoration,
             getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".glowColor") or {r=0.5, g=0.8, b=1, a=0.4} end,
             setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".glowColor", value) end,
         })
@@ -1284,6 +1286,7 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
         table.insert(inputs, {
             type = "colorpicker",
             label = "Border Color:",
+            shouldRender = shouldRenderBarDecoration,
             getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderColor") or {r=1, g=1, b=1, a=1} end,
             setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderColor", value) end,
         })
@@ -1304,6 +1307,7 @@ local function CreateStatusBarInputs(pathPrefix, config, options)
             type = "textinput",
             label = "Border Scale:",
             numeric = true,
+            shouldRender = function(self) return not config.getValue(self.uniqueID, pathPrefix .. ".onlyRenderBar") end,
             getValue = function(self) return config.getValue(self.uniqueID, pathPrefix .. ".borderScale") or 1.0 end,
             setValue = function(self, value) config.setValue(self.uniqueID, pathPrefix .. ".borderScale", value) end,
         })
@@ -2224,7 +2228,8 @@ function IconSettingsRenderer:GetIconConfigInputs(config)
             local statusBarInputs = CreateStatusBarInputs("statusBar", config, { 
                 includeMockCooldown = true, 
                 includeDisplayState = true, 
-                isBarPosition = true 
+                isBarPosition = true,
+                rerender = rerender
             })
             for _, input in ipairs(statusBarInputs) do
                 table.insert(section, input)
@@ -2952,16 +2957,17 @@ function IconSettingsRenderer:RenderCountTextSection(container, lastControl, uni
         -- Set uniqueID and trackerType on the input definition so getValue/setValue can access them
         inputDef.uniqueID = uniqueID
         inputDef.trackerType = trackerType
-        
-        if inputDef.type == "checkbox" then
+
+        if not inputDef.shouldRender or inputDef:shouldRender() then
+            if inputDef.type == "checkbox" then
             currentAnchor = CreateCheckbox(container, inputDef, currentAnchor)
-        elseif inputDef.type == "textinput" then
+            elseif inputDef.type == "textinput" then
             currentAnchor = CreateTextInput(container, inputDef, currentAnchor)
-        elseif inputDef.type == "colorpicker" then
+            elseif inputDef.type == "colorpicker" then
             currentAnchor = CreateColorPicker(container, inputDef, currentAnchor)
-        elseif inputDef.type == "dropdown" then
+            elseif inputDef.type == "dropdown" then
             currentAnchor = self:CreateDropdown(container, inputDef, currentAnchor)
-        elseif inputDef.type == "positionbuttons" then
+            elseif inputDef.type == "positionbuttons" then
             -- Set up getX/setX/getY/setY methods based on pathPrefix
             local pathPrefix = inputDef.pathPrefix or (inputDef.isBarPosition and "statusBar" or "position")
             inputDef.getX = function(self)
@@ -2977,6 +2983,7 @@ function IconSettingsRenderer:RenderCountTextSection(container, lastControl, uni
                 config.setValue(self.uniqueID, pathPrefix .. ".y", value)
             end
             currentAnchor = CreatePositionInputs(container, inputDef, currentAnchor, inputDef.isBarPosition)
+            end
         end
     end
     
@@ -2991,7 +2998,7 @@ end
 
 -- Helper function to build charge bar input definitions
 -- Used by the single-icon renderer.
-local function GetChargeBarInputDefinitions(config)
+local function GetChargeBarInputDefinitions(config, rerender)
     local options = config.trackerType ~= buffs and {
         { label = "Always", value = "always" },
         { label = "Only when >= 1", value = "available" },
@@ -3019,7 +3026,8 @@ local function GetChargeBarInputDefinitions(config)
     local barInputs = CreateStatusBarInputs("visualChargeBar", config, { 
         includeMockCooldown = false, 
         includeDisplayState = false,
-        isBarPosition = false 
+        isBarPosition = false,
+        rerender = rerender
     })
     for _, input in ipairs(barInputs) do
         table.insert(sectionInputs, input)
@@ -3051,7 +3059,7 @@ end
 
 function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uniqueID, trackerType, rerender, config)
     -- Build section inputs array for bar display
-    local sectionInputs = GetChargeBarInputDefinitions(config)
+    local sectionInputs = GetChargeBarInputDefinitions(config, rerender)
     
     -- Now render all the inputs using the existing rendering logic
     local currentAnchor = lastControl
@@ -3059,16 +3067,17 @@ function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uni
         -- Set uniqueID and trackerType on the input definition so getValue/setValue can access them
         inputDef.uniqueID = uniqueID
         inputDef.trackerType = trackerType
-        
-        if inputDef.type == "checkbox" then
+
+        if not inputDef.shouldRender or inputDef:shouldRender() then
+            if inputDef.type == "checkbox" then
             currentAnchor = CreateCheckbox(container, inputDef, currentAnchor)
-        elseif inputDef.type == "textinput" then
+            elseif inputDef.type == "textinput" then
             currentAnchor = CreateTextInput(container, inputDef, currentAnchor)
-        elseif inputDef.type == "colorpicker" then
+            elseif inputDef.type == "colorpicker" then
             currentAnchor = CreateColorPicker(container, inputDef, currentAnchor)
-        elseif inputDef.type == "dropdown" then
+            elseif inputDef.type == "dropdown" then
             currentAnchor = self:CreateDropdown(container, inputDef, currentAnchor)
-        elseif inputDef.type == "positionbuttons" then
+            elseif inputDef.type == "positionbuttons" then
             -- Set up getX/setX/getY/setY methods based on pathPrefix
             local pathPrefix = inputDef.pathPrefix or (inputDef.isBarPosition and "statusBar" or "position")
             inputDef.getX = function(self)
@@ -3084,6 +3093,7 @@ function IconSettingsRenderer:RenderChargeBarSection(container, lastControl, uni
                 config.setValue(self.uniqueID, pathPrefix .. ".y", value)
             end
             currentAnchor = CreatePositionInputs(container, inputDef, currentAnchor, inputDef.isBarPosition)
+            end
         end
     end
     
@@ -4066,13 +4076,19 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                     if controlDef.type == "dropdown" and controlDef.getOptions then
                         controlDef.options = controlDef:getOptions()
                     end
+                    if controlDef.rerenderOnChange then
+                        controlDef.rerender = function()
+                            IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
+                        end
+                    end
                     
-                    -- Render control based on type (directly into parent)
-                    local controlFrame = nil
-                    if controlDef.type == "dropdown" then
+                    if not controlDef.shouldRender or controlDef:shouldRender() then
+                        -- Render control based on type (directly into parent)
+                        local controlFrame = nil
+                        if controlDef.type == "dropdown" then
                         local label, dropdown = IconSettingsRenderer:CreateDropdown(parent, controlDef, lastControl)
                         controlFrame = label
-                    elseif controlDef.type == "textinput" then
+                        elseif controlDef.type == "textinput" then
                         local label, input = CreateTextInput(parent, controlDef, lastControl)
                         if controlDef.path == "iconSettings.width" then
                             _iconSizeInputs.width = input
@@ -4088,13 +4104,13 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         end
                         _iconSizeInputsByTracker[GetTrackerInputKey(trackerKey, trackerType)] = sizeInputs
                         controlFrame = label
-                    elseif controlDef.type == "colorpicker" then
+                        elseif controlDef.type == "colorpicker" then
                         local label, btn = CreateColorPicker(parent, controlDef, lastControl)
                         controlFrame = label
-                    elseif controlDef.type == "checkbox" then
+                        elseif controlDef.type == "checkbox" then
                         local checkbox, label = CreateCheckbox(parent, controlDef, lastControl)
                         controlFrame = checkbox
-                    elseif controlDef.type == "positionbuttons" then
+                        elseif controlDef.type == "positionbuttons" then
                         -- Set up getX/setX/getY/setY methods based on pathPrefix (if provided) or isBarPosition
                         local pathPrefix = controlDef.pathPrefix or (controlDef.isBarPosition and "statusBar" or "position")
                         local isBarPosition = controlDef.isBarPosition or false
@@ -4112,7 +4128,7 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                         end
                         local row, inputs = CreatePositionInputs(parent, controlDef, lastControl, isBarPosition)
                         controlFrame = row
-                    elseif controlDef.type == "button" then
+                        elseif controlDef.type == "button" then
                         local btn = CreateButton(parent, controlDef, lastControl)
                         -- Store context on button for onClick callback
                         btn.uniqueID = trackerKey
@@ -4127,20 +4143,21 @@ function IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                             trackerFrame._spellStyler_mockCooldownBtn = btn
                         end
                         controlFrame = btn
-                    elseif controlDef.type == "label" then
+                        elseif controlDef.type == "label" then
                         local label, valueLabel = CreateLabel(parent, controlDef, lastControl)
                         controlFrame = label
-                    elseif controlDef.type == "customRender" then
+                        elseif controlDef.type == "customRender" then
                         if controlDef.render then
                             local result = controlDef.render(parent, lastControl, trackerKey, trackerType, function()
                                 IconSettingsRenderer:RenderConfigControlsForSpecificIcon(options)
                             end)
                             if result then controlFrame = result end
                         end
-                    end
+                        end
                     
-                    if controlFrame then
-                        lastControl = controlFrame
+                        if controlFrame then
+                            lastControl = controlFrame
+                        end
                     end
                 end
             end

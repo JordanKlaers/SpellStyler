@@ -93,10 +93,6 @@ FrameTrackerManager.lifecycleController = {
                 end
             end
         end
-        local cooldownInfo = overrideSpellID and C_Spell.GetSpellCooldown(overrideSpellID)
-        local chargeCooldownInfo = overrideSpellID and C_Spell.GetSpellCharges(overrideSpellID)
-        local isOnCooldown = (cooldownInfo and cooldownInfo.isActive)
-            or (chargeCooldownInfo and chargeCooldownInfo.isActive)
         if isItem then
             FrameTrackerManager.frameController.SyncQualityEmblem(frame, resolvedItem, config)
         end
@@ -112,7 +108,6 @@ FrameTrackerManager.lifecycleController = {
                 trackerType    = frame.meta.trackerType,
                 durationObject = durationObject,
                 forceUpdate    = opts.forceUpdate,
-                isOnCooldown   = isOnCooldown,
                 setDesaturated = config.iconSettings.desaturated or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.desaturated"))
             })
         end
@@ -1029,7 +1024,6 @@ FrameTrackerManager.frameController = {
                 end)(),
                 orientation = (trackerConfig.statusBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL",
                 reverseFill = trackerConfig.statusBar.reverseFill,
-                fillStyle = (trackerConfig.statusBar.progressDirection == 'reverse') and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard,
                 rotation = getOverride("statusBar.rotation") or trackerConfig.statusBar.rotation,
                 onlyBar = (function()
                     local override = getOverride("statusBar.onlyRenderBar")
@@ -1038,8 +1032,7 @@ FrameTrackerManager.frameController = {
                 borderColor = getOverride("statusBar.borderColor") or trackerConfig.statusBar.borderColor,
                 backgroundColor = getOverride("statusBar.backgroundColor") or trackerConfig.statusBar.backgroundColor,
                 glowColor = getOverride("statusBar.glowColor") or trackerConfig.statusBar.glowColor,
-                borderScale = getOverride("statusBar.borderScale") or trackerConfig.statusBar.borderScale or 0.5,
-                progressDirection = getOverride("statusBar.progressDirection") or trackerConfig.statusBar.progressDirection
+                borderScale = getOverride("statusBar.borderScale") or trackerConfig.statusBar.borderScale or 0.5
             },
             
             -- Visual charge bar properties
@@ -1059,7 +1052,6 @@ FrameTrackerManager.frameController = {
                 end)(),
                 orientation = (trackerConfig.visualChargeBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL",
                 reverseFill = trackerConfig.visualChargeBar.fillOrEmpty == 'inverse',
-                fillStyle = (trackerConfig.visualChargeBar.progressDirection == 'reverse') and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard,
                 rotation = getOverride("visualChargeBar.rotation") or trackerConfig.visualChargeBar.textureRotation,
                 minValue = trackerConfig.visualChargeBar.minValue or 0,
                 maxValue = trackerConfig.visualChargeBar.maxValue or 5,
@@ -1121,11 +1113,13 @@ FrameTrackerManager.frameController = {
             data.customFrame.statusBar:SetValue(0)
         end
         if not durationObject then
-             data.customFrame.icon:SetDesaturated(false)
+            data.customFrame.icon:SetDesaturated(false)
             return
         end
-        if data.isOnCooldown and data.setDesaturated then
+        if data.setDesaturated then
             data.customFrame.icon:SetDesaturated(durationObject:IsActive())
+        else
+            data.customFrame.icon:SetDesaturated(false)
         end
 
         if data.customFrame.statusBar and data.customFrame.statusBar.SetTimerDuration then
@@ -1139,7 +1133,6 @@ FrameTrackerManager.frameController = {
                 cdTimerDir
             )
             statusBar:SetOrientation((data.config.statusBar.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL")
-            statusBar:SetFillStyle((data.config.statusBar and data.config.statusBar.progressDirection == 'reverse') and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
             statusBar:RotateTextures((data.config.statusBar and data.config.statusBar.textureRotation or 0))
             statusBar:SetReverseFill(data.config.statusBar.reverseFill == true)
         end
@@ -2510,12 +2503,10 @@ FrameTrackerManager.FrameBuilder = {
             (barConfig.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
         )
 
-        local cdFillStyle = (barConfig and barConfig.progressDirection == 'reverse')
         local textureRotation = (barConfig and barConfig.textureRotation or 0)
         if textureRotation then
             frame[key]:RotateTextures(textureRotation)
         end
-        frame[key]:SetFillStyle(cdFillStyle and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
 
         -- Layer 2.5: Full-cover texture (ARTWORK sublayer 1, above the fill at sublayer 0).
         -- Used when defaultFillValue='full' to visually fill the bar without fighting SetTimerDuration.
@@ -3320,7 +3311,6 @@ FrameTrackerManager.FrameUpdater = {
         
         data.frame.visualChargeBar:SetOrientation(data.visualChargeBar.orientation)
         data.frame.visualChargeBar:SetReverseFill(data.visualChargeBar.reverseFill)
-        data.frame.visualChargeBar:SetFillStyle(data.visualChargeBar.fillStyle)
         
         if data.visualChargeBar.rotation then
             data.frame.visualChargeBar:GetStatusBarTexture():SetRotation(data.visualChargeBar.rotation)
@@ -3555,6 +3545,9 @@ FrameTrackerManager.ApplyVisibility = {
         elseif context.displayState == 'always' then
             progressBarFrameAlpha = 1  -- Container always visible
             progressBarFillAlpha = 1
+        elseif context.displayState == 'available' then
+            progressBarFrameAlpha = context.charges
+            progressBarFillAlpha = context.charges
         elseif context.displayState == 'active' or context.displayState == 'cooldown' then
             progressBarFrameAlpha = context.charges
             progressBarFillAlpha = context.charges

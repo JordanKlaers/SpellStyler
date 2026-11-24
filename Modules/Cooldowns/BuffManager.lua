@@ -73,11 +73,6 @@ function BuffManager:CreateStatusBar(frame, key, trackerConfig)
     -- Match the spell/item status-bar fill configuration for both live auras
     -- and their settings placeholders.
     bar:SetReverseFill(reverseFill)
-    bar:SetFillStyle(
-        barConfig.progressDirection == 'reverse'
-            and Enum.StatusBarFillStyle.Reverse
-            or Enum.StatusBarFillStyle.Standard
-    )
     bar:SetOrientation(
         (barConfig.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
     )
@@ -619,7 +614,6 @@ function BuffManager:UpdateAura(aura, trackerValue)
 					barFrame:SetStatusBarTexture(barTexture)
 				end
 				barFrame:SetReverseFill(config.fillOrEmpty == 'inverse')
-				barFrame:SetFillStyle(config.progressDirection == 'reverse' and Enum.StatusBarFillStyle.Reverse or Enum.StatusBarFillStyle.Standard)
 				barFrame:SetOrientation(
 					(config.barOrientation == 'vertical') and "VERTICAL" or "HORIZONTAL"
 				)

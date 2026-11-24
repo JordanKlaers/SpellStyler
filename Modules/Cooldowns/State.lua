@@ -480,7 +480,6 @@ function State:EnsureVisualChargeBarDefaults(trackerValue)
             onlyRenderBar = false,
             barOrientation = "horizontal",
             fillOrEmpty = "regular",
-            progressDirection = "standard",
             textureRotation = 0,
             defaultFillValue = "empty",
             color = { r = 0.2, g = 0.8, b = 1, a = 0.9 },
