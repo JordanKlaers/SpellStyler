@@ -758,15 +758,8 @@ function State:IsSoundManuallyMutedElsewhere(trackerKey, trackerType, soundID)
     if not soundID then return false end
 
     for _, otherTrackerType in ipairs({ "spells", "items" }) do
-        DevTool:AddData({
-            trackers = self:GetAllTrackerValues(otherTrackerType)
-        }, "otherTrackerType: ".. otherTrackerType)
         for otherTrackerKey, trackerConfig in pairs(self:GetAllTrackerValues(otherTrackerType) or {}) do
             if not (otherTrackerType == trackerType and tostring(otherTrackerKey) == tostring(trackerKey)) then
-                DevTool:AddData({
-                    otherTrackerKey = otherTrackerKey,
-                    trackerConfig = trackerConfig
-                }, "what the fuck")
                 local sound = trackerConfig and trackerConfig.sound
                 local manuallyMutedSounds = type(sound) == "table"
                     and sound.manuallyMutedSounds

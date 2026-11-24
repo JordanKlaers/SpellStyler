@@ -30,10 +30,6 @@ local function GetSoundMeta(trackerConfig)
 end
 
 function SoundManager:MuteTrackerSounds(trackerConfig)
-    DevTool:AddData({
-        muteValues = GetSoundIDs(GetSoundMeta(trackerConfig)),
-        tracker = trackerConfig
-    }, "muting: ")
     self:MuteSounds(GetSoundIDs(GetSoundMeta(trackerConfig)))
 end
 

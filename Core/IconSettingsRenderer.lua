@@ -4660,13 +4660,6 @@ function IconSettingsRenderer:EnableDraggingForSpecificFrame(frame, onDragStartC
 
             local sizeInputs = _iconSizeInputsByTracker[GetTrackerInputKey(trackerKey, trackerType)]
                 or _iconSizeInputs
-                DevTool:AddData({
-                    sizeInputs = sizeInputs,
-                    _iconSizeInputsByTracker = _iconSizeInputsByTracker,
-                    GetTrackerInputKey = GetTrackerInputKey(trackerKey, trackerType),
-                    trackerKey = trackerKey,
-                    trackerType = trackerType
-                }, "size inputs")
             if sizeInputs.width then
                 sizeInputs.width:SetText(tostring(newWidth))
             end

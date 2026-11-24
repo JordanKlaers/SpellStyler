@@ -93,6 +93,10 @@ FrameTrackerManager.lifecycleController = {
                 end
             end
         end
+        local cooldownInfo = overrideSpellID and C_Spell.GetSpellCooldown(overrideSpellID)
+        local chargeCooldownInfo = overrideSpellID and C_Spell.GetSpellCharges(overrideSpellID)
+        local isOnCooldown = (cooldownInfo and cooldownInfo.isActive)
+            or (chargeCooldownInfo and chargeCooldownInfo.isActive)
         if isItem then
             FrameTrackerManager.frameController.SyncQualityEmblem(frame, resolvedItem, config)
         end
@@ -108,6 +112,8 @@ FrameTrackerManager.lifecycleController = {
                 trackerType    = frame.meta.trackerType,
                 durationObject = durationObject,
                 forceUpdate    = opts.forceUpdate,
+                isOnCooldown   = isOnCooldown,
+                setDesaturated = config.iconSettings.desaturated or (SpellStyler.ConditionalEngine and SpellStyler.ConditionalEngine:GetCachedPropertyOverride(frame, "iconSettings.desaturated"))
             })
         end
         -- Get fundamental alpha states (secret-safe)
@@ -183,6 +189,7 @@ FrameTrackerManager.lifecycleController = {
 
         FrameTrackerManager.ApplyVisibility.CooldownSwipe({
             shouldDisplay = not config.iconSettings.hideDefaultSweep,
+            hideBling = config.iconSettings.hideCooldownBling,
             customFrame = frame,
             trackerType = frame.meta.trackerType
         })
@@ -931,9 +938,17 @@ FrameTrackerManager.frameController = {
         end
 
         local shouldOverrideVisibility = State:GetShouldOverrideVisibility()
+        local overrideSpellID = C_Spell.GetOverrideSpell(
+            trackerConfig.baseSpellID,
+            GetSpecialization()
+        )
+        local cooldownInfo = overrideSpellID and C_Spell.GetSpellCooldown(overrideSpellID)
+        local chargeCooldownInfo = overrideSpellID and C_Spell.GetSpellCharges(overrideSpellID)
+        local isOnCooldown = (cooldownInfo and cooldownInfo.isActive)
+            or (chargeCooldownInfo and chargeCooldownInfo.isActive)
 
         -- Resolve variation settings by the exact spell currently represented.
-        local currentSpellID = C_Spell.GetOverrideSpell(trackerConfig.baseSpellID)
+        local currentSpellID = overrideSpellID
         local variation = State:GetAssociatedSpellID(trackerConfig, currentSpellID, true)
         -- Build comprehensive data object with all pre-computed property values
 
@@ -954,7 +969,7 @@ FrameTrackerManager.frameController = {
                 color = getOverride("iconColor") or (variation and variation.iconColor)
                     or trackerConfig.iconColor or {r=1, g=1, b=1},
                 alpha = (shouldOverrideVisibility and 1) or getOverride("iconAlpha") or trackerConfig.iconAlpha or 1,
-                desaturated = getOverride("iconSettings.desaturated") or trackerConfig.desaturated or false
+                desaturated = isOnCooldown and (getOverride("iconSettings.desaturated") or trackerConfig.iconSettings.desaturated)
             },
             alerts = {
                 display = trackerConfig.glowNotification.shouldDisplay
@@ -980,6 +995,7 @@ FrameTrackerManager.frameController = {
                 hideCooldownBling = trackerConfig.iconSettings.hideCooldownBling,
                 desaturated = trackerConfig.iconSettings.desaturated
             },
+            cooldownActive = isOnCooldown,
             
             -- Display count ticker
             useSpellDisplayCount = trackerConfig.countText and trackerConfig.countText.useSpellDisplayCount,
@@ -1105,7 +1121,11 @@ FrameTrackerManager.frameController = {
             data.customFrame.statusBar:SetValue(0)
         end
         if not durationObject then
+             data.customFrame.icon:SetDesaturated(false)
             return
+        end
+        if data.isOnCooldown and data.setDesaturated then
+            data.customFrame.icon:SetDesaturated(durationObject:IsActive())
         end
 
         if data.customFrame.statusBar and data.customFrame.statusBar.SetTimerDuration then
@@ -2694,7 +2714,6 @@ FrameTrackerManager.FrameBuilder = {
             color.b or 1
         )
         data.frame.iconContainer:SetAlpha(color.a or 1)
-        data.frame.icon:SetDesaturated(false)
     end,
     Border = function(data)
         -- Create separate border frame
@@ -2956,7 +2975,6 @@ FrameTrackerManager.FrameUpdater = {
         else
             data.frame.icon:Show()
         end
-        data.frame.icon:SetDesaturated(data.icon.desaturated)
         -- Apply icon texture and zoom from pre-computed values
         if data.frame._spellStylerIconTexture ~= data.icon.texture then
             data.frame.icon:SetTexture(data.icon.texture)
@@ -3033,21 +3051,12 @@ FrameTrackerManager.FrameUpdater = {
         -- SpellStyler.GlowUtil:PlayProcGlow(data.frame, 200)
     end,
     Cooldown = function(data)
-        -- Apply icon desaturation setting
-        if data.frame.icon and data.cooldownText.desaturated ~= nil then
-            -- Apply the conditional desaturation, OR the cooldownText version
-            data.frame.icon:SetDesaturated(data.icon.desaturated or data.cooldownText.desaturated)
-        end
         
         -- Apply cooldown swipe and bling settings
         if data.cooldownText.hideDefaultSweep ~= nil then
             data.frame.cooldown:SetDrawSwipe(not data.cooldownText.hideDefaultSweep)
         end
         
-        
-        if data.cooldownText.hideCooldownBling == true then
-            data.frame.cooldown:SetEdgeScale(0)
-        end
         
         -- Apply cooldown text positioning and font
         local cdText = data.frame.cooldown.Text or data.frame.cooldown.text
@@ -3595,7 +3604,7 @@ FrameTrackerManager.ApplyVisibility = {
             context.customFrame.cooldown:SetDrawBling(false)
             context.customFrame.cooldown:SetDrawSwipe(false)
         else
-            context.customFrame.cooldown:SetDrawEdge(true)
+            context.customFrame.cooldown:SetDrawEdge(not context.hideBling)
             context.customFrame.cooldown:SetDrawBling(true)
             context.customFrame.cooldown:SetDrawSwipe(true)
             
@@ -3603,6 +3612,8 @@ FrameTrackerManager.ApplyVisibility = {
             local config = State:GetSpecificTrackerValue(context.customFrame.meta.trackerKey, context.customFrame.meta.trackerType)
             if config and config.isItem then
                 -- Items: always show at full alpha during cooldown (no GCD for items)
+                context.customFrame.cooldown:SetAlpha(1)
+            elseif context.customFrame.meta.mockCooldownActive then
                 context.customFrame.cooldown:SetAlpha(1)
             else
                 -- Spell tracker: hide during GCD using duration curves
@@ -4148,11 +4159,6 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 
                 if match then
                     for _, frameMatch in ipairs(matches) do
-                        DevTool:AddData({
-                            sound = frameMatch.customFrame.meta.sound,
-                            id = spellID,
-                            trigger = "onCast"
-                        }, "should play sound: " .. spellID)
                         SpellStyler.SoundManager:PlaySound(frameMatch.customFrame.meta.sound, spellID, "onCast")
 
                         -- Skip if mock cooldown is active
